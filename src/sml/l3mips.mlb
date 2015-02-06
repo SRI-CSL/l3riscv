@@ -1,0 +1,26 @@
+$(SML_LIB)/basis/basis.mlb
+./lib/Runtime.sig
+./lib/Runtime.sml
+./lib/IntExtra.sig
+./lib/IntExtra.sml
+./lib/Nat.sig
+./lib/Nat.sml
+./lib/Set.sig
+./lib/Set.sml
+./lib/L3.sig
+./lib/L3.sml
+./lib/Bitstring.sig
+./lib/Bitstring.sml
+./lib/BitsN.sig
+./lib/BitsN.sml
+./lib/FP64.sig
+./lib/FP64.sml
+./lib/Ptree.sig
+./lib/Ptree.sml
+./lib/MutableMap.sig
+./lib/MutableMap.sml
+mips.sig
+ann "nonexhaustiveMatch ignore" in
+  mips.sml
+end
+run.sml
