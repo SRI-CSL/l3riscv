@@ -153,11 +153,10 @@ fun storeVecInMem (base, vec) =
     end
 
 fun readRaw filename =
-  let
-    val istream = BinIO.openIn filename
-    val vec     = BinIO.inputAll istream
-    val ()      = BinIO.closeIn istream
-  in vec
+  let val istream = BinIO.openIn filename
+      val vec     = BinIO.inputAll istream
+      val ()      = BinIO.closeIn istream
+  in  vec
   end
 
 fun printLog (n) = List.app (fn e => print(e ^ "\n"))
@@ -167,12 +166,10 @@ local
     fun readReg i = hex64 (riscv.GPR (BitsN.fromNat (i, 5)))
 in
 fun dumpRegisters (core) =
-    let
-        val savedProcID = !riscv.procID
+    let val savedProcID = !riscv.procID
         val pc = riscv.Map.lookup(!riscv.c_PC, 0)
         val () = riscv.procID := BitsN.B(core, BitsN.size (!riscv.procID))
-    in
-        print "======   Registers   ======\n"
+    in  print "======   Registers   ======\n"
       ; print ("Core = " ^ Int.toString(core) ^ "\n")
       ; print ("PC     " ^ hex64 pc ^ "\n")
       ; L3.for
@@ -213,13 +210,11 @@ fun scheduleNext () =
    ------------------------------------------------------------------------ *)
 
 fun loop mx i =
-    let
-        val () = current_core_id := scheduleNext ()
+    let val () = current_core_id := scheduleNext ()
         val () = riscv.procID := BitsN.B(!current_core_id,
                                          BitsN.size(!riscv.procID))
         val pc = riscv.Map.lookup(!riscv.c_PC, !current_core_id)
-    in
-        riscv.instCnt := i
+    in  riscv.instCnt := i
       ; riscv.Next ()
       ; printLog(0)
       ; if 1 <= !trace_level then printLog(1) else ()
@@ -334,8 +329,7 @@ val () =
     case getArguments () of
         ["--help"] => printUsage ()
       | l =>
-        let
-            val (fmt, l) = processOption "--format" l
+        let val (fmt, l) = processOption "--format" l
             val raw = case fmt of
                           NONE       => false
                         | SOME "raw" => true
