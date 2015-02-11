@@ -45,6 +45,15 @@ memWidth DOUBLEWORD = 7
 -- Register state space
 ---------------------------------------------------------------------------
 
+construct ProcessorType
+{
+  RV32I, RV64I
+}
+
+declare procType :: ProcessorType
+
+bool is32Bit(pType::ProcessorType) = pType == RV32I
+
 -- Each register state is local to a core.
 
 type RegFile = reg -> regType
@@ -131,7 +140,7 @@ string hex64(x::dword) = PadLeft(#"0", 16, [x])
 
 construct ExceptionType
 {
-  SysCall, SysBreak, ReservedInstr
+  SysCall, SysBreak, ReservedInstr, IllegalInstr
 }
 
 bits(5) ExceptionCode(ExceptionType::ExceptionType) =
@@ -220,10 +229,12 @@ define ArithI > ADDI(rd::reg, rs1::reg, imm::imm12) =
 -- ADDIW rd, rs1, imm   (RV64I)
 -----------------------------------
 define ArithI > ADDIW(rd::reg, rs1::reg, imm::imm12) =
-{
-  temp = GPR(rs1) + SignExtend(imm);
-  GPR(rd) <- SignExtend(temp<31:0>)
-}
+    if is32Bit(procType) then
+        signalException(IllegalInstr)
+    else {
+      temp = GPR(rs1) + SignExtend(imm);
+      GPR(rd) <- SignExtend(temp<31:0>)
+    }
 
 -----------------------------------
 -- SLTI  rd, rs1, imm
@@ -263,67 +274,64 @@ define ArithI > XORI(rd::reg, rs1::reg, imm::imm12) =
 -- sign-extended results in MIPS.
 
 -----------------------------------
--- SLLI  rd, rs1, imm   (RV32I)
------------------------------------
-define Shift > SLLI32(rd::reg, rs1::reg, imm::bits(5)) =
-    GPR(rd) <- GPR(rs1) << [imm]
-
------------------------------------
--- SLLI  rd, rs1, imm   (RV64I)
+-- SLLI  rd, rs1, imm
 -----------------------------------
 define Shift > SLLI(rd::reg, rs1::reg, imm::bits(6)) =
-    GPR(rd) <- GPR(rs1) << [imm]
+    if !is32Bit(procType) and imm<5> then
+        signalException(IllegalInstr)
+    else
+        GPR(rd) <- GPR(rs1) << [imm]
 
 -----------------------------------
--- SRLI  rd, rs1, imm   (RV32I)
------------------------------------
-define Shift > SRLI32(rd::reg, rs1::reg, imm::bits(5)) =
-    GPR(rd) <- GPR(rs1) >>+ [imm]
-
------------------------------------
--- SRLI  rd, rs1, imm   (RV64I)
+-- SRLI  rd, rs1, imm
 -----------------------------------
 define Shift > SRLI(rd::reg, rs1::reg, imm::bits(6)) =
-    GPR(rd) <- GPR(rs1) >>+ [imm]
+    if !is32Bit(procType) and imm<5> then
+        signalException(IllegalInstr)
+    else
+        GPR(rd) <- GPR(rs1) >>+ [imm]
 
 -----------------------------------
--- SRAI  rd, rs1, imm   (RV32I)
------------------------------------
-define Shift > SRAI32(rd::reg, rs1::reg, imm::bits(5)) =
-    GPR(rd) <- GPR(rs1) >> [imm]
-
------------------------------------
--- SRAI  rd, rs1, imm   (RV64I)
+-- SRAI  rd, rs1, imm
 -----------------------------------
 define Shift > SRAI(rd::reg, rs1::reg, imm::bits(6)) =
-    GPR(rd) <- GPR(rs1) >> [imm]
+    if !is32Bit(procType) and imm<5> then
+        signalException(IllegalInstr)
+    else
+        GPR(rd) <- GPR(rs1) >> [imm]
 
 -----------------------------------
 -- SLLIW rd, rs1, imm   (RV64I)
 -----------------------------------
 define Shift > SLLIW(rd::reg, rs1::reg, imm::bits(5)) =
-{
-  when NotWordValue(GPR(rs1)) do #UNPREDICTABLE("SLLIW: NotWordValue");
-  GPR(rd) <- SignExtend(GPR(rs1)<31:0> << [imm])
-}
+    if is32Bit(procType) then
+        signalException(IllegalInstr)
+    else {
+      when NotWordValue(GPR(rs1)) do #UNPREDICTABLE("SLLIW: NotWordValue");
+      GPR(rd) <- SignExtend(GPR(rs1)<31:0> << [imm])
+    }
 
 -----------------------------------
 -- SRLIW rd, rs1, imm   (RV64I)
 -----------------------------------
 define Shift > SRLIW(rd::reg, rs1::reg, imm::bits(5)) =
-{
-  when NotWordValue(GPR(rs1)) do #UNPREDICTABLE("SRLIW: NotWordValue");
-  GPR(rd) <- SignExtend(GPR(rs1)<31:0> >>+ [imm])
-}
+    if is32Bit(procType) then
+        signalException(IllegalInstr)
+    else {
+      when NotWordValue(GPR(rs1)) do #UNPREDICTABLE("SRLIW: NotWordValue");
+      GPR(rd) <- SignExtend(GPR(rs1)<31:0> >>+ [imm])
+    }
 
 -----------------------------------
 -- SRAIW rd, rs1, imm   (RV64I)
 -----------------------------------
 define Shift > SRAIW(rd::reg, rs1::reg, imm::bits(5)) =
-{
-  when NotWordValue(GPR(rs1)) do #UNPREDICTABLE("SRAIW: NotWordValue");
-  GPR(rd) <- SignExtend(GPR(rs1)<31:0> >> [imm])
-}
+    if is32Bit(procType) then
+        signalException(IllegalInstr)
+    else {
+      when NotWordValue(GPR(rs1)) do #UNPREDICTABLE("SRAIW: NotWordValue");
+      GPR(rd) <- SignExtend(GPR(rs1)<31:0> >> [imm])
+    }
 
 -----------------------------------
 -- LUI   rd, imm
@@ -334,7 +342,7 @@ define ArithI > LUI(rd::reg, imm::bits(20)) =
 -----------------------------------
 -- AUIPC rd, imm
 -----------------------------------
--- ISSUE: the descriptions for RV32I and RV64I are not compatible.
+-- XXX: ISSUE: the descriptions for RV32I and RV64I are not compatible.
 define ArithI > AUIPC(rd::reg, imm::bits(20)) =
 {
   temp = SignExtend(imm : 0`12);
@@ -353,7 +361,10 @@ define ArithR > ADD(rd::reg, rs1::reg, rs2::reg) =
 -- ADDW  rd, rs1, rs2   (RV64I)
 -----------------------------------
 define ArithR > ADDW(rd::reg, rs1::reg, rs2::reg) =
-    GPR(rd) <- SignExtend(GPR(rs1)<31:0> + GPR(rs2)<31:0>)
+    if is32Bit(procType) then
+        signalException(IllegalInstr)
+    else
+        GPR(rd) <- SignExtend(GPR(rs1)<31:0> + GPR(rs2)<31:0>)
 
 -----------------------------------
 -- SUB   rd, rs1, rs2
@@ -365,7 +376,10 @@ define ArithR > SUB(rd::reg, rs1::reg, rs2::reg) =
 -- SUBW  rd, rs1, rs2   (RV64I)
 -----------------------------------
 define ArithR > SUBW(rd::reg, rs1::reg, rs2::reg) =
-    GPR(rd) <- SignExtend(GPR(rs1)<31:0> - GPR(rs2)<31:0>)
+    if is32Bit(procType) then
+        signalException(IllegalInstr)
+    else
+        GPR(rd) <- SignExtend(GPR(rs1)<31:0> - GPR(rs2)<31:0>)
 
 -----------------------------------
 -- SLT   rd, rs1, rs2
@@ -398,58 +412,58 @@ define ArithR > XOR(rd::reg, rs1::reg, rs2::reg) =
    GPR(rd) <- GPR(rs1) ?? GPR(rs2)
 
 -----------------------------------
--- SLL   rd, rs1, rs2   (RV32I)
------------------------------------
-define Shift > SLL32(rd::reg, rs1::reg, rs2::reg) =
-    GPR(rd) <- GPR(rs1) << ZeroExtend(GPR(rs2)<4:0>)
-
------------------------------------
--- SLL   rd, rs1, rs2   (RV64I)
+-- SLL   rd, rs1, rs2
 -----------------------------------
 define Shift > SLL(rd::reg, rs1::reg, rs2::reg) =
-    GPR(rd) <- GPR(rs1) << ZeroExtend(GPR(rs2)<5:0>)
+    if is32Bit(procType) then
+        GPR(rd) <- GPR(rs1) << ZeroExtend(GPR(rs2)<4:0>)
+    else
+        GPR(rd) <- GPR(rs1) << ZeroExtend(GPR(rs2)<5:0>)
 
 -----------------------------------
 -- SLLW  rd, rs1, rs2   (RV64I)
 -----------------------------------
 define Shift > SLLW(rd::reg, rs1::reg, rs2::reg) =
-    GPR(rd) <- SignExtend(GPR(rs1)<31:0> << ZeroExtend(GPR(rs2)<4:0>))
+    if is32Bit(procType) then
+        signalException(IllegalInstr)
+    else
+        GPR(rd) <- SignExtend(GPR(rs1)<31:0> << ZeroExtend(GPR(rs2)<4:0>))
 
 -----------------------------------
--- SRL   rd, rs1, rs2   (RV32I)
------------------------------------
-define Shift > SRL32(rd::reg, rs1::reg, rs2::reg) =
-    GPR(rd) <- GPR(rs1) >>+ ZeroExtend(GPR(rs2)<4:0>)
-
------------------------------------
--- SRL   rd, rs1, rs2   (RV64I)
+-- SRL   rd, rs1, rs2
 -----------------------------------
 define Shift > SRL(rd::reg, rs1::reg, rs2::reg) =
-    GPR(rd) <- GPR(rs1) >>+ ZeroExtend(GPR(rs2)<5:0>)
+    if is32Bit(procType) then
+        GPR(rd) <- GPR(rs1) >>+ ZeroExtend(GPR(rs2)<4:0>)
+    else
+        GPR(rd) <- GPR(rs1) >>+ ZeroExtend(GPR(rs2)<5:0>)
 
 -----------------------------------
 -- SRLW  rd, rs1, rs2   (RV64I)
 -----------------------------------
 define Shift > SRLW(rd::reg, rs1::reg, rs2::reg) =
-    GPR(rd) <- SignExtend(GPR(rs1)<31:0> >>+ ZeroExtend(GPR(rs2)<4:0>))
+    if is32Bit(procType) then
+        signalException(IllegalInstr)
+    else
+        GPR(rd) <- SignExtend(GPR(rs1)<31:0> >>+ ZeroExtend(GPR(rs2)<4:0>))
 
 -----------------------------------
--- SRA   rd, rs1, rs2   (RV32I)
------------------------------------
-define Shift > SRA32(rd::reg, rs1::reg, rs2::reg) =
-    GPR(rd) <- GPR(rs1) >> ZeroExtend(GPR(rs2)<4:0>)
-
------------------------------------
--- SRA   rd, rs1, rs2   (RV64I)
+-- SRA   rd, rs1, rs2
 -----------------------------------
 define Shift > SRA(rd::reg, rs1::reg, rs2::reg) =
-    GPR(rd) <- GPR(rs1) >> ZeroExtend(GPR(rs2)<5:0>)
+    if is32Bit(procType) then
+        GPR(rd) <- GPR(rs1) >> ZeroExtend(GPR(rs2)<4:0>)
+    else
+        GPR(rd) <- GPR(rs1) >> ZeroExtend(GPR(rs2)<5:0>)
 
 -----------------------------------
 -- SRAW  rd, rs1, rs2   (RV64I)
 -----------------------------------
 define Shift > SRAW(rd::reg, rs1::reg, rs2::reg) =
-    GPR(rd) <- SignExtend(GPR(rs1)<31:0> >> ZeroExtend(GPR(rs2)<4:0>))
+    if is32Bit(procType) then
+        signalException(IllegalInstr)
+    else
+        GPR(rd) <- SignExtend(GPR(rs1)<31:0> >> ZeroExtend(GPR(rs2)<4:0>))
 
 ---------------------------------------------------------------------------
 -- Control Transfer Instructions
@@ -482,55 +496,55 @@ define Branch > JALR(rd::reg, rs1::reg, imm::imm12) =
 -- BEQ   rs1, rs2, offs
 -----------------------------------
 define Branch > BEQ(rs1::reg, rs2::reg, offs::imm12) =
-   if GPR(rs1) == GPR(rs2) then
-      BranchTo <- Some(PC + (SignExtend(offs) << 2))
-   else
-      ()
+    if GPR(rs1) == GPR(rs2) then
+        BranchTo <- Some(PC + (SignExtend(offs) << 2))
+    else
+        ()
 
 -----------------------------------
 -- BNE   rs1, rs2, offs
 -----------------------------------
 define Branch > BNE(rs1::reg, rs2::reg, offs::imm12) =
-   if GPR(rs1) <> GPR(rs2) then
-      BranchTo <- Some(PC + (SignExtend(offs) << 2))
-   else
-      ()
+    if GPR(rs1) <> GPR(rs2) then
+        BranchTo <- Some(PC + (SignExtend(offs) << 2))
+    else
+        ()
 
 -----------------------------------
 -- BLT   rs1, rs2, offs
 -----------------------------------
 define Branch > BLT(rs1::reg, rs2::reg, offs::imm12) =
-   if GPR(rs1) < GPR(rs2) then
-      BranchTo <- Some(PC + (SignExtend(offs) << 2))
-   else
-      ()
+    if GPR(rs1) < GPR(rs2) then
+        BranchTo <- Some(PC + (SignExtend(offs) << 2))
+    else
+        ()
 
 -----------------------------------
 -- BLTU  rs1, rs2, offs
 -----------------------------------
 define Branch > BLTU(rs1::reg, rs2::reg, offs::imm12) =
-   if GPR(rs1) <+ GPR(rs2) then
-      BranchTo <- Some(PC + (SignExtend(offs) << 2))
-   else
-      ()
+    if GPR(rs1) <+ GPR(rs2) then
+        BranchTo <- Some(PC + (SignExtend(offs) << 2))
+    else
+        ()
 
 -----------------------------------
 -- BGE   rs1, rs2, offs
 -----------------------------------
 define Branch > BGE(rs1::reg, rs2::reg, offs::imm12) =
-   if GPR(rs1) >= GPR(rs2) then
-      BranchTo <- Some(PC + (SignExtend(offs) << 2))
-   else
-      ()
+    if GPR(rs1) >= GPR(rs2) then
+        BranchTo <- Some(PC + (SignExtend(offs) << 2))
+    else
+        ()
 
 -----------------------------------
 -- BGEU  rs1, rs2, offs
 -----------------------------------
 define Branch > BGEU(rs1::reg, rs2::reg, offs::imm12) =
-   if GPR(rs1) >=+ GPR(rs2) then
-      BranchTo <- Some(PC + (SignExtend(offs) << 2))
-   else
-      ()
+    if GPR(rs1) >=+ GPR(rs2) then
+        BranchTo <- Some(PC + (SignExtend(offs) << 2))
+    else
+        ()
 
 ---------------------------------------------------------------------------
 -- Load and Store Instructions
@@ -551,9 +565,13 @@ define Load > LW(rd::reg, rs1::reg, offs::imm12) =
 -----------------------------------
 define Load > LWU(rd::reg, rs1::reg, offs::imm12) =
 {
-  addr = GPR(rs1) + SignExtend(offs);
-  val  = readData(addr);
-  GPR(rd) <- ZeroExtend(val<31:0>)
+  if is32Bit(procType) then
+      signalException(IllegalInstr)
+  else {
+    addr = GPR(rs1) + SignExtend(offs);
+    val  = readData(addr);
+    GPR(rd) <- ZeroExtend(val<31:0>)
+  }
 }
 
 -----------------------------------
@@ -600,11 +618,13 @@ define Load > LBU(rd::reg, rs1::reg, offs::imm12) =
 -- LD    rd, rs1, offs  (RV64I)
 -----------------------------------
 define Load > LD(rd::reg, rs1::reg, offs::imm12) =
-{
-  addr = GPR(rs1) + SignExtend(offs);
-  val  = readData(addr);
-  GPR(rd) <- val
-}
+    if is32Bit(procType) then
+        signalException(IllegalInstr)
+    else {
+      addr = GPR(rs1) + SignExtend(offs);
+      val  = readData(addr);
+      GPR(rd) <- val
+    }
 
 -----------------------------------
 -- SW    rs1, rs2, offs
@@ -640,10 +660,12 @@ define Store > SB(rs1::reg, rs2::reg, offs::imm12) =
 -- SD    rs1, rs2, offs (RV64I)
 -----------------------------------
 define Store > SD(rs1::reg, rs2::reg, offs::imm12) =
-{
-  addr = GPR(rs1) + SignExtend(offs);
-  writeData(addr, GPR(rs2), SignExtend('1'))
-}
+    if is32Bit(procType) then
+        signalException(IllegalInstr)
+    else {
+      addr = GPR(rs1) + SignExtend(offs);
+      writeData(addr, GPR(rs2), SignExtend('1'))
+    }
 
 ---------------------------------------------------------------------------
 -- Memory model
