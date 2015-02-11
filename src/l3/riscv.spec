@@ -130,7 +130,7 @@ string hex64(x::dword) = PadLeft(#"0", 16, [x])
 
 construct ExceptionType
 {
-  System,  Break, ReservedInstr
+  SysCall, SysBreak, ReservedInstr
 }
 
 bits(5) ExceptionCode(ExceptionType::ExceptionType) =
@@ -138,7 +138,7 @@ bits(5) ExceptionCode(ExceptionType::ExceptionType) =
   0x00
 }
 
-unit SignalException(ExceptionType::ExceptionType) =
+unit signalException(ExceptionType::ExceptionType) =
 {
   ()
 }
@@ -218,7 +218,7 @@ define ArithI > ADDI(rd::reg, rs1::reg, imm::imm12) =
 -----------------------------------
 -- ADDIW rd, rs1, imm   (RV64I)
 -----------------------------------
-define ArithI > ADDIW(rd::reg, rs1::reg, imm::bits(12)) =
+define ArithI > ADDIW(rd::reg, rs1::reg, imm::imm12) =
 {
   temp = GPR(rs1) + SignExtend(imm);
   GPR(rd) <- SignExtend(temp<31:0>)
@@ -227,13 +227,13 @@ define ArithI > ADDIW(rd::reg, rs1::reg, imm::bits(12)) =
 -----------------------------------
 -- SLTI  rd, rs1, imm
 -----------------------------------
-define ArithI > SLTI(rd::reg, rs1::reg, imm::bits(12)) =
+define ArithI > SLTI(rd::reg, rs1::reg, imm::imm12) =
     GPR(rd) <- [GPR(rs1) < SignExtend(imm)]
 
 -----------------------------------
 -- SLTIU rd, rs1, imm
 -----------------------------------
-define ArithI > SLTIU(rs1::reg, rd::reg, imm::bits(12)) =
+define ArithI > SLTIU(rd::reg, rs1::reg, imm::imm12) =
     GPR(rd) <- [GPR(rs1) <+ SignExtend(imm)]
 
 -- NOTE: RISCV ANDI/ORI/XORI use sign-extended 12-bit immediates,
@@ -242,19 +242,19 @@ define ArithI > SLTIU(rs1::reg, rd::reg, imm::bits(12)) =
 -----------------------------------
 -- ANDI  rd, rs1, imm
 -----------------------------------
-define ArithI > ANDI(rd::reg, rs1::reg, imm::bits(12)) =
+define ArithI > ANDI(rd::reg, rs1::reg, imm::imm12) =
     GPR(rd) <- GPR(rs1) && SignExtend(imm)
 
 -----------------------------------
 -- ORI   rd, rs1, imm
 -----------------------------------
-define ArithI > ORI(rd::reg, rs1::reg, imm::bits(12)) =
+define ArithI > ORI(rd::reg, rs1::reg, imm::imm12) =
     GPR(rd) <- GPR(rs1) || SignExtend(imm)
 
 -----------------------------------
 -- XORI  rd, rs1, imm
 -----------------------------------
-define ArithI > XORI(rd::reg, rs1::reg, imm::bits(12)) =
+define ArithI > XORI(rd::reg, rs1::reg, imm::imm12) =
     GPR(rd) <- GPR(rs1) ?? SignExtend(imm)
 
 
@@ -468,7 +468,7 @@ define Branch > JAL(rd::reg, offs::bits(20)) =
 -----------------------------------
 -- JALR  rd, rs1, imm
 -----------------------------------
-define Branch > JALR(rd::reg, rs1::reg, imm::bits(12)) =
+define Branch > JALR(rd::reg, rs1::reg, imm::imm12) =
 {
   temp      = GPR(rs1) + SignExtend(imm);
   GPR(rd)  <- PC + 4;
@@ -480,7 +480,7 @@ define Branch > JALR(rd::reg, rs1::reg, imm::bits(12)) =
 -----------------------------------
 -- BEQ   rs1, rs2, offs
 -----------------------------------
-define Branch > BEQ(rs1::reg, rs2::reg, offs::bits(12)) =
+define Branch > BEQ(rs1::reg, rs2::reg, offs::imm12) =
    if GPR(rs1) == GPR(rs2) then
       BranchTo <- Some(PC + (SignExtend(offs) << 2))
    else
@@ -489,7 +489,7 @@ define Branch > BEQ(rs1::reg, rs2::reg, offs::bits(12)) =
 -----------------------------------
 -- BNE   rs1, rs2, offs
 -----------------------------------
-define Branch > BNE(rs1::reg, rs2::reg, offs::bits(12)) =
+define Branch > BNE(rs1::reg, rs2::reg, offs::imm12) =
    if GPR(rs1) <> GPR(rs2) then
       BranchTo <- Some(PC + (SignExtend(offs) << 2))
    else
@@ -498,7 +498,7 @@ define Branch > BNE(rs1::reg, rs2::reg, offs::bits(12)) =
 -----------------------------------
 -- BLT   rs1, rs2, offs
 -----------------------------------
-define Branch > BLT(rs1::reg, rs2::reg, offs::bits(12)) =
+define Branch > BLT(rs1::reg, rs2::reg, offs::imm12) =
    if GPR(rs1) < GPR(rs2) then
       BranchTo <- Some(PC + (SignExtend(offs) << 2))
    else
@@ -507,7 +507,7 @@ define Branch > BLT(rs1::reg, rs2::reg, offs::bits(12)) =
 -----------------------------------
 -- BLTU  rs1, rs2, offs
 -----------------------------------
-define Branch > BLTU(rs1::reg, rs2::reg, offs::bits(12)) =
+define Branch > BLTU(rs1::reg, rs2::reg, offs::imm12) =
    if GPR(rs1) <+ GPR(rs2) then
       BranchTo <- Some(PC + (SignExtend(offs) << 2))
    else
@@ -516,7 +516,7 @@ define Branch > BLTU(rs1::reg, rs2::reg, offs::bits(12)) =
 -----------------------------------
 -- BGE   rs1, rs2, offs
 -----------------------------------
-define Branch > BGE(rs1::reg, rs2::reg, offs::bits(12)) =
+define Branch > BGE(rs1::reg, rs2::reg, offs::imm12) =
    if GPR(rs1) >= GPR(rs2) then
       BranchTo <- Some(PC + (SignExtend(offs) << 2))
    else
@@ -525,7 +525,7 @@ define Branch > BGE(rs1::reg, rs2::reg, offs::bits(12)) =
 -----------------------------------
 -- BGEU  rs1, rs2, offs
 -----------------------------------
-define Branch > BGEU(rs1::reg, rs2::reg, offs::bits(12)) =
+define Branch > BGEU(rs1::reg, rs2::reg, offs::imm12) =
    if GPR(rs1) >=+ GPR(rs2) then
       BranchTo <- Some(PC + (SignExtend(offs) << 2))
    else
@@ -536,9 +536,9 @@ define Branch > BGEU(rs1::reg, rs2::reg, offs::bits(12)) =
 ---------------------------------------------------------------------------
 
 -----------------------------------
--- LW    rd, offs
+-- LW    rd, rs1, offs
 -----------------------------------
-define Load > LW(rd::reg, rs1::reg, offs::bits(12)) =
+define Load > LW(rd::reg, rs1::reg, offs::imm12) =
 {
   addr = GPR(rs1) + SignExtend(offs);
   val  = readData(addr);
@@ -546,9 +546,9 @@ define Load > LW(rd::reg, rs1::reg, offs::bits(12)) =
 }
 
 -----------------------------------
--- LWU   rd, offs       (RV64I)
+-- LWU   rd, rs1, offs  (RV64I)
 -----------------------------------
-define Load > LWU(rd::reg, rs1::reg, offs::bits(12)) =
+define Load > LWU(rd::reg, rs1::reg, offs::imm12) =
 {
   addr = GPR(rs1) + SignExtend(offs);
   val  = readData(addr);
@@ -556,9 +556,9 @@ define Load > LWU(rd::reg, rs1::reg, offs::bits(12)) =
 }
 
 -----------------------------------
--- LH    rd, offs
+-- LH    rd, rs1, offs
 -----------------------------------
-define Load > LH(rd::reg, rs1::reg, offs::bits(12)) =
+define Load > LH(rd::reg, rs1::reg, offs::imm12) =
 {
   addr = GPR(rs1) + SignExtend(offs);
   val  = readData(addr);
@@ -566,9 +566,9 @@ define Load > LH(rd::reg, rs1::reg, offs::bits(12)) =
 }
 
 -----------------------------------
--- LHU   rd, offs
+-- LHU   rd, rs1, offs
 -----------------------------------
-define Load > LHU(rd::reg, rs1::reg, offs::bits(12)) =
+define Load > LHU(rd::reg, rs1::reg, offs::imm12) =
 {
   addr = GPR(rs1) + SignExtend(offs);
   val  = readData(addr);
@@ -576,9 +576,9 @@ define Load > LHU(rd::reg, rs1::reg, offs::bits(12)) =
 }
 
 -----------------------------------
--- LB    rd, offs
+-- LB    rd, rs1, offs
 -----------------------------------
-define Load > LB(rd::reg, rs1::reg, offs::bits(12)) =
+define Load > LB(rd::reg, rs1::reg, offs::imm12) =
 {
   addr = GPR(rs1) + SignExtend(offs);
   val  = readData(addr);
@@ -586,9 +586,9 @@ define Load > LB(rd::reg, rs1::reg, offs::bits(12)) =
 }
 
 -----------------------------------
--- LBU   rd, offs
+-- LBU   rd, rs1, offs
 -----------------------------------
-define Load > LBU(rd::reg, rs1::reg, offs::bits(12)) =
+define Load > LBU(rd::reg, rs1::reg, offs::imm12) =
 {
   addr = GPR(rs1) + SignExtend(offs);
   val  = readData(addr);
@@ -596,9 +596,19 @@ define Load > LBU(rd::reg, rs1::reg, offs::bits(12)) =
 }
 
 -----------------------------------
+-- LD    rd, rs1, offs  (RV64I)
+-----------------------------------
+define Load > LD(rd::reg, rs1::reg, offs::imm12) =
+{
+  addr = GPR(rs1) + SignExtend(offs);
+  val  = readData(addr);
+  GPR(rd) <- val
+}
+
+-----------------------------------
 -- SW    rs1, rs2, offs
 -----------------------------------
-define Store > SW(rs1::reg, rs2::reg, offs::bits(12)) =
+define Store > SW(rs1::reg, rs2::reg, offs::imm12) =
 {
   addr = GPR(rs1) + SignExtend(offs);
   mask = 0xFFFF_FFFF;
@@ -608,7 +618,7 @@ define Store > SW(rs1::reg, rs2::reg, offs::bits(12)) =
 -----------------------------------
 -- SH    rs1, rs2, offs
 -----------------------------------
-define Store > SH(rs1::reg, rs2::reg, offs::bits(12)) =
+define Store > SH(rs1::reg, rs2::reg, offs::imm12) =
 {
   addr = GPR(rs1) + SignExtend(offs);
   mask = 0xFFFF;
@@ -618,7 +628,7 @@ define Store > SH(rs1::reg, rs2::reg, offs::bits(12)) =
 -----------------------------------
 -- SB    rs1, rs2, offs
 -----------------------------------
-define Store > SB(rs1::reg, rs2::reg, offs::bits(12)) =
+define Store > SB(rs1::reg, rs2::reg, offs::imm12) =
 {
   addr = GPR(rs1) + SignExtend(offs);
   mask = 0xFF;
@@ -628,7 +638,7 @@ define Store > SB(rs1::reg, rs2::reg, offs::bits(12)) =
 -----------------------------------
 -- SD    rs1, rs2, offs (RV64I)
 -----------------------------------
-define Store > SD(rs1::reg, rs2::reg, offs::bits(12)) =
+define Store > SD(rs1::reg, rs2::reg, offs::imm12) =
 {
   addr = GPR(rs1) + SignExtend(offs);
   writeData(addr, GPR(rs2), SignExtend('1'))
@@ -639,9 +649,14 @@ define Store > SD(rs1::reg, rs2::reg, offs::bits(12)) =
 ---------------------------------------------------------------------------
 
 -----------------------------------
--- FENCE rd, rs1, pre, succ
+-- FENCE rd, rs1, pred, succ
 -----------------------------------
-define FENCE(rd::reg, rs1::reg, pre::bits(4), succ::bits(4)) = nothing
+define FENCE(rd::reg, rs1::reg, pred::bits(4), succ::bits(4)) = nothing
+
+-----------------------------------
+-- FENCE.I rd, rs1, imm
+-----------------------------------
+define FENCE_I(rd::reg, rs1::reg, imm::imm12) = nothing
 
 ---------------------------------------------------------------------------
 -- System Instructions
@@ -650,18 +665,18 @@ define FENCE(rd::reg, rs1::reg, pre::bits(4), succ::bits(4)) = nothing
 -----------------------------------
 -- SCALL
 -----------------------------------
-define SCALL  = SignalException(System)
+define System > SCALL  = signalException(SysCall)
 
 -----------------------------------
 -- SBREAK
 -----------------------------------
-define SBREAK = SignalException(Break)
+define System > SBREAK = signalException(SysBreak)
 
 -----------------------------------
 -- Reserved instruction (for unsuccessful decode)
 -----------------------------------
 define ReservedInstruction =
-   SignalException(ReservedInstr)
+   signalException(ReservedInstr)
 
 define Unpredictable = #UNPREDICTABLE("Unpredictable instruction")
 
@@ -677,15 +692,84 @@ string c  (n::reg)       = ", " : r(n)
 string i  (n::bits(N))   = ", " : (if n <+ 10 then "" else "0x") : [n]
 string oi (n::bits(N))   = if n == 0 then "" else i(n)
 
+-- helper to assemble various immediates from their pieces
+imm12 asImm12(imm12::bits(1), imm11::bits(1), immhi::bits(6), immlo::bits(4)) =
+    [imm12:imm11:immhi:immlo]
 
+imm20 asImm20(imm20::bits(1), immhi::bits(8), imm11::bits(1), immlo::bits(10)) =
+    [imm20:immhi:imm11:immlo]
+
+imm12 asSImm12(immhi::bits(7), immlo::bits(5)) = [immhi:immlo]
 
 instruction Decode(w::word) =
    match w
    {
-     case 'imm rs1 000 rd 00100 11' => ArithI(ADDI(rd, rs1, imm))
+     case 'i12 ihi rs2 rs1 000 ilo i11 11000 11' => Branch( BEQ(rs1, rs2, asImm12(i12, i11, ihi, ilo)))
+     case 'i12 ihi rs2 rs1 001 ilo i11 11000 11' => Branch( BNE(rs1, rs2, asImm12(i12, i11, ihi, ilo)))
+     case 'i12 ihi rs2 rs1 100 ilo i11 11000 11' => Branch( BLT(rs1, rs2, asImm12(i12, i11, ihi, ilo)))
+     case 'i12 ihi rs2 rs1 101 ilo i11 11000 11' => Branch( BGE(rs1, rs2, asImm12(i12, i11, ihi, ilo)))
+     case 'i12 ihi rs2 rs1 110 ilo i11 11000 11' => Branch(BLTU(rs1, rs2, asImm12(i12, i11, ihi, ilo)))
+     case 'i12 ihi rs2 rs1 111 ilo i11 11000 11' => Branch(BGEU(rs1, rs2, asImm12(i12, i11, ihi, ilo)))
+
+     case 'imm           rs1 000  rd 11001 11' => Branch( JALR(rd, rs1, imm))
+     case 'i20 ilo i11 ihi        rd 11011 11' => Branch(  JAL(rd, asImm20(i20, ihi, i11, ilo)))
+
+     case 'imm                    rd 01101 11' => ArithI(  LUI(rd, imm))
+     case 'imm                    rd 00101 11' => ArithI(AUIPC(rd, imm))
+
+     case 'imm           rs1 000  rd 00100 11' => ArithI( ADDI(rd, rs1, imm))
+     case '000000  shamt rs1 001  rd 00100 11' =>  Shift( SLLI(rd, rs1, shamt))
+     case 'imm           rs1 010  rd 00100 11' => ArithI( SLTI(rd, rs1, imm))
+     case 'imm           rs1 011  rd 00100 11' => ArithI(SLTIU(rd, rs1, imm))
+     case 'imm           rs1 100  rd 00100 11' => ArithI( XORI(rd, rs1, imm))
+     case '000000  shamt rs1 101  rd 00100 11' =>  Shift( SRLI(rd, rs1, shamt))
+     case '010000  shamt rs1 101  rd 00100 11' =>  Shift( SRAI(rd, rs1, shamt))
+     case 'imm           rs1 110  rd 00100 11' => ArithI(  ORI(rd, rs1, imm))
+     case 'imm           rs1 111  rd 00100 11' => ArithI( ANDI(rd, rs1, imm))
+
+     case '0000000   rs2 rs1 000  rd 01100 11' => ArithR(  ADD(rd, rs1, rs2))
+     case '0100000   rs2 rs1 000  rd 01100 11' => ArithR(  SUB(rd, rs1, rs2))
+     case '0000000   rs2 rs1 001  rd 01100 11' =>  Shift(  SLL(rd, rs1, rs2))
+     case '0000000   rs2 rs1 010  rd 01100 11' => ArithR(  SLT(rd, rs1, rs2))
+     case '0000000   rs2 rs1 011  rd 01100 11' => ArithR( SLTU(rd, rs1, rs2))
+     case '0000000   rs2 rs1 100  rd 01100 11' => ArithR(  XOR(rd, rs1, rs2))
+     case '0000000   rs2 rs1 101  rd 01100 11' =>  Shift(  SRL(rd, rs1, rs2))
+     case '0100000   rs2 rs1 101  rd 01100 11' =>  Shift(  SRA(rd, rs1, rs2))
+     case '0000000   rs2 rs1 110  rd 01100 11' => ArithR(   OR(rd, rs1, rs2))
+     case '0000000   rs2 rs1 111  rd 01100 11' => ArithR(  AND(rd, rs1, rs2))
+
+     case 'imm           rs1 000  rd 00110 11' => ArithI(ADDIW(rd, rs1, imm))
+     case '0000000 shamt rs1 001  rd 00110 11' =>  Shift(SLLIW(rd, rs1, shamt))
+     case '0000000 shamt rs1 101  rd 00110 11' =>  Shift(SRLIW(rd, rs1, shamt))
+     case '0100000 shamt rs1 101  rd 00110 11' =>  Shift(SRAIW(rd, rs1, shamt))
+
+     case '0000000   rs2 rs1 000  rd 01110 11' => ArithR( ADDW(rd, rs1, rs2))
+     case '0100000   rs2 rs1 000  rd 01110 11' => ArithR( SUBW(rd, rs1, rs2))
+     case '0000000   rs2 rs1 001  rd 01110 11' =>  Shift( SLLW(rd, rs1, rs2))
+     case '0000000   rs2 rs1 101  rd 01110 11' =>  Shift( SRLW(rd, rs1, rs2))
+     case '0100000   rs2 rs1 101  rd 01110 11' =>  Shift( SRAW(rd, rs1, rs2))
+
+     case 'imm           rs1 000  rd 00000 11' =>   Load(   LB(rd, rs1, imm))
+     case 'imm           rs1 001  rd 00000 11' =>   Load(   LH(rd, rs1, imm))
+     case 'imm           rs1 010  rd 00000 11' =>   Load(   LW(rd, rs1, imm))
+     case 'imm           rs1 011  rd 00000 11' =>   Load(   LD(rd, rs1, imm))
+     case 'imm           rs1 100  rd 00000 11' =>   Load(  LBU(rd, rs1, imm))
+     case 'imm           rs1 101  rd 00000 11' =>   Load(  LHU(rd, rs1, imm))
+     case 'imm           rs1 110  rd 00000 11' =>   Load(  LWU(rd, rs1, imm))
+
+     case 'ihi       rs2 rs1 000 ilo 01000 11' =>  Store(   SB(rs1, rs1, asSImm12(ihi, ilo)))
+     case 'ihi       rs2 rs1 001 ilo 01000 11' =>  Store(   SH(rs1, rs1, asSImm12(ihi, ilo)))
+     case 'ihi       rs2 rs1 010 ilo 01000 11' =>  Store(   SW(rs1, rs1, asSImm12(ihi, ilo)))
+     case 'ihi       rs2 rs1 011 ilo 01000 11' =>  Store(   SD(rs1, rs1, asSImm12(ihi, ilo)))
+
+     case '_`4 pred succ rs1 000  rd 00011 11' =>        FENCE(rd, rs1, pred, succ)
+     case 'imm           rs1 001  rd 00011 11' =>      FENCE_I(rd, rs1, imm)
+
+     case '000000000000  00000 000 00000 11100 11' =>   System( SCALL)
+     case '000000000001  00000 000 00000 11100 11' =>   System(SBREAK)
 
      -- reserved instructions
-     case _ => ReservedInstruction
+     case _                                        => ReservedInstruction
    }
 
 -- instruction to string
@@ -743,14 +827,15 @@ unit Next =
     match BranchTo
     {
         case None           => PC <- PC + 4
-        case Some(addr)    =>
+        case Some(addr)     =>
                  { BranchTo <- None;
                    PC <- addr
                  }
-        case _              => #UNPREDICTABLE("Branch follows branch")
     }
 }
 
+-- This initializes each core (via setting procID appropriately) on
+-- startup before execution begins.
 unit initRISCV(pc::nat) =
 {
    BranchTo <- None;
