@@ -19,6 +19,7 @@ type word   = bits(32)
 type dword  = bits(64)
 
 -- instruction fields
+type opcode = bits(7)
 type imm12  = bits(12)
 type imm20  = bits(20)
 
@@ -672,6 +673,38 @@ define System > SCALL  = signalException(SysCall)
 -----------------------------------
 define System > SBREAK = signalException(SysBreak)
 
+-- Timers and Counters
+
+-----------------------------------
+-- CSRRW  rd, rs1, imm
+-----------------------------------
+define System > CSRRW(rd::reg, rs1::reg, imm::imm12) = nothing
+
+-----------------------------------
+-- CSRRS  rd, rs1, imm
+-----------------------------------
+define System > CSRRS(rd::reg, rs1::reg, imm::imm12) = nothing
+
+-----------------------------------
+-- CSRRC  rd, rs1, imm
+-----------------------------------
+define System > CSRRC(rd::reg, rs1::reg, imm::imm12) = nothing
+
+-----------------------------------
+-- CSRRWI rd, rs1, imm
+-----------------------------------
+define System > CSRRWI(rd::reg, rs1::reg, imm::imm12) = nothing
+
+-----------------------------------
+-- CSRRSI rd, rs1, imm
+-----------------------------------
+define System > CSRRSI(rd::reg, rs1::reg, imm::imm12) = nothing
+
+-----------------------------------
+-- CSRRCI rd, rs1, imm
+-----------------------------------
+define System > CSRRCI(rd::reg, rs1::reg, imm::imm12) = nothing
+
 -----------------------------------
 -- Reserved instruction (for unsuccessful decode)
 -----------------------------------
@@ -694,12 +727,12 @@ string oi (n::bits(N))   = if n == 0 then "" else i(n)
 
 -- helper to assemble various immediates from their pieces
 imm12 asImm12(imm12::bits(1), imm11::bits(1), immhi::bits(6), immlo::bits(4)) =
-    [imm12:imm11:immhi:immlo]
+    imm12 : imm11 : immhi : immlo
 
 imm20 asImm20(imm20::bits(1), immhi::bits(8), imm11::bits(1), immlo::bits(10)) =
-    [imm20:immhi:imm11:immlo]
+    imm20 : immhi : imm11 : immlo
 
-imm12 asSImm12(immhi::bits(7), immlo::bits(5)) = [immhi:immlo]
+imm12 asSImm12(immhi::bits(7), immlo::bits(5)) =  immhi : immlo
 
 instruction Decode(w::word) =
    match w
@@ -757,13 +790,20 @@ instruction Decode(w::word) =
      case 'imm           rs1 101  rd 00000 11' =>   Load(  LHU(rd, rs1, imm))
      case 'imm           rs1 110  rd 00000 11' =>   Load(  LWU(rd, rs1, imm))
 
-     case 'ihi       rs2 rs1 000 ilo 01000 11' =>  Store(   SB(rs1, rs1, asSImm12(ihi, ilo)))
-     case 'ihi       rs2 rs1 001 ilo 01000 11' =>  Store(   SH(rs1, rs1, asSImm12(ihi, ilo)))
-     case 'ihi       rs2 rs1 010 ilo 01000 11' =>  Store(   SW(rs1, rs1, asSImm12(ihi, ilo)))
-     case 'ihi       rs2 rs1 011 ilo 01000 11' =>  Store(   SD(rs1, rs1, asSImm12(ihi, ilo)))
+     case 'ihi       rs2 rs1 000 ilo 01000 11' =>  Store(   SB(rs1, rs2, asSImm12(ihi, ilo)))
+     case 'ihi       rs2 rs1 001 ilo 01000 11' =>  Store(   SH(rs1, rs2, asSImm12(ihi, ilo)))
+     case 'ihi       rs2 rs1 010 ilo 01000 11' =>  Store(   SW(rs1, rs2, asSImm12(ihi, ilo)))
+     case 'ihi       rs2 rs1 011 ilo 01000 11' =>  Store(   SD(rs1, rs2, asSImm12(ihi, ilo)))
 
      case '_`4 pred succ rs1 000  rd 00011 11' =>        FENCE(rd, rs1, pred, succ)
      case 'imm           rs1 001  rd 00011 11' =>      FENCE_I(rd, rs1, imm)
+
+     case 'imm           rs1 001  rd 11100 11' => System( CSRRW(rd, rs1, imm))
+     case 'imm           rs1 010  rd 11100 11' => System( CSRRS(rd, rs1, imm))
+     case 'imm           rs1 011  rd 11100 11' => System( CSRRC(rd, rs1, imm))
+     case 'imm           rs1 101  rd 11100 11' => System(CSRRWI(rd, rs1, imm))
+     case 'imm           rs1 110  rd 11100 11' => System(CSRRSI(rd, rs1, imm))
+     case 'imm           rs1 111  rd 11100 11' => System(CSRRCI(rd, rs1, imm))
 
      case '000000000000  00000 000 00000 11100 11' =>   System( SCALL)
      case '000000000001  00000 000 00000 11100 11' =>   System(SBREAK)
@@ -777,16 +817,107 @@ instruction Decode(w::word) =
 string instructionToString(i::instruction) =
    match i
    {
-     case ArithI(ADDI(rd, rs1, imm))   => "addi"
+     case ArithI(ADDI(rd, rs1, imm))     => "addi"
 
      case Unpredictable                  => "???"
      case ReservedInstruction            => "???"
+     case _                              => "???"
    }
+
+
+word Rtype(o::opcode, f3::bits(3), rd::reg, rs1::reg, rs2::reg, f7::bits(7)) =
+    f7 : rs2 : rs1 : f3 : rd : o
+
+word Itype(o::opcode, f3::bits(3), rd::reg, rs1::reg, imm::imm12) =
+    imm : rs1 : f3 : rd : o
+
+word Stype(o::opcode, f3::bits(3), rs1::reg, rs2::reg, imm::imm12) =
+    imm<11:5> : rs2 : rs1 : f3 : imm<4:0> : o
+
+word SBtype(o::opcode, f3::bits(3), rs1::reg, rs2::reg, imm::imm12) =
+    [imm<11>]::bits(1) : imm<9:4> : rs2 : rs1 : f3 : imm<3:0> : [imm<10>]::bits(1) : o
+
+word Utype(o::opcode, rd::reg, imm::imm20) =
+    imm : rd : o
+
+word UJtype(o::opcode, rd::reg, imm::imm20) =
+    [imm<19>]::bits(1) : imm<9:0> : [imm<10>]::bits(1) : imm<18:11> : rd : o
+
+opcode opc(code::bits(8)) = code<4:0> : '11'
 
 word Encode(i::instruction) =
    match i
    {
-     case ArithI(ADDI(rs, rt, imm))      => '001000' : '00000000000000000000000000'
+     case Branch(  BEQ(rs1, rs2, imm))      => SBtype(opc(0x18), 0, rs1, rs2, imm)
+     case Branch(  BNE(rs1, rs2, imm))      => SBtype(opc(0x18), 1, rs1, rs2, imm)
+     case Branch(  BLT(rs1, rs2, imm))      => SBtype(opc(0x18), 4, rs1, rs2, imm)
+     case Branch(  BGE(rs1, rs2, imm))      => SBtype(opc(0x18), 5, rs1, rs2, imm)
+     case Branch( BLTU(rs1, rs2, imm))      => SBtype(opc(0x18), 6, rs1, rs2, imm)
+     case Branch( BGEU(rs1, rs2, imm))      => SBtype(opc(0x18), 7, rs1, rs2, imm)
+
+     case Branch( JALR(rd, rs1, imm))       =>  Itype(opc(0x19), 0, rd, rs1, imm)
+     case Branch(  JAL(rd, imm))            => UJtype(opc(0x1b), rd, imm)
+
+     case ArithI(  LUI(rd, imm))            =>  Utype(opc(0x0D), rd, imm)
+     case ArithI(AUIPC(rd, imm))            =>  Utype(opc(0x05), rd, imm)
+
+     case ArithI( ADDI(rd, rs1, imm))       =>  Itype(opc(0x04), 0, rd, rs1, imm)
+     case  Shift( SLLI(rd, rs1, imm))       =>  Itype(opc(0x04), 0, rd, rs1, '000000' : imm)
+     case ArithI( SLTI(rd, rs1, imm))       =>  Itype(opc(0x04), 2, rd, rs1, imm)
+     case ArithI(SLTIU(rd, rs1, imm))       =>  Itype(opc(0x04), 3, rd, rs1, imm)
+     case ArithI( XORI(rd, rs1, imm))       =>  Itype(opc(0x04), 4, rd, rs1, imm)
+     case  Shift( SRLI(rd, rs1, imm))       =>  Itype(opc(0x04), 5, rd, rs1, '000000' : imm)
+     case  Shift( SRAI(rd, rs1, imm))       =>  Itype(opc(0x04), 5, rd, rs1, '010000' : imm)
+     case ArithI(  ORI(rd, rs1, imm))       =>  Itype(opc(0x04), 6, rd, rs1, imm)
+     case ArithI( ANDI(rd, rs1, imm))       =>  Itype(opc(0x04), 7, rd, rs1, imm)
+
+     case ArithR(  ADD(rd, rs1, rs2))       =>  Rtype(opc(0x0C), 0, rd, rs1, rs2, 0)
+     case ArithR(  SUB(rd, rs1, rs2))       =>  Rtype(opc(0x0C), 0, rd, rs1, rs2, 32)
+     case  Shift(  SLL(rd, rs1, rs2))       =>  Rtype(opc(0x0C), 1, rd, rs1, rs2, 0)
+     case ArithR(  SLT(rd, rs1, rs2))       =>  Rtype(opc(0x0C), 2, rd, rs1, rs2, 0)
+     case ArithR( SLTU(rd, rs1, rs2))       =>  Rtype(opc(0x0C), 3, rd, rs1, rs2, 0)
+     case ArithR(  XOR(rd, rs1, rs2))       =>  Rtype(opc(0x0C), 4, rd, rs1, rs2, 0)
+     case  Shift(  SRL(rd, rs1, rs2))       =>  Rtype(opc(0x0C), 5, rd, rs1, rs2, 0)
+     case  Shift(  SRA(rd, rs1, rs2))       =>  Rtype(opc(0x0C), 5, rd, rs1, rs2, 32)
+     case ArithR(   OR(rd, rs1, rs2))       =>  Rtype(opc(0x0C), 6, rd, rs1, rs2, 0)
+     case ArithR(  AND(rd, rs1, rs2))       =>  Rtype(opc(0x0C), 7, rd, rs1, rs2, 0)
+
+     case ArithI(ADDIW(rd, rs1, imm))       =>  Itype(opc(0x06), 0, rd, rs1, imm)
+     case  Shift(SLLIW(rd, rs1, imm))       =>  Itype(opc(0x06), 1, rd, rs1, '0000000' : imm)
+     case  Shift(SRLIW(rd, rs1, imm))       =>  Itype(opc(0x06), 5, rd, rs1, '0000000' : imm)
+     case  Shift(SRAIW(rd, rs1, imm))       =>  Itype(opc(0x06), 5, rd, rs1, '0100000' : imm)
+
+     case ArithR( ADDW(rd, rs1, rs2))       =>  Rtype(opc(0x0E), 0, rd, rs1, rs2, '0000000')
+     case ArithR( SUBW(rd, rs1, rs2))       =>  Rtype(opc(0x0E), 0, rd, rs1, rs2, '0100000')
+     case  Shift( SLLW(rd, rs1, rs2))       =>  Rtype(opc(0x0E), 1, rd, rs1, rs2, '0000000')
+     case  Shift( SRLW(rd, rs1, rs2))       =>  Rtype(opc(0x0E), 5, rd, rs1, rs2, '0000000')
+     case  Shift( SRAW(rd, rs1, rs2))       =>  Rtype(opc(0x0E), 5, rd, rs1, rs2, '0100000')
+
+     case   Load(   LB(rd, rs1, imm))       =>  Itype(opc(0x00), 0, rd, rs1, imm)
+     case   Load(   LH(rd, rs1, imm))       =>  Itype(opc(0x00), 1, rd, rs1, imm)
+     case   Load(   LW(rd, rs1, imm))       =>  Itype(opc(0x00), 2, rd, rs1, imm)
+     case   Load(   LD(rd, rs1, imm))       =>  Itype(opc(0x00), 3, rd, rs1, imm)
+     case   Load(  LBU(rd, rs1, imm))       =>  Itype(opc(0x00), 4, rd, rs1, imm)
+     case   Load(  LHU(rd, rs1, imm))       =>  Itype(opc(0x00), 5, rd, rs1, imm)
+     case   Load(  LWU(rd, rs1, imm))       =>  Itype(opc(0x00), 6, rd, rs1, imm)
+
+     case  Store(   SB(rs1, rs2, imm))      =>  Stype(opc(0x08), 0, rs1, rs2, imm)
+     case  Store(   SH(rs1, rs2, imm))      =>  Stype(opc(0x08), 1, rs1, rs2, imm)
+     case  Store(   SW(rs1, rs2, imm))      =>  Stype(opc(0x08), 2, rs1, rs2, imm)
+     case  Store(   SD(rs1, rs2, imm))      =>  Stype(opc(0x08), 3, rs1, rs2, imm)
+
+     case        FENCE(rd, rs1, pred, succ) =>  Itype(opc(0x03), 0, rd, rs1, '0000' : pred : succ)
+     case      FENCE_I(rd, rs1, imm)        =>  Itype(opc(0x03), 1, rd, rs1, imm)
+
+     case System( SCALL)                    =>  Itype(opc(0x1C), 0, 0, 0, 0)
+     case System(SBREAK)                    =>  Itype(opc(0x1C), 0, 0, 0, 1)
+
+     case System( CSRRW(rd, rs1, imm))      =>  Itype(opc(0x1C), 1, rd, rs1, imm)
+     case System( CSRRS(rd, rs1, imm))      =>  Itype(opc(0x1C), 2, rd, rs1, imm)
+     case System( CSRRC(rd, rs1, imm))      =>  Itype(opc(0x1C), 3, rd, rs1, imm)
+     case System(CSRRWI(rd, rs1, imm))      =>  Itype(opc(0x1C), 5, rd, rs1, imm)
+     case System(CSRRSI(rd, rs1, imm))      =>  Itype(opc(0x1C), 6, rd, rs1, imm)
+     case System(CSRRCI(rd, rs1, imm))      =>  Itype(opc(0x1C), 7, rd, rs1, imm)
 
      case Unpredictable                  => '00000111111100000000000000000000'
      case ReservedInstruction            => 0
