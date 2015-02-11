@@ -812,16 +812,106 @@ instruction Decode(w::word) =
      case _                                        => ReservedInstruction
    }
 
--- instruction to string
+-- instruction printer
+
+string reg(r::reg)      = "$" : [[r]::nat]
+string imm(i::bits(N))  = "0x" : [i]
+string instr(o::string) = PadRight(#" ", 12, o)
+
+string pRtype(o::string, rd::reg, rs1::reg, rs2::reg) =
+    instr(o) : " " : reg(rd) : ", " : reg(rs1) : ", " : reg(rs2)
+
+string pItype(o::string, rd::reg, rs1::reg, i::bits(N)) =
+    instr(o) : " " : reg(rd) : ", " : reg(rs1) : ", " : imm(i)
+
+string pStype(o::string, rs1::reg, rs2::reg, i::bits(N)) =
+    instr(o) : " " : reg(rs1) : ", " : reg(rs2) : ", " : imm(i)
+
+string pUtype(o::string, rd::reg, i::bits(N)) =
+    instr(o) : " " : reg(rd) : ", " : imm(i)
+
+string pN0type(o::string) =
+    instr(o)
+
+string pN1type(o::string, r::reg) =
+    instr(o) : " " : reg(r)
 
 string instructionToString(i::instruction) =
    match i
    {
-     case ArithI(ADDI(rd, rs1, imm))     => "addi"
+     case Branch(  BEQ(rs1, rs2, imm))      => pStype("BEQ",   rs1, rs2, imm)
+     case Branch(  BNE(rs1, rs2, imm))      => pStype("BNE",   rs1, rs2, imm)
+     case Branch(  BLT(rs1, rs2, imm))      => pStype("BLT",   rs1, rs2, imm)
+     case Branch(  BGE(rs1, rs2, imm))      => pStype("BGE",   rs1, rs2, imm)
+     case Branch( BLTU(rs1, rs2, imm))      => pStype("BLTU",  rs1, rs2, imm)
+     case Branch( BGEU(rs1, rs2, imm))      => pStype("BGEU",  rs1, rs2, imm)
 
-     case Unpredictable                  => "???"
-     case ReservedInstruction            => "???"
-     case _                              => "???"
+     case Branch( JALR(rd, rs1, imm))       => pItype("JALR",  rd, rs1, imm)
+     case Branch(  JAL(rd, imm))            => pUtype("JAL",   rd, imm)
+
+     case ArithI(  LUI(rd, imm))            => pUtype("LUI",   rd, imm)
+     case ArithI(AUIPC(rd, imm))            => pUtype("AUIPC", rd, imm)
+
+     case ArithI( ADDI(rd, rs1, imm))       => pItype("ADDI",  rd, rs1, imm)
+     case  Shift( SLLI(rd, rs1, imm))       => pItype("SLLI",  rd, rs1, imm)
+     case ArithI( SLTI(rd, rs1, imm))       => pItype("SLTI",  rd, rs1, imm)
+     case ArithI(SLTIU(rd, rs1, imm))       => pItype("SLTIU", rd, rs1, imm)
+     case ArithI( XORI(rd, rs1, imm))       => pItype("XORI",  rd, rs1, imm)
+     case  Shift( SRLI(rd, rs1, imm))       => pItype("SRLI",  rd, rs1, imm)
+     case  Shift( SRAI(rd, rs1, imm))       => pItype("SRAI",  rd, rs1, imm)
+     case ArithI(  ORI(rd, rs1, imm))       => pItype("ORI",   rd, rs1, imm)
+     case ArithI( ANDI(rd, rs1, imm))       => pItype("ANDI",  rd, rs1, imm)
+
+     case ArithR(  ADD(rd, rs1, rs2))       => pRtype("ADD",   rd, rs1, rs2)
+     case ArithR(  SUB(rd, rs1, rs2))       => pRtype("SUB",   rd, rs1, rs2)
+     case  Shift(  SLL(rd, rs1, rs2))       => pRtype("SLL",   rd, rs1, rs2)
+     case ArithR(  SLT(rd, rs1, rs2))       => pRtype("SLT",   rd, rs1, rs2)
+     case ArithR( SLTU(rd, rs1, rs2))       => pRtype("SLTU",  rd, rs1, rs2)
+     case ArithR(  XOR(rd, rs1, rs2))       => pRtype("XOR",   rd, rs1, rs2)
+     case  Shift(  SRL(rd, rs1, rs2))       => pRtype("SRL",   rd, rs1, rs2)
+     case  Shift(  SRA(rd, rs1, rs2))       => pRtype("SRA",   rd, rs1, rs2)
+     case ArithR(   OR(rd, rs1, rs2))       => pRtype("OR",    rd, rs1, rs2)
+     case ArithR(  AND(rd, rs1, rs2))       => pRtype("AND",   rd, rs1, rs2)
+
+     case ArithI(ADDIW(rd, rs1, imm))       => pItype("ADDIW", rd, rs1, imm)
+     case  Shift(SLLIW(rd, rs1, imm))       => pItype("SLLIW", rd, rs1, imm)
+     case  Shift(SRLIW(rd, rs1, imm))       => pItype("SRLIW", rd, rs1, imm)
+     case  Shift(SRAIW(rd, rs1, imm))       => pItype("SRAIW", rd, rs1, imm)
+
+     case ArithR( ADDW(rd, rs1, rs2))       => pRtype("ADDW",  rd, rs1, rs2)
+     case ArithR( SUBW(rd, rs1, rs2))       => pRtype("SUBW",  rd, rs1, rs2)
+     case  Shift( SLLW(rd, rs1, rs2))       => pRtype("SLLW",  rd, rs1, rs2)
+     case  Shift( SRLW(rd, rs1, rs2))       => pRtype("SRLW",  rd, rs1, rs2)
+     case  Shift( SRAW(rd, rs1, rs2))       => pRtype("SRAW",  rd, rs1, rs2)
+
+     case   Load(   LB(rd, rs1, imm))       => pItype("LB",    rd, rs1, imm)
+     case   Load(   LH(rd, rs1, imm))       => pItype("LH",    rd, rs1, imm)
+     case   Load(   LW(rd, rs1, imm))       => pItype("LW",    rd, rs1, imm)
+     case   Load(   LD(rd, rs1, imm))       => pItype("LD",    rd, rs1, imm)
+     case   Load(  LBU(rd, rs1, imm))       => pItype("LBU",   rd, rs1, imm)
+     case   Load(  LHU(rd, rs1, imm))       => pItype("LHU",   rd, rs1, imm)
+     case   Load(  LWU(rd, rs1, imm))       => pItype("LWU",   rd, rs1, imm)
+
+     case  Store(   SB(rs1, rs2, imm))      => pStype("SB",    rs1, rs2, imm)
+     case  Store(   SH(rs1, rs2, imm))      => pStype("SH",    rs1, rs2, imm)
+     case  Store(   SW(rs1, rs2, imm))      => pStype("SW",    rs1, rs2, imm)
+     case  Store(   SD(rs1, rs2, imm))      => pStype("SD",    rs1, rs2, imm)
+
+     case        FENCE(rd, rs1, pred, succ) => pN0type("FENCE")
+     case      FENCE_I(rd, rs1, imm)        => pN0type("FENCE.I")
+
+     case System( SCALL)                    => pN0type("SCALL")
+     case System(SBREAK)                    => pN0type("SBREAK")
+
+     case System( CSRRW(rd, rs1, imm))      => pItype("CSRRW",  rd, rs1, imm)
+     case System( CSRRS(rd, rs1, imm))      => pItype("CSRRS",  rd, rs1, imm)
+     case System( CSRRC(rd, rs1, imm))      => pItype("CSRRC",  rd, rs1, imm)
+     case System(CSRRWI(rd, rs1, imm))      => pItype("CSRRWI", rd, rs1, imm)
+     case System(CSRRSI(rd, rs1, imm))      => pItype("CSRRSI", rd, rs1, imm)
+     case System(CSRRCI(rd, rs1, imm))      => pItype("CSRRCI", rd, rs1, imm)
+
+     case Unpredictable                     => pN0type("UNPREDICTABLE")
+     case ReservedInstruction               => pN0type("RESERVED")
    }
 
 
