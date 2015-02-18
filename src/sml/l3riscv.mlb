@@ -19,6 +19,8 @@ $(SML_LIB)/basis/basis.mlb
 ./lib/Ptree.sml
 ./lib/MutableMap.sig
 ./lib/MutableMap.sml
+./lib/Elf.sig
+./lib/Elf.sml
 riscv.sig
 ann "nonexhaustiveMatch ignore" in
   riscv.sml
