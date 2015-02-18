@@ -1,4 +1,4 @@
-(* Copyright (C) 2015 SRI International.
+(* Copyright (C) 2015, SRI International.
  * See the file LICENSE for details.
  *)
 

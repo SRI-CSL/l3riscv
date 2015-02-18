@@ -1,7 +1,10 @@
 ---------------------------------------------------------------------------
 --
 -- RISC-V Model
--- Based on MIPS specification by Anthony Fox, University of Cambridge
+-- Based on the MIPS specification by Anthony Fox, University of Cambridge
+--
+-- Copyright (C) 2015, SRI International.
+-- See the file LICENSE for details.
 --
 ---------------------------------------------------------------------------
 
@@ -1062,7 +1065,7 @@ unit Next =
         case Some(w) =>
         {
             inst = Decode(w);
-            mark_log(1, log_instruction(w,inst));
+            mark_log(1, log_instruction(w, inst));
             Run(inst)
         }
         case None => nothing

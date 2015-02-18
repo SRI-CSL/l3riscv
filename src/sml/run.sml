@@ -1,5 +1,5 @@
 (* --------------------------------------------------------------------------
-   MIPS emulator (based on SML generated from an L3 specification)
+   RISCV emulator
    -------------------------------------------------------------------------- *)
 
 (* --------------------------------------------------------------------------
@@ -269,7 +269,7 @@ end
 
 fun printUsage () =
     print
-        ("\nMIPS emulator (based on an L3 specification).\n\
+        ("\nRISCV emulator (based on an L3 specification).\n\
       \http://www.cl.cam.ac.uk/~acjf3/l3\n\n\
       \usage: " ^ OS.Path.file (CommandLine.name ()) ^ " [arguments] file\n\n\
       \Arguments:\n\
