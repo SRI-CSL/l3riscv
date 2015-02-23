@@ -1,3 +1,7 @@
+(* Copyright (C) 2015, SRI International.
+   See COPYRIGHT file for additional copyrights.
+   See LICENSE file for details.
+ *)
 (* --------------------------------------------------------------------------
    RISCV emulator
    -------------------------------------------------------------------------- *)

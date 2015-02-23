@@ -1,0 +1,7 @@
+This is a port of the L3 MIPS simulator to RISCV.
+
+You will need to install L3, available from
+http://www.cl.cam.ac.uk/~acjf3/l3
+
+The original l3mips simulator is at
+https://github.com/acjf3/l3mips
