@@ -32,6 +32,7 @@ exception UNPREDICTABLE :: string
 
 type regType  = dword
 type vAddr    = dword
+type pAddr    = bits(61)        -- internal accesses are 8-byte aligned
 
 ---------------------------------------------------------------------------
 -- Memory types for Load/Store instructions
@@ -119,12 +120,16 @@ bool NotWordValue(value::regType) =
 
 string log_w_gpr(r::reg, data::regType) = "Reg " : [[r]::nat] : " <- 0x" : PadLeft(#"0", 16, [data])
 
-string log_w_mem(addr::vAddr, mask::regType, data::regType) =
+string log_w_mem_mask(addr::pAddr, mask::regType, data::regType) =
     "MEM[0x" : PadLeft(#"0", 10, [addr]) :
     "] <- (data: 0x" : PadLeft(#"0", 16, [data]) :
     ", mask: 0x" : PadLeft(#"0", 16, [mask]) : ")"
 
-string log_r_mem(addr::vAddr, data::regType) =
+string log_w_mem(addr::pAddr, data::regType) =
+    "MEM[0x" : PadLeft(#"0", 10, [addr]) :
+    "] <- (data: 0x" : PadLeft(#"0", 16, [data]) : ")"
+
+string log_r_mem(addr::pAddr, data::regType) =
     "data <- MEM[0x" : PadLeft(#"0", 10, [addr]) :
     "]: 0x" : PadLeft(#"0", 16, [data])
 
@@ -183,28 +188,41 @@ unit dumpRegs() =
 -- Memory access
 ---------------------------------------------------------------------------
 
-declare VMEM :: vAddr -> regType -- user-space virtual memory
+declare VMEM :: pAddr -> regType -- user-space virtual memory,
+                                 -- aligned at 2^(|vAddr| - |pAddr|)
 
 unit initVMEM = VMEM <- InitMap(0x0)
 
 regType readData(vAddr::vAddr) =
 {
-  data = VMEM(vAddr);
-  mark_log(2, log_r_mem(vAddr, data));
+  pAddr = vAddr<63:3>;
+  data  = VMEM(pAddr);
+  mark_log(2, log_r_mem(pAddr, data));
   data
 }
 
 unit writeData(vAddr::vAddr, data::regType, mask::regType) =
 {
-  VMEM(vAddr) <- VMEM(vAddr) && ~mask || data && mask;
-  mark_log(2, log_w_mem(vAddr, mask, data))
+  pAddr = vAddr<63:3>;
+  VMEM(pAddr) <- VMEM(pAddr) && ~mask || data && mask;
+  mark_log(2, log_w_mem_mask(pAddr, mask, data))
 }
 
-word readInst(a::vAddr) = if a<2> then VMEM(a)<31:0> else VMEM(a)<63:32>
+word readInst(vAddr::vAddr) =
+{
+  pAddr = vAddr<63:3>;
+  data = VMEM(pAddr);
+  mark_log(2, log_r_mem(pAddr, data));
+  if vAddr<2> then data<63:32> else data<31:0>
+}
 
 -- helper used to preload memory contents
 unit writeMem(vAddr::vAddr, data::regType) =
-    VMEM(vAddr) <- data
+{
+  pAddr = vAddr<63:3>;
+  VMEM(pAddr) <- data;
+  mark_log(2, log_w_mem(pAddr, data))
+}
 
 --------------------------------------------------
 -- Instruction fetch
