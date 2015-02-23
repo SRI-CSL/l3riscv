@@ -54,7 +54,7 @@ fun storeVecInMemHelper vec base i =
         val bytes0  = List.tabulate (8, fn inner => getByte vec (j+inner));
         val bytes1  = if !be then bytes0 else rev bytes0
         val bits64  = BitsN.concat bytes1
-    in  if  j < Word8Vector.length vec
+    in  if   j < Word8Vector.length vec
         then ( riscv.writeMem (BitsN.fromInt ((base + j), 64), bits64)
              ; storeVecInMemHelper vec base (i+1)
              )
@@ -112,7 +112,7 @@ fun disassemble pc range =
    Run code
    ------------------------------------------------------------------------ *)
 
-fun loop mx i =
+fun log_loop mx i =
     let val () = riscv.procID := BitsN.B(!current_core_id,
                                          BitsN.size(!riscv.procID))
         val pc = riscv.Map.lookup(!riscv.c_PC, !current_core_id)
@@ -123,32 +123,29 @@ fun loop mx i =
       ; if 2 <= !trace_level then printLog(2) else ()
       ; if !riscv.done orelse i = mx
         then print ("Completed " ^ Int.toString (i + 1) ^ " instructions.\n")
-        else loop mx (i + 1)
+        else log_loop mx (i + 1)
     end
 
 fun decr i = if i <= 0 then i else i - 1
 
-fun pureLoop mx =
+fun silent_loop mx =
     ( riscv.procID := BitsN.B(!current_core_id,
                               BitsN.size(!riscv.procID))
     ; riscv.Next ()
-    ; printLog(0)
     ; if !riscv.done orelse (mx = 1) then (print "done\n")
-      else pureLoop (decr mx)
+      else silent_loop (decr mx)
     )
 
 local
     fun t f x = if !time_run then Runtime.time f x else f x
 in
 fun run_mem mx =
-    if 1 <= !trace_level then t (loop mx) 0 else t pureLoop mx
+    if   1 <= !trace_level
+    then t (log_loop mx) 0
+    else t silent_loop mx
 
-fun run pc mx =
-    ( riscv.procID := BitsN.B(!current_core_id, BitsN.size(!riscv.procID))
-    ; riscv.initRISCV pc
-    ; riscv.totalCore := 1
-    ; run_mem mx
-    )
+fun run mx =
+    run_mem mx
     handle riscv.UNPREDICTABLE s =>
            ( dumpRegisters
            ; failExit ("UNPREDICTABLE \"" ^ s ^ "\"\n")
@@ -174,13 +171,24 @@ fun doElf cycles file dis =
     let val elf   = Elf.openElf file
         val hdr   = Elf.getElfHeader elf
         val psegs = Elf.getElfProgSegments elf hdr
-    in print "Loading elf file ...\n"
-     ; Elf.printElfHeader hdr
-     ; riscv.print := debug_print
-     ; riscv.println := debug_println
-     ; be := (if (#endian hdr = Elf.BIG) then true else false)
-     ; loadElf psegs dis
-     ; if dis then () else run (#entry hdr) cycles
+    in
+        riscv.procID    := BitsN.B(!current_core_id, BitsN.size(!riscv.procID))
+      ; riscv.initRISCV (#entry hdr)
+      ; riscv.totalCore := 1
+      ; riscv.print     := debug_print
+      ; riscv.println   := debug_println
+
+      ; print "Loading elf file ...\n"
+      ; Elf.printElfHeader hdr
+      ; be := (if (#endian hdr = Elf.BIG) then true else false)
+      ; loadElf psegs dis
+
+      ; if dis
+        then ( printLog (0)
+             ; if 1 <= !trace_level then printLog(1) else ()
+             ; if 2 <= !trace_level then printLog(2) else ()
+             )
+        else run cycles
     end
 
 (* ------------------------------------------------------------------------
