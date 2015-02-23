@@ -14,10 +14,9 @@ val be = ref false (* little-endian *)
 val trace_level = ref 0
 val time_run = ref true
 val current_core_id = ref 0
-val nb_core = ref 1
 
 (* --------------------------------------------------------------------------
-   Loading code into memory from Hex file
+   Utilities
    -------------------------------------------------------------------------- *)
 
 fun hex s = L3.lowercase (BitsN.toHexString s)
@@ -36,33 +35,6 @@ fun err e s = failExit ("Failed to " ^ e ^ " file \"" ^ s ^ "\"")
 fun debug_print s = print("==DEBUG== "^s)
 fun debug_println s = print("==DEBUG== "^s^"\n")
 
-(*
-fun printHex a =
-    let val problematic = ref ([] : BitsN.nbit list)
-    in  Array.appi
-            (fn (i, w) =>
-                let val s = riscv.instructionToString (riscv.Decode w)
-                    val () = if s = "???" then problematic := w :: !problematic
-                             else ()
-                in   print (hex32 w ^ " " ^ s ^ "\n")
-                end) a
-      ; L3.mkSet (!problematic)
-    end
-*)
-
-fun storeArrayInMem (base, marray) =
-   let val b = IntInf.andb (base div 8, 0x1fffffffff)
-   in  L3.for (0, Array.length marray div 2 - 1,
-               fn i =>
-                  let val w1 = Array.sub (marray, 2 * i)
-                      val w2 = Array.sub (marray, 2 * i + 1)
-                      val dw = BitsN.@@ (w1, w2)
-                  in  riscv.writeMem(BitsN.fromInt(b + i, 37), dw)
-                  end
-                  handle Subscript => print (Int.toString i ^ "\n"))
-     ; print (Int.toString (Array.length marray) ^ " words.\n")
-   end
-
 (* --------------------------------------------------------------------------
    Loading code into memory from raw file
    -------------------------------------------------------------------------- *)
@@ -75,22 +47,31 @@ fun getByte v i =
     then word8ToBits8 (Word8Vector.sub (v, i))
     else BitsN.zero 8
 
+(* TODO: this might be broken for big-endian code, but RISCV is
+   little-endian by default. *)
 fun storeVecInMemHelper vec base i =
     let val j = 8*i;
         val bytes0  = List.tabulate (8, fn inner => getByte vec (j+inner));
         val bytes1  = if !be then bytes0 else rev bytes0
         val bits64  = BitsN.concat bytes1
-    in  if   j < Word8Vector.length vec
-        then ( riscv.writeMem(BitsN.fromInt(base+i, 35), bits64)
-             ; print (Int.toString(base+i) ^ ": 0x" ^ BitsN.toHexString(bits64)^"\n")
+    in  if  j < Word8Vector.length vec
+        then ( riscv.writeMem (BitsN.fromInt ((base + j), 64), bits64)
              ; storeVecInMemHelper vec base (i+1)
              )
-        else print (Int.toString (Word8Vector.length vec) ^ " words.\n")
+        else
+            print (Int.toString (Word8Vector.length vec) ^ " words.\n")
     end
 
-fun storeVecInMem (base, vec) =
-    let val b = IntInf.andb (base div 8, 0x7ffffffff)
-    in  storeVecInMemHelper vec b 0
+fun storeVecInMem (base, memsz, vec) =
+    let val vlen   = Word8Vector.length vec
+        val padded = if memsz <= vlen then vec
+                     else (
+                         let val pad = Word8Vector.tabulate
+                                           (memsz - vlen,  (fn _ => Word8.fromInt 0))
+                         in  Word8Vector.concat (vec :: pad :: [])
+                         end
+                     )
+    in  storeVecInMemHelper padded base 0
     end
 
 fun printLog (n) = List.app (fn e => print(e ^ "\n"))
@@ -114,6 +95,18 @@ fun dumpRegisters (core) =
       ; riscv.procID := savedProcID
     end
 end
+
+fun disassemble pc range =
+    if range <= 0 then ()
+    else let val word = riscv.readInst (BitsN.fromInt (IntInf.toInt pc, 64))
+             val inst = riscv.Decode word
+         in print ("0x" ^ (IntInf.fmt StringCvt.HEX pc) ^ ": "
+                   ^ "0x" ^ hex32 word ^ ": "
+                   ^ riscv.instructionToString inst
+                   ^ "\n"
+                  )
+          ; disassemble (pc + 4) (range - 4)
+         end
 
 (* ------------------------------------------------------------------------
    Run code
@@ -150,37 +143,44 @@ in
 fun run_mem mx =
     if 1 <= !trace_level then t (loop mx) 0 else t pureLoop mx
 
-fun run pc mx psegs =
+fun run pc mx =
     ( riscv.procID := BitsN.B(!current_core_id, BitsN.size(!riscv.procID))
     ; riscv.initRISCV pc
     ; riscv.totalCore := 1
-    ; riscv.print := debug_print
-    ; riscv.println := debug_println
-    ; List.app
-          (fn seg =>
-              if (#ptype seg) = Elf.PT_LOAD
-              then ( print ("Loading ")
-                   ; Elf.printPSeg seg
-                   ; storeVecInMem ((#vaddr seg), (#bytes seg))
-                   )
-              else ( print ("Skipping ")
-                   ; Elf.printPSeg seg
-                   )
-          ) psegs
     ; run_mem mx
     )
     handle riscv.UNPREDICTABLE s =>
-           ( List.tabulate(!nb_core, dumpRegisters)
+           ( dumpRegisters
            ; failExit ("UNPREDICTABLE \"" ^ s ^ "\"\n")
            )
 end
 
-fun runElf cycles file =
+fun loadElf segs dis =
+    List.app (fn s =>
+                 if (#ptype s) = Elf.PT_LOAD
+                 then ( print ( "Loading segment ...\n")
+                      ; Elf.printPSeg s
+                      ; storeVecInMem ((#vaddr s), (#memsz s), (#bytes s))
+                      (* TODO: should check flags for executable segment *)
+                      ; if dis then disassemble (#vaddr s) (#memsz s)
+                        else ()
+                      )
+                 else ( print ("Skipping ")
+                      ; Elf.printPSeg s
+                      )
+             ) segs
+
+fun doElf cycles file dis =
     let val elf   = Elf.openElf file
         val hdr   = Elf.getElfHeader elf
         val psegs = Elf.getElfProgSegments elf hdr
-    in  be := (if (#endian hdr = Elf.BIG) then true else false)
-      ; run (#entry hdr) cycles psegs
+    in print "Loading elf file ...\n"
+     ; Elf.printElfHeader hdr
+     ; riscv.print := debug_print
+     ; riscv.println := debug_println
+     ; be := (if (#endian hdr = Elf.BIG) then true else false)
+     ; loadElf psegs dis
+     ; if dis then () else run (#entry hdr) cycles
     end
 
 (* ------------------------------------------------------------------------
@@ -194,6 +194,7 @@ local
               \http://www.cl.cam.ac.uk/~acjf3/l3\n\n\
               \usage: " ^ OS.Path.file (CommandLine.name ()) ^ " [arguments] file\n\n\
               \Arguments:\n\
+              \  --dis <bool>         only disassemble loaded code\n\
               \  --cycles <number>    upper bound on instruction cycles\n\
               \  --trace <level>      verbosity level (0 default, 2 maximum)\n\
               \  -h or --help         print this message\n\n")
@@ -203,10 +204,16 @@ local
             SOME n => n
           | NONE   => failExit ("Bad number: " ^ s)
 
+    fun getBool s =
+        case Bool.fromString s of
+            SOME b => b
+         |  NONE   => failExit ("Bad bool: " ^ s)
+
     fun getArguments () =
         List.map
             (fn "-c" => "--cycles"
             | "-t"   => "--trace"
+            | "-d"   => "--dis"
             | "-h"   => "--help"
             | s      => s
             ) (CommandLine.arguments ())
@@ -230,8 +237,10 @@ val () =
             val (t, l) = processOption "--trace" l
             val t = Option.getOpt (Option.map getNumber t, !trace_level)
             val () = trace_level := Int.max (0, t)
+            val (d, l) = processOption "--dis" l
+            val d = Option.getOpt (Option.map getBool d, false)
         in
             if List.null l then printUsage ()
-            else runElf c (List.hd l)
+            else doElf c (List.hd l) d
         end
 end
