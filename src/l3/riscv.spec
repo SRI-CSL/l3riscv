@@ -3,6 +3,8 @@
 -- RISC-V Model
 -- Based on the MIPS specification by Anthony Fox, University of Cambridge
 --
+-- Copyright (C) 2014, 2015 Anthony Fox, University of Cambridge
+-- Copyright (C) 2014, 2015 Alexandre Joannou, University of Cambridge
 -- Copyright (C) 2015, SRI International.
 -- See the file LICENSE for details.
 --

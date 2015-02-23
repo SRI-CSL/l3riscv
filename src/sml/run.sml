@@ -1,5 +1,6 @@
-(* Copyright (C) 2015, SRI International.
-   See COPYRIGHT file for additional copyrights.
+(* Copyright (C) 2014, 2015 Anthony Fox, University of Cambridge
+   Copyright (C) 2014, 2015 Alexandre Joannou, University of Cambridge
+   Copyright (C) 2015, SRI International.
    See LICENSE file for details.
  *)
 (* --------------------------------------------------------------------------
