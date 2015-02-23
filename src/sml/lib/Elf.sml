@@ -217,8 +217,14 @@ fun printPSeg (pseg : pseg) =
      print ("\tOffset: " ^ (IntInf.fmt StringCvt.HEX (#offset pseg)) ^ "\n");
      print ("\tVAddr:  " ^ (IntInf.fmt StringCvt.HEX (#vaddr  pseg)) ^ "\n");
      print ("\tPAddr:  " ^ (IntInf.fmt StringCvt.HEX (#paddr  pseg)) ^ "\n");
-     print ("\tMemSz:  " ^ (IntInf.fmt StringCvt.HEX (#memsz  pseg)) ^ "\n");
-     print ("\tFileSz: " ^ (Int.fmt StringCvt.HEX (Word8Vector.length (#bytes pseg))) ^ "\n")
+     print ("\tMemSz:  "
+	    ^ (IntInf.fmt StringCvt.HEX (#memsz  pseg))
+	    ^ " (" ^ (IntInf.toString (#memsz  pseg)) ^ ")"
+	    ^ "\n");
+     print ("\tFileSz: "
+	    ^ (Int.fmt StringCvt.HEX (Word8Vector.length (#bytes pseg)))
+	    ^ " (" ^ (IntInf.toString (Word8Vector.length (#bytes pseg))) ^ ")"
+	    ^ "\n")
     )
 
 fun getElfProgSegments fd (ehdr : ehdr) =
