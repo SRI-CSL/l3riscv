@@ -769,13 +769,7 @@ define Run
 -- Instruction decoding
 ---------------------------------------------------------------------------
 
--- string utilities
-string r  (n::reg)       = "$" : [[n]::nat]
-string c  (n::reg)       = ", " : r(n)
-string i  (n::bits(N))   = ", " : (if n <+ 10 then "" else "0x") : [n]
-string oi (n::bits(N))   = if n == 0 then "" else i(n)
-
--- helper to assemble various immediates from their pieces
+-- helpers to assemble various immediates from their pieces
 imm12 asImm12(imm12::bits(1), imm11::bits(1), immhi::bits(6), immlo::bits(4)) =
     imm12 : imm11 : immhi : immlo
 
