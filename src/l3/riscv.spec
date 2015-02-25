@@ -1068,7 +1068,7 @@ word Encode(i::instruction) =
 -- RISCV memory
 ---------------------------------------------------------------------------
 
-unit InitMEM = VMEM <- InitMap(0x0)
+unit initMEM() = VMEM <- InitMap(0x0)
 
 ---------------------------------------------------------------------------
 -- The next state function
@@ -1115,6 +1115,6 @@ unit initRISCV(pc::nat) =
    for i in 0 .. 31 do gpr([i]) <- 0xAAAAAAAAAAAAAAAA;
    when procID == 0 do
      {
-       InitMEM
+       initMEM()
      }
 }
