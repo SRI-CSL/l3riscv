@@ -895,7 +895,7 @@ string reg(r::reg) =
 }
 
 string imm(i::bits(N))  = "0x" : [i]
-string instr(o::string) = PadRight(#" ", 12, o)
+string instr(o::string) = PadRight(#" ", 7, o)
 
 string pRtype(o::string, rd::reg, rs1::reg, rs2::reg) =
     instr(o) : " " : reg(rd) : ", " : reg(rs1) : ", " : reg(rs2)
