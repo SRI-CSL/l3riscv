@@ -87,12 +87,21 @@ fun printLog (n) = List.app (fn e => print(e ^ "\n"))
 local
     fun readReg i = hex64 (riscv.GPR (BitsN.fromNat (i, 5)))
 in
-fun dumpRegisters (core) =
+fun dumpRegisters core =
     let val savedProcID = !riscv.procID
         val pc = riscv.Map.lookup(!riscv.c_PC, 0)
         val () = riscv.procID := BitsN.B(core, BitsN.size (!riscv.procID))
     in  print "======   Registers   ======\n"
       ; print ("Core = " ^ Int.toString(core) ^ "\n")
+      ; case riscv.Fetch () of
+            NONE   => ()
+         |  SOME w =>
+            let val i = riscv.Decode w
+            in  print ("Faulting instruction: (0x"
+                       ^ (Int.fmt StringCvt.HEX (BitsN.toInt w))
+                       ^ ") " ^ (riscv.instructionToString i)
+                       ^ "\n\n")
+            end
       ; print ("PC     " ^ hex64 pc ^ "\n")
       ; L3.for
             (0, 31,
@@ -154,8 +163,12 @@ fun run_mem mx =
 fun run mx =
     run_mem mx
     handle riscv.UNPREDICTABLE s =>
-           ( dumpRegisters
+           ( dumpRegisters (!current_core_id)
            ; failExit ("UNPREDICTABLE \"" ^ s ^ "\"\n")
+           )
+        |  riscv.EXCEPTION e =>
+           ( print ("\n\n\nException " ^ (riscv.exceptionName e) ^ ":\n")
+           ; dumpRegisters (!current_core_id)
            )
 end
 
@@ -182,11 +195,13 @@ fun doElf cycles file dis =
     let val elf   = Elf.openElf file
         val hdr   = Elf.getElfHeader elf
         val psegs = Elf.getElfProgSegments elf hdr
-    in
-        riscv.procID    := BitsN.B(!current_core_id, BitsN.size(!riscv.procID))
-      ; riscv.totalCore := 1
-      ; riscv.print     := debug_print
+    in  riscv.print     := debug_print
       ; riscv.println   := debug_println
+
+      ; riscv.procID    := BitsN.B(!current_core_id, BitsN.size(!riscv.procID))
+      ; riscv.totalCore := 1
+      ; riscv.procType  := (if (#class hdr) = Elf.BIT_32
+                            then riscv.RV32I else riscv.RV64I)
 
       ; riscv.initMem ()
       ; print "Loading elf file ...\n"

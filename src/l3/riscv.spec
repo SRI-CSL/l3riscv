@@ -33,8 +33,6 @@ type opcode = bits(7)
 type imm12  = bits(12)
 type imm20  = bits(20)
 
-exception UNPREDICTABLE :: string
-
 -- RV64* base.
 
 type regType  = dword
@@ -69,11 +67,20 @@ bool is32Bit(pType::ProcessorType) = pType == RV32I
 
 type RegFile = reg -> regType
 
+construct ExceptionType
+{ IllegalInstr
+, UnknownInstr
+, SysCall
+, SysBreak
+}
+
 declare
 {
-  c_gpr         :: id -> RegFile            -- general purpose registers
-  c_PC          :: id -> regType            -- program counter
-  c_BranchTo    :: id -> regType option     -- requested branch
+  c_gpr         :: id -> RegFile                -- general purpose registers
+  c_PC          :: id -> regType                -- program counter
+  c_BranchTo    :: id -> regType option         -- requested branch
+
+  c_Exception   :: id -> ExceptionType option   -- exception code
 }
 
 reg STACK = 2
@@ -96,22 +103,29 @@ declare procID :: id
 
 component gpr(n::reg) :: regType
 {
-  value = { m = c_gpr(procID); m(n) }
-  assign value = { var m = c_gpr(procID)
-                 ; m(n) <- value
-                 ; c_gpr(procID) <- m }
+  value         = { m = c_gpr(procID); m(n) }
+  assign value  = { var m = c_gpr(procID)
+                  ; m(n) <- value
+                  ; c_gpr(procID) <- m
+                  }
 }
 
 component PC :: regType
 {
-  value = c_PC(procID)
-  assign value = c_PC(procID) <- value
+  value         = c_PC(procID)
+  assign value  = c_PC(procID) <- value
 }
 
 component BranchTo :: regType option
 {
-   value = c_BranchTo(procID)
+   value        = c_BranchTo(procID)
    assign value = c_BranchTo(procID) <- value
+}
+
+component Exception :: ExceptionType option
+{
+   value        = c_Exception(procID)
+   assign value = c_Exception(procID) <- value
 }
 
 bool NotWordValue(value::regType) =
@@ -122,6 +136,9 @@ bool NotWordValue(value::regType) =
   else
       top <> 0x0
 }
+
+exception UNPREDICTABLE :: string
+exception EXCEPTION     :: ExceptionType
 
 ---------------------------------------------------------------------------
 -- Logging
@@ -191,19 +208,18 @@ string hex64(x::dword) = PadLeft(#"0", 16, [x])
 -- Exceptions
 ---------------------------------------------------------------------------
 
-construct ExceptionType
-{
-  SysCall, SysBreak, ReservedInstr, IllegalInstr
-}
+string exceptionName(e::ExceptionType) =
+    match e
+    {
+      case IllegalInstr     => "ILLEGAL"
+      case UnknownInstr     => "UNKNOWN"
+      case SysCall          => "SCALL"
+      case SysBreak         => "SBREAK"
+    }
 
-bits(5) ExceptionCode(ExceptionType::ExceptionType) =
+unit signalException(e::ExceptionType) =
 {
-  0x00
-}
-
-unit signalException(ExceptionType::ExceptionType) =
-{
-  ()
+  Exception <- Some(e)
 }
 
 ---------------------------------------------------------------------------
@@ -794,12 +810,10 @@ define System > CSRRSI(rd::reg, rs1::reg, imm::imm12) = nothing
 define System > CSRRCI(rd::reg, rs1::reg, imm::imm12) = nothing
 
 -----------------------------------
--- Reserved instruction (for unsuccessful decode)
+-- Unsupported instructions
 -----------------------------------
-define ReservedInstruction =
-   signalException(ReservedInstr)
-
-define Unpredictable = #UNPREDICTABLE("Unpredictable instruction")
+define UnknownInstruction =
+   signalException(UnknownInstr)
 
 define Run
 
@@ -890,8 +904,8 @@ instruction Decode(w::word) =
      case '000000000000  00000 000 00000 11100 11' =>   System( SCALL)
      case '000000000001  00000 000 00000 11100 11' =>   System(SBREAK)
 
-     -- reserved instructions
-     case _                                        => ReservedInstruction
+     -- unsupported instructions
+     case _                                        =>   UnknownInstruction
    }
 
 -- instruction printer
@@ -991,8 +1005,7 @@ string instructionToString(i::instruction) =
      case System(CSRRSI(rd, rs1, imm))      => pItype("CSRRSI", rd, rs1, imm)
      case System(CSRRCI(rd, rs1, imm))      => pItype("CSRRCI", rd, rs1, imm)
 
-     case Unpredictable                     => pN0type("UNPREDICTABLE")
-     case ReservedInstruction               => pN0type("RESERVED")
+     case UnknownInstruction                => pN0type("UNKNOWN")
    }
 
 
@@ -1090,8 +1103,7 @@ word Encode(i::instruction) =
      case System(CSRRSI(rd, rs1, imm))      =>  Itype(opc(0x1C), 6, rd, rs1, imm)
      case System(CSRRCI(rd, rs1, imm))      =>  Itype(opc(0x1C), 7, rd, rs1, imm)
 
-     case Unpredictable                  => '00000111111100000000000000000000'
-     case ReservedInstruction            => 0
+     case UnknownInstruction                => 0
    }
 
 
@@ -1114,25 +1126,31 @@ declare done :: bool   -- Flag to request termination
 unit Next =
 {
     clear_logs();
+    match Exception
+    {
+      case Some(e) =>  #EXCEPTION(e)
+      case None    =>  nothing
+    };
     currentInst <- None;
     currentInst <- Fetch();
     match currentInst
     {
-        case Some(w) =>
-        {
-            inst = Decode(w);
-            mark_log(1, log_instruction(w, inst));
-            Run(inst)
-        }
-        case None => nothing
+      case Some(w) =>
+      {
+        inst = Decode(w);
+        mark_log(1, log_instruction(w, inst));
+        Run(inst)
+      }
+      case None => nothing
     };
-    match BranchTo
+    match Exception, BranchTo
     {
-        case None           => PC <- PC + 4
-        case Some(addr)     =>
-                 { BranchTo <- None;
-                   PC <- addr
-                 }
+      case None, None       => PC <- PC + 4
+      case None, Some(addr) =>
+               { BranchTo <- None;
+                 PC <- addr
+               }
+      case Some(_), _       => nothing
     }
 }
 
@@ -1145,9 +1163,8 @@ unit initRegs(pc::nat, stack::nat) =
 
    gpr([STACK]) <- [stack];
 
-   PC       <- [pc];
-   BranchTo <- None;
-   done     <- false
-
-
+   PC           <- [pc];
+   BranchTo     <- None;
+   Exception    <- None;
+   done         <- false
 }
