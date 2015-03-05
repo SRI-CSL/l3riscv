@@ -76,6 +76,8 @@ declare
   c_BranchTo    :: id -> regType option     -- requested branch
 }
 
+reg STACK = 2
+
 -- Instruction counter
 declare instCnt :: nat
 
@@ -124,8 +126,44 @@ bool NotWordValue(value::regType) =
 ---------------------------------------------------------------------------
 -- Logging
 ---------------------------------------------------------------------------
+string reg(r::reg) =
+{
+  if      r ==  0 then "$0"
+  else if r ==  1 then "ra"
+  else if r ==  2 then "sp"
+  else if r ==  3 then "gp"
+  else if r ==  4 then "tp"
+  else if r ==  5 then "t0"
+  else if r ==  6 then "t1"
+  else if r ==  7 then "t2"
+  else if r ==  8 then "s0"
+  else if r ==  9 then "s1"
+  else if r == 10 then "a0"
+  else if r == 11 then "a1"
+  else if r == 12 then "a2"
+  else if r == 13 then "a3"
+  else if r == 14 then "a4"
+  else if r == 15 then "a5"
+  else if r == 16 then "a6"
+  else if r == 17 then "a7"
+  else if r == 18 then "s2"
+  else if r == 19 then "s3"
+  else if r == 20 then "s4"
+  else if r == 21 then "s5"
+  else if r == 22 then "s6"
+  else if r == 23 then "s7"
+  else if r == 24 then "s8"
+  else if r == 25 then "s9"
+  else if r == 26 then "s10"
+  else if r == 27 then "s11"
+  else if r == 28 then "t3"
+  else if r == 29 then "t4"
+  else if r == 30 then "t5"
+  else                 "t6"
+}
 
-string log_w_gpr(r::reg, data::regType) = "Reg " : [[r]::nat] : " <- 0x" : PadLeft(#"0", 16, [data])
+string log_w_gpr(r::reg, data::regType) =
+    "Reg " : reg(r) : " (" : [[r]::nat] : ") <- 0x" : PadLeft(#"0", 16, [data])
 
 string log_w_mem_mask(addr::pAddr, mask::regType, data::regType) =
     "MEM[0x" : PadLeft(#"0", 10, [addr]) :
@@ -858,42 +896,6 @@ instruction Decode(w::word) =
 
 -- instruction printer
 
-string reg(r::reg) =
-{
-  if      r ==  0 then "$0"
-  else if r ==  1 then "ra"
-  else if r ==  2 then "sp"
-  else if r ==  3 then "gp"
-  else if r ==  4 then "tp"
-  else if r ==  5 then "t0"
-  else if r ==  6 then "t1"
-  else if r ==  7 then "t2"
-  else if r ==  8 then "s0"
-  else if r ==  9 then "s1"
-  else if r == 10 then "a0"
-  else if r == 11 then "a1"
-  else if r == 12 then "a2"
-  else if r == 13 then "a3"
-  else if r == 14 then "a4"
-  else if r == 15 then "a5"
-  else if r == 16 then "a6"
-  else if r == 17 then "a7"
-  else if r == 18 then "s2"
-  else if r == 19 then "s3"
-  else if r == 20 then "s4"
-  else if r == 21 then "s5"
-  else if r == 22 then "s6"
-  else if r == 23 then "s7"
-  else if r == 24 then "s8"
-  else if r == 25 then "s9"
-  else if r == 26 then "s10"
-  else if r == 27 then "s11"
-  else if r == 28 then "t3"
-  else if r == 29 then "t4"
-  else if r == 30 then "t5"
-  else                 "t6"
-}
-
 string imm(i::bits(N))  = "0x" : [i]
 string instr(o::string) = PadRight(#" ", 7, o)
 
@@ -1097,7 +1099,7 @@ word Encode(i::instruction) =
 -- RISCV memory
 ---------------------------------------------------------------------------
 
-unit initMEM() = VMEM <- InitMap(0x0)
+unit initMem() = VMEM <- InitMap(0x0)
 
 ---------------------------------------------------------------------------
 -- The next state function
@@ -1136,14 +1138,16 @@ unit Next =
 
 -- This initializes each core (via setting procID appropriately) on
 -- startup before execution begins.
-unit initRISCV(pc::nat) =
+unit initRegs(pc::nat, stack::nat) =
 {
+   for i in 0 .. 31 do
+     gpr([i])   <- 0xAAAAAAAAAAAAAAAA;
+
+   gpr([STACK]) <- [stack];
+
+   PC       <- [pc];
    BranchTo <- None;
-   PC <- [pc];
-   done <- false;
-   for i in 0 .. 31 do gpr([i]) <- 0xAAAAAAAAAAAAAAAA;
-   when procID == 0 do
-     {
-       initMEM()
-     }
+   done     <- false
+
+
 }

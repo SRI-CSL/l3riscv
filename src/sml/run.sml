@@ -174,21 +174,26 @@ fun loadElf segs dis =
                       )
              ) segs
 
+(* TODO: initialize stack memory *)
+fun initStack psegs =
+    0x000000007fffff20
+
 fun doElf cycles file dis =
     let val elf   = Elf.openElf file
         val hdr   = Elf.getElfHeader elf
         val psegs = Elf.getElfProgSegments elf hdr
     in
         riscv.procID    := BitsN.B(!current_core_id, BitsN.size(!riscv.procID))
-      ; riscv.initRISCV (#entry hdr)
       ; riscv.totalCore := 1
       ; riscv.print     := debug_print
       ; riscv.println   := debug_println
 
+      ; riscv.initMem ()
       ; print "Loading elf file ...\n"
       ; Elf.printElfHeader hdr
       ; be := (if (#endian hdr = Elf.BIG) then true else false)
       ; loadElf psegs dis
+      ; riscv.initRegs ((#entry hdr), (initStack psegs))
 
       ; if dis
         then ( printLog (0)
