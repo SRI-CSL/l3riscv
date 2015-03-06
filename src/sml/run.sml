@@ -97,9 +97,8 @@ fun dumpRegisters core =
             NONE   => ()
          |  SOME w =>
             let val i = riscv.Decode w
-            in  print ("Faulting instruction: (0x"
-                       ^ (Int.fmt StringCvt.HEX (BitsN.toInt w))
-                       ^ ") " ^ (riscv.instructionToString i)
+            in  print ("Faulting instruction: (0x" ^ hex32 w ^ ") "
+                       ^ (riscv.instructionToString i)
                        ^ "\n\n")
             end
       ; print ("PC     " ^ hex64 pc ^ "\n")
