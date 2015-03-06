@@ -582,7 +582,7 @@ define Branch > JALR(rd::reg, rs1::reg, imm::imm12) =
 -----------------------------------
 define Branch > BEQ(rs1::reg, rs2::reg, offs::imm12) =
     if GPR(rs1) == GPR(rs2) then
-        BranchTo <- Some(PC + (SignExtend(offs) << 2))
+        BranchTo <- Some(PC + (SignExtend(offs) << 1))
     else
         ()
 
@@ -591,7 +591,7 @@ define Branch > BEQ(rs1::reg, rs2::reg, offs::imm12) =
 -----------------------------------
 define Branch > BNE(rs1::reg, rs2::reg, offs::imm12) =
     if GPR(rs1) <> GPR(rs2) then
-        BranchTo <- Some(PC + (SignExtend(offs) << 2))
+        BranchTo <- Some(PC + (SignExtend(offs) << 1))
     else
         ()
 
@@ -600,7 +600,7 @@ define Branch > BNE(rs1::reg, rs2::reg, offs::imm12) =
 -----------------------------------
 define Branch > BLT(rs1::reg, rs2::reg, offs::imm12) =
     if GPR(rs1) < GPR(rs2) then
-        BranchTo <- Some(PC + (SignExtend(offs) << 2))
+        BranchTo <- Some(PC + (SignExtend(offs) << 1))
     else
         ()
 
@@ -609,7 +609,7 @@ define Branch > BLT(rs1::reg, rs2::reg, offs::imm12) =
 -----------------------------------
 define Branch > BLTU(rs1::reg, rs2::reg, offs::imm12) =
     if GPR(rs1) <+ GPR(rs2) then
-        BranchTo <- Some(PC + (SignExtend(offs) << 2))
+        BranchTo <- Some(PC + (SignExtend(offs) << 1))
     else
         ()
 
@@ -618,7 +618,7 @@ define Branch > BLTU(rs1::reg, rs2::reg, offs::imm12) =
 -----------------------------------
 define Branch > BGE(rs1::reg, rs2::reg, offs::imm12) =
     if GPR(rs1) >= GPR(rs2) then
-        BranchTo <- Some(PC + (SignExtend(offs) << 2))
+        BranchTo <- Some(PC + (SignExtend(offs) << 1))
     else
         ()
 
@@ -627,7 +627,7 @@ define Branch > BGE(rs1::reg, rs2::reg, offs::imm12) =
 -----------------------------------
 define Branch > BGEU(rs1::reg, rs2::reg, offs::imm12) =
     if GPR(rs1) >=+ GPR(rs2) then
-        BranchTo <- Some(PC + (SignExtend(offs) << 2))
+        BranchTo <- Some(PC + (SignExtend(offs) << 1))
     else
         ()
 
