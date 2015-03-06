@@ -114,9 +114,11 @@ end
 
 fun disassemble pc range =
     if range <= 0 then ()
-    else let val word = riscv.readInst (BitsN.fromInt (IntInf.toInt pc, 64))
+    else let val addr = BitsN.fromInt (IntInf.toInt pc, 64)
+             val word = riscv.readInst (addr)
              val inst = riscv.Decode word
-         in print ("0x" ^ (IntInf.fmt StringCvt.HEX pc) ^ ": "
+         in print ("0x" ^ (L3.padLeftString(#"0", (10, BitsN.toHexString addr)))
+                   (*IntInf.fmt StringCvt.HEX pc)*) ^ ": "
                    ^ "0x" ^ hex32 word ^ ": "
                    ^ riscv.instructionToString inst
                    ^ "\n"
@@ -134,7 +136,8 @@ fun log_loop mx i =
         val pc = riscv.Map.lookup(!riscv.c_PC, !current_core_id)
     in  riscv.instCnt := i
       ; riscv.Next ()
-      ; printLog(0)
+      ; printLog (0)
+      ; print ("\n")
       ; if 1 <= !trace_level then printLog(1) else ()
       ; if 2 <= !trace_level then printLog(2) else ()
       ; if !riscv.done orelse i = mx

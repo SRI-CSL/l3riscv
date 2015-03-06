@@ -182,17 +182,20 @@ string reg(r::reg) =
 string log_w_gpr(r::reg, data::regType) =
     "Reg " : reg(r) : " (" : [[r]::nat] : ") <- 0x" : PadLeft(#"0", 16, [data])
 
-string log_w_mem_mask(addr::pAddr, mask::regType, data::regType) =
-    "MEM[0x" : PadLeft(#"0", 10, [addr]) :
+string log_w_mem_mask(pAddr::pAddr, vAddr::vAddr, mask::regType, data::regType) =
+    "MEM[0x" : PadLeft(#"0", 10, [pAddr]) :
+    "/" : PadLeft(#"0", 10, [vAddr]) :
     "] <- (data: 0x" : PadLeft(#"0", 16, [data]) :
     ", mask: 0x" : PadLeft(#"0", 16, [mask]) : ")"
 
-string log_w_mem(addr::pAddr, data::regType) =
-    "MEM[0x" : PadLeft(#"0", 10, [addr]) :
+string log_w_mem(pAddr::pAddr, vAddr::vAddr, data::regType) =
+    "MEM[0x" : PadLeft(#"0", 10, [pAddr]) :
+    "/" : PadLeft(#"0", 10, [vAddr]) :
     "] <- (data: 0x" : PadLeft(#"0", 16, [data]) : ")"
 
-string log_r_mem(addr::pAddr, data::regType) =
-    "data <- MEM[0x" : PadLeft(#"0", 10, [addr]) :
+string log_r_mem(pAddr::pAddr, vAddr::vAddr, data::regType) =
+    "data <- MEM[0x" : PadLeft(#"0", 10, [pAddr]) :
+    "/" : PadLeft(#"0", 10, [vAddr]) :
     "]: 0x" : PadLeft(#"0", 16, [data])
 
 declare log :: nat -> string list   -- One log per "trace level"
@@ -258,7 +261,7 @@ regType readData(vAddr::vAddr) =
 {
   pAddr = vAddr<63:3>;
   data  = VMEM(pAddr);
-  mark_log(2, log_r_mem(pAddr, data));
+  mark_log(2, log_r_mem(pAddr, vAddr, data));
   data
 }
 
@@ -266,14 +269,14 @@ unit writeData(vAddr::vAddr, data::regType, mask::regType) =
 {
   pAddr = vAddr<63:3>;
   VMEM(pAddr) <- VMEM(pAddr) && ~mask || data && mask;
-  mark_log(2, log_w_mem_mask(pAddr, mask, data))
+  mark_log(2, log_w_mem_mask(pAddr, vAddr, mask, data))
 }
 
 word readInst(vAddr::vAddr) =
 {
   pAddr = vAddr<63:3>;
   data = VMEM(pAddr);
-  mark_log(2, log_r_mem(pAddr, data));
+  mark_log(2, log_r_mem(pAddr, vAddr, data));
   if vAddr<2> then data<63:32> else data<31:0>
 }
 
@@ -282,7 +285,7 @@ unit writeMem(vAddr::vAddr, data::regType) =
 {
   pAddr = vAddr<63:3>;
   VMEM(pAddr) <- data;
-  mark_log(2, log_w_mem(pAddr, data))
+  mark_log(2, log_w_mem(pAddr, vAddr, data))
 }
 
 --------------------------------------------------
