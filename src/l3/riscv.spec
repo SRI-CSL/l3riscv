@@ -362,7 +362,7 @@ define ArithI > XORI(rd::reg, rs1::reg, imm::imm12) =
 -- SLLI  rd, rs1, imm
 -----------------------------------
 define Shift > SLLI(rd::reg, rs1::reg, imm::bits(6)) =
-    if !is32Bit(procType) and imm<5> then
+    if is32Bit(procType) and imm<5> then
         signalException(IllegalInstr)
     else
         GPR(rd) <- GPR(rs1) << [imm]
@@ -371,7 +371,7 @@ define Shift > SLLI(rd::reg, rs1::reg, imm::bits(6)) =
 -- SRLI  rd, rs1, imm
 -----------------------------------
 define Shift > SRLI(rd::reg, rs1::reg, imm::bits(6)) =
-    if !is32Bit(procType) and imm<5> then
+    if is32Bit(procType) and imm<5> then
         signalException(IllegalInstr)
     else
         GPR(rd) <- GPR(rs1) >>+ [imm]
@@ -380,7 +380,7 @@ define Shift > SRLI(rd::reg, rs1::reg, imm::bits(6)) =
 -- SRAI  rd, rs1, imm
 -----------------------------------
 define Shift > SRAI(rd::reg, rs1::reg, imm::bits(6)) =
-    if !is32Bit(procType) and imm<5> then
+    if is32Bit(procType) and imm<5> then
         signalException(IllegalInstr)
     else
         GPR(rd) <- GPR(rs1) >> [imm]
