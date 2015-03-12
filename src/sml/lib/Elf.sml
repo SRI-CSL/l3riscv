@@ -236,8 +236,7 @@ fun printPSeg (pseg : pseg) =
 fun getElfProgSegments fd (ehdr : ehdr) =
     let val nsegs    = IntInf.toInt (#phnum ehdr)
         val segnlist = List.tabulate (nsegs, (fn i => Int.toLarge i))
-    in  print ("getting " ^ (Int.toString nsegs) ^ " segments\n");
-        List.map (getPhdr fd ehdr) segnlist
+    in  List.map (getPhdr fd ehdr) segnlist
     end
 
 end

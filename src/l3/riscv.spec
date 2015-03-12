@@ -242,9 +242,9 @@ unit dumpRegs() =
 {
     mark_log(0, "======   Registers   ======")
   ; mark_log(0, "Core = " : [[procID]::nat])
-  ; mark_log(0, "PC     " : hex64(PC))
+  ; mark_log(0, "PC   0x" : hex64(PC))
   ; for i in 0 .. 31 do
-      mark_log(0, "Reg " : (if i < 10 then " " else "") : [i] : " " :
+      mark_log(0, "Reg " : (if i < 10 then " " else "") : [i] : " 0x" :
                hex64(GPR([i])))
 }
 
@@ -1121,8 +1121,8 @@ unit initMem() = VMEM <- InitMap(0x0)
 ---------------------------------------------------------------------------
 
 string log_instruction(w::word, inst::instruction) =
-    "instr " : [procID] : " " : [instCnt] : " " :
-    hex64(PC) : " : " : hex32(w) : "   " : instructionToString(inst)
+    "instr " : [procID] : " " : [instCnt] :
+    " 0x" : hex64(PC) : " : " : hex32(w) : "   " : instructionToString(inst)
 
 declare done :: bool   -- Flag to request termination
 

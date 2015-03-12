@@ -18,9 +18,11 @@
    -------------------------------------------------------------------------- *)
 
 val be = ref false (* little-endian *)
-val trace_level = ref 0
 val time_run = ref true
 val current_core_id = ref 0
+
+val trace_level = ref 0
+val trace_elf   = ref false
 
 (* --------------------------------------------------------------------------
    Utilities
@@ -66,7 +68,9 @@ fun storeVecInMemHelper vec base i =
              ; storeVecInMemHelper vec base (i+1)
              )
         else
-            print (Int.toString (Word8Vector.length vec) ^ " words.\n")
+            if !trace_elf
+            then print (Int.toString (Word8Vector.length vec) ^ " words.\n")
+            else ()
     end
 
 fun storeVecInMem (base, memsz, vec) =
@@ -98,7 +102,7 @@ fun dumpRegisters core =
          |  SOME w =>
             let val i = riscv.Decode w
             in  print ("Faulting instruction: (0x" ^ hex32 w ^ ") "
-                       ^ (riscv.instructionToString i)
+		       ^ (riscv.instructionToString i)
                        ^ "\n\n")
             end
       ; print ("PC     " ^ hex64 pc ^ "\n")
@@ -117,9 +121,8 @@ fun disassemble pc range =
              val word = riscv.readInst (addr)
              val inst = riscv.Decode word
          in print ("0x" ^ (L3.padLeftString(#"0", (10, BitsN.toHexString addr)))
-                   (*IntInf.fmt StringCvt.HEX pc)*) ^ ": "
-                   ^ "0x" ^ hex32 word ^ ": "
-                   ^ riscv.instructionToString inst
+                   ^ ": 0x" ^ hex32 word
+                   ^ ": " ^ riscv.instructionToString inst
                    ^ "\n"
                   )
           ; disassemble (pc + 4) (range - 4)
@@ -177,8 +180,11 @@ end
 fun loadElf segs dis =
     List.app (fn s =>
                  if (#ptype s) = Elf.PT_LOAD
-                 then ( print ( "Loading segment ...\n")
-                      ; Elf.printPSeg s
+                 then ( if !trace_elf
+                        then ( print ( "Loading segment ...\n")
+                             ; Elf.printPSeg s
+                             )
+                        else ()
                       ; storeVecInMem ((#vaddr s), (#memsz s), (#bytes s))
                       (* TODO: should check flags for executable segment *)
                       ; if dis then disassemble (#vaddr s) (#memsz s)
@@ -206,8 +212,11 @@ fun doElf cycles file dis =
                             then riscv.RV32I else riscv.RV64I)
 
       ; riscv.initMem ()
-      ; print "Loading elf file ...\n"
-      ; Elf.printElfHeader hdr
+      ; if !trace_elf
+        then ( print "Loading elf file ...\n"
+             ; Elf.printElfHeader hdr
+             )
+        else ()
       ; be := (if (#endian hdr = Elf.BIG) then true else false)
       ; loadElf psegs dis
       ; riscv.initRegs ((#entry hdr), (initStack psegs))
