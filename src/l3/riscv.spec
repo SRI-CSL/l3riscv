@@ -421,14 +421,14 @@ define Shift > SRAIW(rd::reg, rs1::reg, imm::bits(5)) =
 -----------------------------------
 -- LUI   rd, imm
 -----------------------------------
-define ArithI > LUI(rd::reg, imm::bits(20)) =
+define ArithI > LUI(rd::reg, imm::imm20) =
    GPR(rd) <- SignExtend(imm : 0`12)
 
 -----------------------------------
 -- AUIPC rd, imm
 -----------------------------------
 -- XXX: ISSUE: the descriptions for RV32I and RV64I are not compatible.
-define ArithI > AUIPC(rd::reg, imm::bits(20)) =
+define ArithI > AUIPC(rd::reg, imm::imm20) =
 {
   temp = SignExtend(imm : 0`12);
   GPR(rd) <- PC + temp
@@ -559,10 +559,10 @@ define Shift > SRAW(rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 -- JAL   rd, offs
 -----------------------------------
-define Branch > JAL(rd::reg, offs::bits(20)) =
+define Branch > JAL(rd::reg, imm::imm20) =
 {
    GPR(rd)  <- PC + 4;
-   BranchTo <- Some(PC + SignExtend(offs << 1))
+   BranchTo <- Some(PC + SignExtend(imm << 1))
 }
 
 -----------------------------------
@@ -925,8 +925,14 @@ string pItype(o::string, rd::reg, rs1::reg, i::bits(N)) =
 string pStype(o::string, rs1::reg, rs2::reg, i::bits(N)) =
     instr(o) : " " : reg(rs1) : ", " : reg(rs2) : ", " : imm(i)
 
+string pSBtype(o::string, rs1::reg, rs2::reg, i::bits(N)) =
+    instr(o) : " " : reg(rs1) : ", " : reg(rs2) : ", " : imm(i<<1)
+
 string pUtype(o::string, rd::reg, i::bits(N)) =
     instr(o) : " " : reg(rd) : ", " : imm(i)
+
+string pUJtype(o::string, rd::reg, i::bits(N)) =
+    instr(o) : " " : reg(rd) : ", " : imm(i<<1)
 
 string pN0type(o::string) =
     instr(o)
@@ -937,15 +943,15 @@ string pN1type(o::string, r::reg) =
 string instructionToString(i::instruction) =
    match i
    {
-     case Branch(  BEQ(rs1, rs2, imm))      => pStype("BEQ",   rs1, rs2, imm)
-     case Branch(  BNE(rs1, rs2, imm))      => pStype("BNE",   rs1, rs2, imm)
-     case Branch(  BLT(rs1, rs2, imm))      => pStype("BLT",   rs1, rs2, imm)
-     case Branch(  BGE(rs1, rs2, imm))      => pStype("BGE",   rs1, rs2, imm)
-     case Branch( BLTU(rs1, rs2, imm))      => pStype("BLTU",  rs1, rs2, imm)
-     case Branch( BGEU(rs1, rs2, imm))      => pStype("BGEU",  rs1, rs2, imm)
+     case Branch(  BEQ(rs1, rs2, imm))      => pSBtype("BEQ",  rs1, rs2, imm)
+     case Branch(  BNE(rs1, rs2, imm))      => pSBtype("BNE",  rs1, rs2, imm)
+     case Branch(  BLT(rs1, rs2, imm))      => pSBtype("BLT",  rs1, rs2, imm)
+     case Branch(  BGE(rs1, rs2, imm))      => pSBtype("BGE",  rs1, rs2, imm)
+     case Branch( BLTU(rs1, rs2, imm))      => pSBtype("BLTU", rs1, rs2, imm)
+     case Branch( BGEU(rs1, rs2, imm))      => pSBtype("BGEU", rs1, rs2, imm)
 
      case Branch( JALR(rd, rs1, imm))       => pItype("JALR",  rd, rs1, imm)
-     case Branch(  JAL(rd, imm))            => pUtype("JAL",   rd, imm)
+     case Branch(  JAL(rd, imm))            => pUJtype("JAL",  rd, imm)
 
      case ArithI(  LUI(rd, imm))            => pUtype("LUI",   rd, imm)
      case ArithI(AUIPC(rd, imm))            => pUtype("AUIPC", rd, imm)
