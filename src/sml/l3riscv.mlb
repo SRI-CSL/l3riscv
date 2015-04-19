@@ -19,6 +19,8 @@ $(SML_LIB)/basis/basis.mlb
 ./lib/Ptree.sml
 ./lib/MutableMap.sig
 ./lib/MutableMap.sml
+./lib/PureMap.sig
+./lib/PureMap.sml
 ./lib/Elf.sig
 ./lib/Elf.sml
 riscv.sig

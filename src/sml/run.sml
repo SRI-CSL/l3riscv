@@ -167,13 +167,9 @@ fun run_mem mx =
 
 fun run mx =
     run_mem mx
-    handle riscv.UNPREDICTABLE s =>
+    handle riscv.UNDEFINED s =>
            ( dumpRegisters (!current_core_id)
-           ; failExit ("UNPREDICTABLE \"" ^ s ^ "\"\n")
-           )
-        |  riscv.EXCEPTION e =>
-           ( print ("\n\n\nException " ^ (riscv.exceptionName e) ^ ":\n")
-           ; dumpRegisters (!current_core_id)
+           ; failExit ("UNDEFINED \"" ^ s ^ "\"\n")
            )
 end
 
@@ -208,8 +204,8 @@ fun doElf cycles file dis =
 
       ; riscv.procID    := BitsN.B(!current_core_id, BitsN.size(!riscv.procID))
       ; riscv.totalCore := 1
-      ; riscv.procType  := (if (#class hdr) = Elf.BIT_32
-                            then riscv.RV32I else riscv.RV64I)
+      ; riscv.arch      := (if (#class hdr) = Elf.BIT_32
+                            then riscv.RV32Sv32 else riscv.RV64Sv43)
 
       ; riscv.initMem ()
       ; if !trace_elf

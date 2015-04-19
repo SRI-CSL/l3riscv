@@ -20,24 +20,35 @@
 -- Basic types
 ---------------------------------------------------------------------------
 
-type id     = bits(8)           -- max 256 cores
-type reg    = bits(5)
+type id       = bits(8)           -- max 256 cores
+type reg      = bits(5)
+type creg     = bits(12)
 
-type byte   = bits(8)
-type half   = bits(16)
-type word   = bits(32)
-type dword  = bits(64)
+type byte     = bits(8)
+type half     = bits(16)
+type word     = bits(32)
+type dword    = bits(64)
+
+type exc_code   = bits(5)
+type priv_level = bits(2)
 
 -- instruction fields
-type opcode = bits(7)
-type imm12  = bits(12)
-type imm20  = bits(20)
+type opcode   = bits(7)
+type imm12    = bits(12)
+type imm20    = bits(20)
+
+construct accessType { Read, Write }
+construct fetchType  { Instruction, Data }
 
 -- RV64* base.
 
 type regType  = dword
 type vAddr    = dword
 type pAddr    = bits(61)        -- internal accesses are 8-byte aligned
+type csrAR    = bits(2)         -- CSR access bits (from CSR address)
+
+-- Miscellaneous
+exception UNDEFINED :: string
 
 ---------------------------------------------------------------------------
 -- Memory types for Load/Store instructions
@@ -51,27 +62,228 @@ memWidth WORD       = 3
 memWidth DOUBLEWORD = 7
 
 ---------------------------------------------------------------------------
+-- Processor architecture
+---------------------------------------------------------------------------
+
+construct Architecture
+{
+  RV32Sv32, RV64Sv43
+}
+
+declare arch :: Architecture
+
+bool is32Bit(a::Architecture) = arch == RV32Sv32
+
+---------------------------------------------------------------------------
+-- Privilege levels
+---------------------------------------------------------------------------
+
+construct Privilege
+{ User
+, Supervisor
+, Hypervisor
+, Trusted
+}
+
+priv_level privLevel(p::Privilege) =
+    match p
+    {
+      case User       => 0
+      case Supervisor => 1
+      case Hypervisor => 2
+      case Trusted    => 3
+    }
+
+---------------------------------------------------------------------------
+-- Exceptions and Interrupts
+---------------------------------------------------------------------------
+
+construct Interrupt
+{ IPI
+, Host
+, Timer
+}
+
+nat interruptIndex(i::Interrupt) =
+    match i
+    {
+      case IPI   => 5
+      case Host  => 6
+      case Timer => 7
+    }
+
+construct ExceptionType
+{ Fetch_Misaligned
+, Fetch_Fault
+, Illegal_Instr
+, Priv_Instr
+, FP_Disabled
+, Syscall
+, Breakpoint
+, Load_Misaligned
+, Store_Misaligned
+, Load_Fault
+, Store_Fault
+}
+
+exc_code excCode(e::ExceptionType) =
+    match e
+    {
+      case Fetch_Misaligned   => 0x0
+      case Fetch_Fault        => 0x1
+      case Illegal_Instr      => 0x2
+      case Priv_Instr         => 0x3
+      case FP_Disabled        => 0x4
+
+      case Syscall            => 0x6
+      case Breakpoint         => 0x7
+      case Load_Misaligned    => 0x8
+      case Store_Misaligned   => 0x9
+      case Load_Fault         => 0xa
+      case Store_Fault        => 0xb
+    }
+
+ExceptionType excType(e::exc_code) =
+    match e
+    {
+      case 0x0 => Fetch_Misaligned
+      case 0x1 => Fetch_Fault
+      case 0x2 => Illegal_Instr
+      case 0x3 => Priv_Instr
+      case 0x4 => FP_Disabled
+
+      case 0x6 => Syscall
+      case 0x7 => Breakpoint
+      case 0x8 => Load_Misaligned
+      case 0x9 => Store_Misaligned
+      case 0xa => Load_Fault
+      case 0xb => Store_Fault
+      case _   => #UNDEFINED("Unknown exception")
+    }
+
+string exceptionName(e::ExceptionType) =
+    match e
+    {
+      case Fetch_Misaligned   => "MISALIGNED_FETCH"
+      case Fetch_Fault        => "FAULT_FETCH"
+      case Illegal_Instr      => "ILLEGAL_INSTRUCTION"
+      case Priv_Instr         => "PRIVILEGED_INSTRUCTION"
+      case FP_Disabled        => "FP_DISABLED"
+
+      case Syscall            => "SYSCALL"
+      case Breakpoint         => "BREAKPOINT"
+      case Load_Misaligned    => "MISALIGNED_LOAD"
+      case Store_Misaligned   => "MISALIGNED_STORE"
+      case Load_Fault         => "FAULT_LOAD"
+      case Store_Fault        => "FAULT_STORE"
+    }
+
+regType makeExceptionCause(e::ExceptionType) =
+    [excCode(e)]
+
+bool isBadAddressException(e::ExceptionType) =
+    match e
+    {
+      case Load_Misaligned
+      or   Store_Misaligned
+      or   Load_Fault
+      or   Store_Fault => true
+      case _           => false
+    }
+
+---------------------------------------------------------------------------
+-- Control and Status Registers
+---------------------------------------------------------------------------
+
+register status :: regType
+{
+  31-24 : IP    -- Pending Interrupts
+  23-16 : IM    -- Interrupt Mask
+      7 : VM    -- Virtual memory enabled (XXX: bit location not in 1.99 spec)
+      6 : S64   -- RV64Sv43 in supervisor mode support
+      5 : U64   -- RV64 in user mode support
+      4 : EF    -- Enabled floating-point
+      3 : PEI   -- Previous EI
+      2 : EI    -- Enabled Interrupts
+      1 : PS    -- Previous S
+      0 : S     -- Supervisor mode
+}
+
+register cause :: regType
+{
+     63 : Int   -- Interrupt
+    4-0 : EC    -- Exception Code
+}
+
+bool is_reserved_CSR(rp::csrAR, wp::csrAR) =
+    match rp, wp
+    {
+      case 1, 0 => true
+      case 2, 0 => true
+      case 2, 1 => true
+      case _, _ => false
+    }
+
+-- This function assumes that the CSR is not reserved.
+bool check_CSR_access(rp::csrAR, wp::csrAR, p::Privilege, a::accessType) =
+{
+  pl = privLevel(p);
+  if rp <> 0b11 then
+      pl >= (if a == Read then rp else wp)
+  else
+      if a == Write then p == Trusted
+      else               pl >= wp
+}
+
+-- XXX: The supervisor spec, v1.99, does not explicitly define *which*
+-- exception is raised when a CSR is accessed without appropriate
+-- privilege, or when a non-existent CSR is accessed.
+
+---------------------------------------------------------------------------
 -- Register state space
 ---------------------------------------------------------------------------
 
-construct ProcessorType
-{
-  RV32I, RV64I
-}
-
-declare procType :: ProcessorType
-
-bool is32Bit(pType::ProcessorType) = pType == RV32I
-
 -- Each register state is local to a core.
 
-type RegFile = reg -> regType
+type RegFile    = reg  -> regType
 
-construct ExceptionType
-{ IllegalInstr
-, UnknownInstr
-, SysCall
-, SysBreak
+record UserCSR
+{
+  cycle         :: id -> regType
+  time          :: id -> regType
+  instret       :: id -> regType
+  cycleh        :: id -> regType
+  timeh         :: id -> regType
+  instreth      :: id -> regType
+}
+
+record SystemCSR
+{
+  sup0          :: regType    -- 0x500: SR/SW: scratch register for exception handlers
+  sup1          :: regType    -- 0x501: SR/SW: scratch register for exception handlers
+  epc           :: regType    -- 0x502: SR/SW: exception program counter
+
+  badvaddr      :: regType    -- 0x503: SR:    bad virtual address
+
+  ptbr          :: regType    -- 0x504: SR/SW: page table base register
+  asid          :: regType    -- 0x505: SR/SW: address space ID
+  count         :: regType    -- 0x506: SR/SW: cycle counter for timer
+  compare       :: regType    -- 0x507: SR/SW: timer compare value
+  evec          :: regType    -- 0x508: SR/SW: exception handler address
+
+  cause         :: cause      -- 0x509: SR:    cause of exception
+
+  status        :: status     -- 0x50a: SR/SW: status register
+
+  hartid        :: regType    -- 0x50b: SR:    hardware thread ID
+  impl          :: regType    -- 0x50c: SR:    implementation ID
+
+  fatc          :: regType    -- 0x50d: SW:    flush address translation cache
+  send_ipi      :: regType    -- 0x50e: SW:    send inter-processor interrupt
+  clear_ipi     :: regType    -- 0x50f: SW:    clear inter-processor interrupt
+
+  tohost        :: regType    -- 0x51e: SR/SW: test output register
+  fromhost      :: regType    -- 0x51f: SR/SW: test input register
 }
 
 declare
@@ -80,16 +292,21 @@ declare
   c_PC          :: id -> regType                -- program counter
   c_BranchTo    :: id -> regType option         -- requested branch
 
-  c_Exception   :: id -> ExceptionType option   -- exception code
+  c_UCSR        :: id -> UserCSR                -- user-mode accessible CSRs
+  c_SCSR        :: id -> SystemCSR              -- system-level CSRs
+
+  c_Exception   :: id -> ExceptionType option   -- exception
 }
+
+bool is_CSR_defined(csr::creg) =
+    (csr >= 0x500 and csr <= 0x51F)
+ or (csr >= 0xC00 and csr <= 0xC02)
+ or ((csr >= 0xC80 and csr <= 0xC82) and is32Bit(arch))
 
 reg STACK = 2
 
 -- Instruction counter
 declare instCnt :: nat
-
--- Current instruction
-declare currentInst :: word option
 
 -- Number of cores
 declare totalCore :: nat
@@ -128,7 +345,19 @@ component Exception :: ExceptionType option
    assign value = c_Exception(procID) <- value
 }
 
-bool NotWordValue(value::regType) =
+component SCSR :: SystemCSR
+{
+   value        = c_SCSR(procID)
+   assign value = c_SCSR(procID) <- value
+}
+
+component UCSR :: UserCSR
+{
+   value        = c_UCSR(procID)
+   assign value = c_UCSR(procID) <- value
+}
+
+bool notWordValue(value::regType) =
 {
   top = value<63:32>;
   if value<31> then
@@ -136,9 +365,6 @@ bool NotWordValue(value::regType) =
   else
       top <> 0x0
 }
-
-exception UNPREDICTABLE :: string
-exception EXCEPTION     :: ExceptionType
 
 ---------------------------------------------------------------------------
 -- Logging
@@ -211,18 +437,28 @@ string hex64(x::dword) = PadLeft(#"0", 16, [x])
 -- Exceptions
 ---------------------------------------------------------------------------
 
-string exceptionName(e::ExceptionType) =
-    match e
-    {
-      case IllegalInstr     => "ILLEGAL"
-      case UnknownInstr     => "UNKNOWN"
-      case SysCall          => "SCALL"
-      case SysBreak         => "SBREAK"
-    }
+unit setupException(e::ExceptionType) =
+{
+  SCSR.cause.Int    <- false;
+  SCSR.cause.EC     <- excCode(e);
+  SCSR.epc          <- PC;
+  SCSR.status.PS    <- SCSR.status.S;
+  SCSR.status.S     <- true;
+  SCSR.status.PEI   <- SCSR.status.EI;
+  SCSR.status.EI    <- false;
+  Exception         <- Some(e)
+}
+
+unit signalAddressException(e::ExceptionType, vAddr::vAddr) =
+{
+  SCSR.badvaddr     <- vAddr;
+  setupException(e)
+}
 
 unit signalException(e::ExceptionType) =
 {
-  Exception <- Some(e)
+  SCSR.badvaddr     <- 0;
+  setupException(e)
 }
 
 ---------------------------------------------------------------------------
@@ -314,8 +550,8 @@ define ArithI > ADDI(rd::reg, rs1::reg, imm::imm12) =
 -- ADDIW rd, rs1, imm   (RV64I)
 -----------------------------------
 define ArithI > ADDIW(rd::reg, rs1::reg, imm::imm12) =
-    if is32Bit(procType) then
-        signalException(IllegalInstr)
+    if is32Bit(arch) then
+        signalException(Illegal_Instr)
     else {
       temp = GPR(rs1) + SignExtend(imm);
       GPR(rd) <- SignExtend(temp<31:0>)
@@ -362,8 +598,8 @@ define ArithI > XORI(rd::reg, rs1::reg, imm::imm12) =
 -- SLLI  rd, rs1, imm
 -----------------------------------
 define Shift > SLLI(rd::reg, rs1::reg, imm::bits(6)) =
-    if is32Bit(procType) and imm<5> then
-        signalException(IllegalInstr)
+    if is32Bit(arch) and imm<5> then
+        signalException(Illegal_Instr)
     else
         GPR(rd) <- GPR(rs1) << [imm]
 
@@ -371,8 +607,8 @@ define Shift > SLLI(rd::reg, rs1::reg, imm::bits(6)) =
 -- SRLI  rd, rs1, imm
 -----------------------------------
 define Shift > SRLI(rd::reg, rs1::reg, imm::bits(6)) =
-    if is32Bit(procType) and imm<5> then
-        signalException(IllegalInstr)
+    if is32Bit(arch) and imm<5> then
+        signalException(Illegal_Instr)
     else
         GPR(rd) <- GPR(rs1) >>+ [imm]
 
@@ -380,8 +616,8 @@ define Shift > SRLI(rd::reg, rs1::reg, imm::bits(6)) =
 -- SRAI  rd, rs1, imm
 -----------------------------------
 define Shift > SRAI(rd::reg, rs1::reg, imm::bits(6)) =
-    if is32Bit(procType) and imm<5> then
-        signalException(IllegalInstr)
+    if is32Bit(arch) and imm<5> then
+        signalException(Illegal_Instr)
     else
         GPR(rd) <- GPR(rs1) >> [imm]
 
@@ -389,34 +625,28 @@ define Shift > SRAI(rd::reg, rs1::reg, imm::bits(6)) =
 -- SLLIW rd, rs1, imm   (RV64I)
 -----------------------------------
 define Shift > SLLIW(rd::reg, rs1::reg, imm::bits(5)) =
-    if is32Bit(procType) then
-        signalException(IllegalInstr)
-    else {
-      when NotWordValue(GPR(rs1)) do #UNPREDICTABLE("SLLIW: NotWordValue");
+    if is32Bit(arch) or notWordValue(GPR(rs1)) then
+        signalException(Illegal_Instr)
+    else
       GPR(rd) <- SignExtend(GPR(rs1)<31:0> << [imm])
-    }
 
 -----------------------------------
 -- SRLIW rd, rs1, imm   (RV64I)
 -----------------------------------
 define Shift > SRLIW(rd::reg, rs1::reg, imm::bits(5)) =
-    if is32Bit(procType) then
-        signalException(IllegalInstr)
-    else {
-      when NotWordValue(GPR(rs1)) do #UNPREDICTABLE("SRLIW: NotWordValue");
+    if is32Bit(arch) or notWordValue(GPR(rs1)) then
+        signalException(Illegal_Instr)
+    else
       GPR(rd) <- SignExtend(GPR(rs1)<31:0> >>+ [imm])
-    }
 
 -----------------------------------
 -- SRAIW rd, rs1, imm   (RV64I)
 -----------------------------------
 define Shift > SRAIW(rd::reg, rs1::reg, imm::bits(5)) =
-    if is32Bit(procType) then
-        signalException(IllegalInstr)
-    else {
-      when NotWordValue(GPR(rs1)) do #UNPREDICTABLE("SRAIW: NotWordValue");
+    if is32Bit(arch) or notWordValue(GPR(rs1)) then
+        signalException(Illegal_Instr)
+    else
       GPR(rd) <- SignExtend(GPR(rs1)<31:0> >> [imm])
-    }
 
 -----------------------------------
 -- LUI   rd, imm
@@ -427,7 +657,10 @@ define ArithI > LUI(rd::reg, imm::imm20) =
 -----------------------------------
 -- AUIPC rd, imm
 -----------------------------------
--- XXX: ISSUE: the descriptions for RV32I and RV64I are not compatible.
+-- XXX: the description for RV64I is ambiguous: it doesn't specify the
+-- intermediate 32-bit value with zero-filled lowest 12 bits before
+-- sign-extension.
+
 define ArithI > AUIPC(rd::reg, imm::imm20) =
 {
   temp = SignExtend(imm : 0`12);
@@ -446,8 +679,8 @@ define ArithR > ADD(rd::reg, rs1::reg, rs2::reg) =
 -- ADDW  rd, rs1, rs2   (RV64I)
 -----------------------------------
 define ArithR > ADDW(rd::reg, rs1::reg, rs2::reg) =
-    if is32Bit(procType) then
-        signalException(IllegalInstr)
+    if is32Bit(arch) then
+        signalException(Illegal_Instr)
     else
         GPR(rd) <- SignExtend(GPR(rs1)<31:0> + GPR(rs2)<31:0>)
 
@@ -461,8 +694,8 @@ define ArithR > SUB(rd::reg, rs1::reg, rs2::reg) =
 -- SUBW  rd, rs1, rs2   (RV64I)
 -----------------------------------
 define ArithR > SUBW(rd::reg, rs1::reg, rs2::reg) =
-    if is32Bit(procType) then
-        signalException(IllegalInstr)
+    if is32Bit(arch) then
+        signalException(Illegal_Instr)
     else
         GPR(rd) <- SignExtend(GPR(rs1)<31:0> - GPR(rs2)<31:0>)
 
@@ -500,7 +733,7 @@ define ArithR > XOR(rd::reg, rs1::reg, rs2::reg) =
 -- SLL   rd, rs1, rs2
 -----------------------------------
 define Shift > SLL(rd::reg, rs1::reg, rs2::reg) =
-    if is32Bit(procType) then
+    if is32Bit(arch) then
         GPR(rd) <- GPR(rs1) << ZeroExtend(GPR(rs2)<4:0>)
     else
         GPR(rd) <- GPR(rs1) << ZeroExtend(GPR(rs2)<5:0>)
@@ -509,8 +742,8 @@ define Shift > SLL(rd::reg, rs1::reg, rs2::reg) =
 -- SLLW  rd, rs1, rs2   (RV64I)
 -----------------------------------
 define Shift > SLLW(rd::reg, rs1::reg, rs2::reg) =
-    if is32Bit(procType) then
-        signalException(IllegalInstr)
+    if is32Bit(arch) then
+        signalException(Illegal_Instr)
     else
         GPR(rd) <- SignExtend(GPR(rs1)<31:0> << ZeroExtend(GPR(rs2)<4:0>))
 
@@ -518,7 +751,7 @@ define Shift > SLLW(rd::reg, rs1::reg, rs2::reg) =
 -- SRL   rd, rs1, rs2
 -----------------------------------
 define Shift > SRL(rd::reg, rs1::reg, rs2::reg) =
-    if is32Bit(procType) then
+    if is32Bit(arch) then
         GPR(rd) <- GPR(rs1) >>+ ZeroExtend(GPR(rs2)<4:0>)
     else
         GPR(rd) <- GPR(rs1) >>+ ZeroExtend(GPR(rs2)<5:0>)
@@ -527,8 +760,8 @@ define Shift > SRL(rd::reg, rs1::reg, rs2::reg) =
 -- SRLW  rd, rs1, rs2   (RV64I)
 -----------------------------------
 define Shift > SRLW(rd::reg, rs1::reg, rs2::reg) =
-    if is32Bit(procType) then
-        signalException(IllegalInstr)
+    if is32Bit(arch) then
+        signalException(Illegal_Instr)
     else
         GPR(rd) <- SignExtend(GPR(rs1)<31:0> >>+ ZeroExtend(GPR(rs2)<4:0>))
 
@@ -536,7 +769,7 @@ define Shift > SRLW(rd::reg, rs1::reg, rs2::reg) =
 -- SRA   rd, rs1, rs2
 -----------------------------------
 define Shift > SRA(rd::reg, rs1::reg, rs2::reg) =
-    if is32Bit(procType) then
+    if is32Bit(arch) then
         GPR(rd) <- GPR(rs1) >> ZeroExtend(GPR(rs2)<4:0>)
     else
         GPR(rd) <- GPR(rs1) >> ZeroExtend(GPR(rs2)<5:0>)
@@ -545,8 +778,8 @@ define Shift > SRA(rd::reg, rs1::reg, rs2::reg) =
 -- SRAW  rd, rs1, rs2   (RV64I)
 -----------------------------------
 define Shift > SRAW(rd::reg, rs1::reg, rs2::reg) =
-    if is32Bit(procType) then
-        signalException(IllegalInstr)
+    if is32Bit(arch) then
+        signalException(Illegal_Instr)
     else
         GPR(rd) <- SignExtend(GPR(rs1)<31:0> >> ZeroExtend(GPR(rs2)<4:0>))
 
@@ -650,8 +883,8 @@ define Load > LW(rd::reg, rs1::reg, offs::imm12) =
 -----------------------------------
 define Load > LWU(rd::reg, rs1::reg, offs::imm12) =
 {
-  if is32Bit(procType) then
-      signalException(IllegalInstr)
+  if is32Bit(arch) then
+      signalException(Illegal_Instr)
   else {
     addr = GPR(rs1) + SignExtend(offs);
     val  = readData(addr);
@@ -703,8 +936,8 @@ define Load > LBU(rd::reg, rs1::reg, offs::imm12) =
 -- LD    rd, rs1, offs  (RV64I)
 -----------------------------------
 define Load > LD(rd::reg, rs1::reg, offs::imm12) =
-    if is32Bit(procType) then
-        signalException(IllegalInstr)
+    if is32Bit(arch) then
+        signalException(Illegal_Instr)
     else {
       addr = GPR(rs1) + SignExtend(offs);
       val  = readData(addr);
@@ -745,8 +978,8 @@ define Store > SB(rs1::reg, rs2::reg, offs::imm12) =
 -- SD    rs1, rs2, offs (RV64I)
 -----------------------------------
 define Store > SD(rs1::reg, rs2::reg, offs::imm12) =
-    if is32Bit(procType) then
-        signalException(IllegalInstr)
+    if is32Bit(arch) then
+        signalException(Illegal_Instr)
     else {
       addr = GPR(rs1) + SignExtend(offs);
       writeData(addr, GPR(rs2), SignExtend('1'))
@@ -773,12 +1006,15 @@ define FENCE_I(rd::reg, rs1::reg, imm::imm12) = nothing
 -----------------------------------
 -- SCALL
 -----------------------------------
-define System > SCALL  = signalException(SysCall)
+define System > SCALL  = signalException(Syscall)
 
 -----------------------------------
 -- SBREAK
 -----------------------------------
-define System > SBREAK = signalException(SysBreak)
+-- XXX: The spec doesn't explicitly say that the Breakpoint exception
+-- is raised by SBREAK.
+
+define System > SBREAK = signalException(Breakpoint)
 
 -- Timers and Counters
 
@@ -816,7 +1052,7 @@ define System > CSRRCI(rd::reg, rs1::reg, imm::imm12) = nothing
 -- Unsupported instructions
 -----------------------------------
 define UnknownInstruction =
-   signalException(UnknownInstr)
+   signalException(Illegal_Instr)
 
 define Run
 
@@ -1135,14 +1371,7 @@ declare done :: bool   -- Flag to request termination
 unit Next =
 {
     clear_logs();
-    match Exception
-    {
-      case Some(e) =>  #EXCEPTION(e)
-      case None    =>  nothing
-    };
-    currentInst <- None;
-    currentInst <- Fetch();
-    match currentInst
+    match Fetch()
     {
       case Some(w) =>
       {
