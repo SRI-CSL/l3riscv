@@ -232,12 +232,15 @@ bool check_CSR_access(rp::csrAR, wp::csrAR, p::Privilege, a::accessType) =
       pl >= (if a == Read then rp else wp)
   else
       if a == Write then p == Trusted
-      else               pl >= wp
+      else               pl >= rp
 }
 
 -- XXX: The supervisor spec, v1.99, does not explicitly define *which*
 -- exception is raised when a CSR is accessed without appropriate
 -- privilege, or when a non-existent CSR is accessed.
+
+-- Update: This is fixed in the *later* v1.7 spec, where it says that
+-- the illegal instruction exception is raised in both cases.
 
 ---------------------------------------------------------------------------
 -- Register state space
@@ -297,9 +300,11 @@ declare
 
   c_Exception   :: id -> ExceptionType option   -- exception
 }
-
+-- Based on Table 1.4 of spec version 1.99.
 bool is_CSR_defined(csr::creg) =
-    (csr >= 0x500 and csr <= 0x51F)
+    (csr >= 0x001 and csr <= 0x003)
+ or (csr >= 0x500 and csr <= 0x50F)
+ or (csr >= 0x51E and csr <= 0x51F)
  or (csr >= 0xC00 and csr <= 0xC02)
  or ((csr >= 0xC80 and csr <= 0xC82) and is32Bit(arch))
 
@@ -1012,41 +1017,46 @@ define System > SCALL  = signalException(Syscall)
 -- SBREAK
 -----------------------------------
 -- XXX: The spec doesn't explicitly say that the Breakpoint exception
--- is raised by SBREAK.
+-- is raised by SBREAK.  Fixed in the *later* 1.7 spec.
 
 define System > SBREAK = signalException(Breakpoint)
+
+-----------------------------------
+-- SCALL
+-----------------------------------
+define System >  SRET  = nothing
 
 -- Timers and Counters
 
 -----------------------------------
 -- CSRRW  rd, rs1, imm
 -----------------------------------
-define System > CSRRW(rd::reg, rs1::reg, imm::imm12) = nothing
+define System > CSRRW(rd::reg, rs1::reg, csr::imm12) = nothing
 
 -----------------------------------
 -- CSRRS  rd, rs1, imm
 -----------------------------------
-define System > CSRRS(rd::reg, rs1::reg, imm::imm12) = nothing
+define System > CSRRS(rd::reg, rs1::reg, csr::imm12) = nothing
 
 -----------------------------------
 -- CSRRC  rd, rs1, imm
 -----------------------------------
-define System > CSRRC(rd::reg, rs1::reg, imm::imm12) = nothing
+define System > CSRRC(rd::reg, rs1::reg, csr::imm12) = nothing
 
 -----------------------------------
 -- CSRRWI rd, rs1, imm
 -----------------------------------
-define System > CSRRWI(rd::reg, rs1::reg, imm::imm12) = nothing
+define System > CSRRWI(rd::reg, rs1::reg, csr::imm12) = nothing
 
 -----------------------------------
 -- CSRRSI rd, rs1, imm
 -----------------------------------
-define System > CSRRSI(rd::reg, rs1::reg, imm::imm12) = nothing
+define System > CSRRSI(rd::reg, rs1::reg, csr::imm12) = nothing
 
 -----------------------------------
 -- CSRRCI rd, rs1, imm
 -----------------------------------
-define System > CSRRCI(rd::reg, rs1::reg, imm::imm12) = nothing
+define System > CSRRCI(rd::reg, rs1::reg, csr::imm12) = nothing
 
 -----------------------------------
 -- Unsupported instructions
@@ -1133,15 +1143,16 @@ instruction Decode(w::word) =
      case '_`4 pred succ rs1 000  rd 00011 11' =>        FENCE(rd, rs1, pred, succ)
      case 'imm           rs1 001  rd 00011 11' =>      FENCE_I(rd, rs1, imm)
 
-     case 'imm           rs1 001  rd 11100 11' => System( CSRRW(rd, rs1, imm))
-     case 'imm           rs1 010  rd 11100 11' => System( CSRRS(rd, rs1, imm))
-     case 'imm           rs1 011  rd 11100 11' => System( CSRRC(rd, rs1, imm))
-     case 'imm           rs1 101  rd 11100 11' => System(CSRRWI(rd, rs1, imm))
-     case 'imm           rs1 110  rd 11100 11' => System(CSRRSI(rd, rs1, imm))
-     case 'imm           rs1 111  rd 11100 11' => System(CSRRCI(rd, rs1, imm))
+     case 'csr           rs1 001  rd 11100 11' => System( CSRRW(rd, rs1, csr))
+     case 'csr           rs1 010  rd 11100 11' => System( CSRRS(rd, rs1, csr))
+     case 'csr           rs1 011  rd 11100 11' => System( CSRRC(rd, rs1, csr))
+     case 'csr           rs1 101  rd 11100 11' => System(CSRRWI(rd, rs1, csr))
+     case 'csr           rs1 110  rd 11100 11' => System(CSRRSI(rd, rs1, csr))
+     case 'csr           rs1 111  rd 11100 11' => System(CSRRCI(rd, rs1, csr))
 
      case '000000000000  00000 000 00000 11100 11' =>   System( SCALL)
      case '000000000001  00000 000 00000 11100 11' =>   System(SBREAK)
+     case '100000000000  00000 000 00000 11100 11' =>   System(  SRET)
 
      -- unsupported instructions
      case _                                        =>   UnknownInstruction
@@ -1242,13 +1253,14 @@ string instructionToString(i::instruction) =
 
      case System( SCALL)                    => pN0type("SCALL")
      case System(SBREAK)                    => pN0type("SBREAK")
+     case System(  SRET)                    => pN0type("SRET")
 
-     case System( CSRRW(rd, rs1, imm))      => pItype("CSRRW",  rd, rs1, imm)
-     case System( CSRRS(rd, rs1, imm))      => pItype("CSRRS",  rd, rs1, imm)
-     case System( CSRRC(rd, rs1, imm))      => pItype("CSRRC",  rd, rs1, imm)
-     case System(CSRRWI(rd, rs1, imm))      => pItype("CSRRWI", rd, rs1, imm)
-     case System(CSRRSI(rd, rs1, imm))      => pItype("CSRRSI", rd, rs1, imm)
-     case System(CSRRCI(rd, rs1, imm))      => pItype("CSRRCI", rd, rs1, imm)
+     case System( CSRRW(rd, rs1, csr))      => pItype("CSRRW",  rd, rs1, csr)
+     case System( CSRRS(rd, rs1, csr))      => pItype("CSRRS",  rd, rs1, csr)
+     case System( CSRRC(rd, rs1, csr))      => pItype("CSRRC",  rd, rs1, csr)
+     case System(CSRRWI(rd, rs1, csr))      => pItype("CSRRWI", rd, rs1, csr)
+     case System(CSRRSI(rd, rs1, csr))      => pItype("CSRRSI", rd, rs1, csr)
+     case System(CSRRCI(rd, rs1, csr))      => pItype("CSRRCI", rd, rs1, csr)
 
      case UnknownInstruction                => pN0type("UNKNOWN")
    }
@@ -1340,13 +1352,14 @@ word Encode(i::instruction) =
 
      case System( SCALL)                    =>  Itype(opc(0x1C), 0, 0, 0, 0)
      case System(SBREAK)                    =>  Itype(opc(0x1C), 0, 0, 0, 1)
+     case System(  SRET)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x800)
 
-     case System( CSRRW(rd, rs1, imm))      =>  Itype(opc(0x1C), 1, rd, rs1, imm)
-     case System( CSRRS(rd, rs1, imm))      =>  Itype(opc(0x1C), 2, rd, rs1, imm)
-     case System( CSRRC(rd, rs1, imm))      =>  Itype(opc(0x1C), 3, rd, rs1, imm)
-     case System(CSRRWI(rd, rs1, imm))      =>  Itype(opc(0x1C), 5, rd, rs1, imm)
-     case System(CSRRSI(rd, rs1, imm))      =>  Itype(opc(0x1C), 6, rd, rs1, imm)
-     case System(CSRRCI(rd, rs1, imm))      =>  Itype(opc(0x1C), 7, rd, rs1, imm)
+     case System( CSRRW(rd, rs1, csr))      =>  Itype(opc(0x1C), 1, rd, rs1, csr)
+     case System( CSRRS(rd, rs1, csr))      =>  Itype(opc(0x1C), 2, rd, rs1, csr)
+     case System( CSRRC(rd, rs1, csr))      =>  Itype(opc(0x1C), 3, rd, rs1, csr)
+     case System(CSRRWI(rd, rs1, csr))      =>  Itype(opc(0x1C), 5, rd, rs1, csr)
+     case System(CSRRSI(rd, rs1, csr))      =>  Itype(opc(0x1C), 6, rd, rs1, csr)
+     case System(CSRRCI(rd, rs1, csr))      =>  Itype(opc(0x1C), 7, rd, rs1, csr)
 
      case UnknownInstruction                => 0
    }
