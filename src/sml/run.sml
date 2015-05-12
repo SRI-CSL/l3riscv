@@ -17,9 +17,10 @@
    Default Configuration
    -------------------------------------------------------------------------- *)
 
-val be = ref false (* little-endian *)
-val time_run = ref true
 val current_core_id = ref 0
+
+val be          = ref false (* little-endian *)
+val time_run    = ref true
 
 val trace_level = ref 0
 val trace_elf   = ref false
@@ -30,11 +31,6 @@ val trace_elf   = ref false
 
 fun hex s = L3.lowercase (BitsN.toHexString s)
 fun phex n = StringCvt.padLeft #"0" (n div 4) o hex
-fun word i = fn s => Option.valOf (BitsN.fromHexString (s, i))
-val w8 = word 8
-val w16 = word 16
-val w32 = word 32
-val w64 = word 64
 val hex32 = phex 32
 val hex64 = phex 64
 
@@ -44,9 +40,7 @@ fun err e s = failExit ("Failed to " ^ e ^ " file \"" ^ s ^ "\"")
 fun debug_print s = print("==DEBUG== "^s)
 fun debug_println s = print("==DEBUG== "^s^"\n")
 
-(* --------------------------------------------------------------------------
-   Loading code into memory from raw file
-   -------------------------------------------------------------------------- *)
+(* Bit vector utilities *)
 
 fun word8ToBits8 word8 =
     BitsN.B (Word8.toInt word8, 8)
@@ -55,6 +49,8 @@ fun getByte v i =
     if   i < Word8Vector.length v
     then word8ToBits8 (Word8Vector.sub (v, i))
     else BitsN.zero 8
+
+(* Memory utilities *)
 
 (* TODO: this might be broken for big-endian code, but RISCV is
    little-endian by default. *)
@@ -84,6 +80,8 @@ fun storeVecInMem (base, memsz, vec) =
                      )
     in  storeVecInMemHelper padded base 0
     end
+
+(* Printing utilities *)
 
 fun printLog (n) = List.app (fn e => print(e ^ "\n"))
                             (List.rev(riscv.Map.lookup(!riscv.log, n)))
