@@ -399,7 +399,9 @@ record StateDelta
                                 --   new memory value for STORE, STORE_FP, SC, AMOs
                                 --   argument for CSR ops
 
-  data3         :: regType      -- instruction that just executed
+  data3         :: regType      -- unused
+
+  pc_instr      :: word         -- the retired instruction
 
   fp_data       :: fpval        -- floating point value
 }
@@ -414,8 +416,8 @@ component Delta :: StateDelta
 
 unit setupDelta(pc::regType, instr_word::word) =
 {
-  Delta.pc      <- pc;
-  Delta.data3   <- ZeroExtend(instr_word)
+  Delta.pc        <- pc;
+  Delta.pc_instr  <- instr_word
 }
 
 unit recordLoad(addr::vAddr, val::regType) =

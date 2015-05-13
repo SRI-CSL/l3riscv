@@ -97,14 +97,12 @@ fun dumpRegisters core =
         val () = riscv.procID := BitsN.B(core, BitsN.size (!riscv.procID))
     in  print "======   Registers   ======\n"
       ; print ("Core = " ^ Int.toString(core) ^ "\n")
-      ; case riscv.Fetch () of
-            NONE   => ()
-         |  SOME w =>
-            let val i = riscv.Decode w
-            in  print ("Faulting instruction: (0x" ^ hex32 w ^ ") "
-		       ^ (riscv.instructionToString i)
-                       ^ "\n\n")
-            end
+      ; let val w = #pc_instr (riscv.Delta ())
+            val i = riscv.Decode w
+        in  print ("Faulting instruction: (0x" ^ hex32 w ^ ") "
+                   ^ (riscv.instructionToString i)
+                   ^ "\n\n")
+        end
       ; print ("PC     " ^ hex64 pc ^ "\n")
       ; L3.for
             (0, 31,
@@ -144,7 +142,7 @@ val check_oracle =
                              * Int64.int * Int64.int * Int64.int) -> bool;
 fun do_verify () =
     let val delta       = riscv.Delta ()
-        val exc_taken   = (#exc_taken delta)
+        val exc_taken   = #exc_taken delta
         val pc          = Int64.fromInt (BitsN.toInt (#pc      delta))
         val addr        = Int64.fromInt (BitsN.toInt (#addr    delta))
         val data1       = Int64.fromInt (BitsN.toInt (#data1   delta))
