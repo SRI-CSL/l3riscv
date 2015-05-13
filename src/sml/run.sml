@@ -25,6 +25,8 @@ val time_run    = ref true
 val trace_level = ref 0
 val trace_elf   = ref false
 
+val verify      = ref false
+
 (* --------------------------------------------------------------------------
    Utilities
    -------------------------------------------------------------------------- *)
@@ -126,9 +128,29 @@ fun disassemble pc range =
           ; disassemble (pc + 4) (range - 4)
          end
 
-(* ------------------------------------------------------------------------
-   Run code
-   ------------------------------------------------------------------------ *)
+(* Tandem verification *)
+
+val oracle = _import "call_oracle" : (bool
+                                      * Int64.int * Int64.int * Int64.int
+                                      * Int64.int * Int64.int * Int64.int) -> bool;
+fun do_verify () =
+    let val delta       = riscv.Delta ()
+        val exc_taken   = (#exc_taken delta)
+        val pc          = Int64.fromInt (BitsN.toInt (#pc      delta))
+        val addr        = Int64.fromInt (BitsN.toInt (#addr    delta))
+        val data1       = Int64.fromInt (BitsN.toInt (#data1   delta))
+        val data2       = Int64.fromInt (BitsN.toInt (#data2   delta))
+        val data3       = Int64.fromInt (BitsN.toInt (#data3   delta))
+        val fp_data     = Int64.fromInt (BitsN.toInt (#fp_data delta))
+    in
+        if oracle (exc_taken, pc, addr, data1, data2, data3, fp_data)
+        then ()
+        else ( print "Verification FAILED!\n"
+             ; dumpRegisters (!current_core_id)
+             )
+    end
+
+(* Code execution *)
 
 fun log_loop mx i =
     let val () = riscv.procID := BitsN.B(!current_core_id,
@@ -140,6 +162,7 @@ fun log_loop mx i =
       ; print ("\n")
       ; if 1 <= !trace_level then printLog(1) else ()
       ; if 2 <= !trace_level then printLog(2) else ()
+      ; if !verify then do_verify() else ()
       ; if !riscv.done orelse i = mx
         then print ("Completed " ^ Int.toString (i + 1) ^ " instructions.\n")
         else log_loop mx (i + 1)
@@ -151,6 +174,7 @@ fun silent_loop mx =
     ( riscv.procID := BitsN.B(!current_core_id,
                               BitsN.size(!riscv.procID))
     ; riscv.Next ()
+    ; if !verify then do_verify() else ()
     ; if !riscv.done orelse (mx = 1) then (print "done\n")
       else silent_loop (decr mx)
     )
@@ -255,6 +279,7 @@ local
             | "-t"   => "--trace"
             | "-d"   => "--dis"
             | "-h"   => "--help"
+            | "-v"   => "--verify"
             | s      => s
             ) (CommandLine.arguments ())
 
@@ -273,12 +298,16 @@ val () =
         ["--help"] => printUsage ()
       | l =>
         let val (c, l) = processOption "--cycles" l
+            val (t, l) = processOption "--trace"  l
+            val (d, l) = processOption "--dis"    l
+            val (v, l) = processOption "--verify" l
+
             val c = Option.getOpt (Option.map getNumber c, ~1)
-            val (t, l) = processOption "--trace" l
+            val d = Option.getOpt (Option.map getBool d, false)
             val t = Option.getOpt (Option.map getNumber t, !trace_level)
             val () = trace_level := Int.max (0, t)
-            val (d, l) = processOption "--dis" l
-            val d = Option.getOpt (Option.map getBool d, false)
+            val v = Option.getOpt (Option.map getBool v, true)
+            val () = verify := v
         in
             if List.null l then printUsage ()
             else doElf c (List.hd l) d

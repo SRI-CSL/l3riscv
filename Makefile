@@ -28,8 +28,16 @@ SMLSRCBASE+=riscv.sig
 SMLSRCBASE+=riscv.sml
 SMLSRCBASE+=run.sml
 SMLSRCBASE+=l3riscv.mlb
+SMLSRCBASE+=riscv_oracle.c
 MLBFILE=l3riscv.mlb
 SMLSRC=$(patsubst %, $(SMLSRCDIR)/%, $(SMLSRCBASE))
+
+# Verifier
+CISSR_BASE=$(HOME)/proj/Bluespec_RISCV
+CISSR_INC_DIR=$(CISSR_BASE)
+CISSR_LIB_DIR=$(CISSR_BASE)/build_libcissr
+MLTON_LIB_OPTS=  -cc-opt "-DRV64 -I $(CISSR_BASE)"
+MLTON_LIB_OPTS+= -link-opt "-L $(CISSR_LIB_DIR) -lcissr -Wl,-rpath,$(CISSR_LIB_DIR)"
 
 # make targets
 #######################################
@@ -39,8 +47,11 @@ all: l3riscv
 ${SMLSRCDIR}/riscv.sig ${SMLSRCDIR}/riscv.sml: ${L3SRC}
 	echo 'SMLExport.spec ("${L3SRC}", "${SMLSRCDIR}/riscv")' | l3
 
-l3riscv: ${SMLLIB} ${SMLSRC} ${SMLSRCDIR}/riscv.sig ${SMLSRCDIR}/riscv.sml Makefile
-	mlton -inline 1000 -default-type intinf -verbose 1 -output ./l3riscv ${SMLSRCDIR}/$(MLBFILE)
+l3riscv: ${SMLLIB} ${SMLSRC} Makefile
+	mlton -inline 1000 -default-type intinf -verbose 1 \
+              -default-ann 'allowFFI true' -export-header ${SMLSRCDIR}/riscv_oracle.h \
+              $(MLTON_LIB_OPTS) \
+              -output ./l3riscv ${SMLSRCDIR}/$(MLBFILE) ${SMLSRCDIR}/riscv_oracle.c
 
 clean:
 	rm -f l3riscv

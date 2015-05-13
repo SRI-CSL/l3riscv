@@ -28,6 +28,7 @@ type byte     = bits(8)
 type half     = bits(16)
 type word     = bits(32)
 type dword    = bits(64)
+type fpval    = bits(64)
 
 type exc_code   = bits(5)
 type priv_level = bits(2)
@@ -372,6 +373,52 @@ bool notWordValue(value::regType) =
 }
 
 ---------------------------------------------------------------------------
+-- Tandem verification
+---------------------------------------------------------------------------
+-- This describes the state update due to every retired instruction,
+-- which can be verified against an external oracle.  Currently, the
+-- Cissr tool from Bluespec fills the role, and the record below is
+-- designed against its API.
+
+record StateDelta
+{
+  exc_taken     :: bool         -- whether an exception (interrupt/trap) was taken
+  pc            :: regType      -- PC of retired instruction
+
+  addr          :: regType      -- address argument for instruction:
+                                --   new control flow target for jump, exception branch, SRET
+                                --   memory address for memory ops and AMOs
+                                --   CSR register address for CSR instructions
+
+  data1         :: regType      -- data result for instruction:
+                                --   new value for rd for ALU ops, LOAD, LOAD_FP, LR, SC, CSR ops
+                                --   new csr_status for exceptions and SRET
+
+  data2         :: regType      -- data argument for instruction:
+                                --   new csr_cause for exceptions
+                                --   new memory value for STORE, STORE_FP, SC, AMOs
+                                --   argument for CSR ops
+
+  data3         :: regType      -- instruction that just executed
+
+  fp_data       :: fpval        -- floating point value
+}
+
+declare c_update :: id -> StateDelta
+
+component Delta :: StateDelta
+{
+   value         = c_update(procID)
+   assign value  = c_update(procID) <- value
+}
+
+unit setupDelta(pc::regType, instr_word::word) =
+{
+  Delta.pc      <- pc;
+  Delta.data3   <- ZeroExtend(instr_word)
+}
+
+---------------------------------------------------------------------------
 -- Logging
 ---------------------------------------------------------------------------
 string reg(r::reg) =
@@ -535,8 +582,10 @@ unit writeMem(vAddr::vAddr, data::regType) =
 
 word option Fetch() =
 {
-  pc = PC;
-  Some(readInst(pc))
+  pc    = PC;
+  inst  = readInst(pc);
+  setupDelta(pc, inst);
+  Some(inst)
 }
 
 ---------------------------------------------------------------------------
