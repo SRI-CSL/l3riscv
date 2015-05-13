@@ -13,11 +13,13 @@
    RISCV emulator
    -------------------------------------------------------------------------- *)
 
-(* --------------------------------------------------------------------------
-   Default Configuration
-   -------------------------------------------------------------------------- *)
+(* Default Configuration *)
 
 val current_core_id = ref 0
+val mem_base_addr   = ref 0
+val mem_size        = ref 4000000
+
+(* Execution parameters *)
 
 val be          = ref false (* little-endian *)
 val time_run    = ref true
@@ -27,9 +29,7 @@ val trace_elf   = ref false
 
 val verify      = ref false
 
-(* --------------------------------------------------------------------------
-   Utilities
-   -------------------------------------------------------------------------- *)
+(* Utilities *)
 
 fun hex s = L3.lowercase (BitsN.toHexString s)
 fun phex n = StringCvt.padLeft #"0" (n div 4) o hex
@@ -147,6 +147,7 @@ fun do_verify () =
         then ()
         else ( print "Verification FAILED!\n"
              ; dumpRegisters (!current_core_id)
+             ; OS.Process.exit OS.Process.failure
              )
     end
 
@@ -213,6 +214,22 @@ fun loadElf segs dis =
                       )
              ) segs
 
+val reset_oracle = _import "reset_oracle" : (Int64.int * Int64.int) -> unit;
+
+fun initVerify () =
+    reset_oracle (!mem_base_addr, !mem_size)
+
+fun doInit () =
+    ( riscv.print     := debug_print
+    ; riscv.println   := debug_println
+    ; riscv.procID    := BitsN.B(!current_core_id, BitsN.size(!riscv.procID))
+    ; riscv.totalCore := 1
+    ; riscv.initMem ()
+    ; if !verify
+      then initVerify ()
+      else ()
+    )
+
 (* TODO: initialize stack memory *)
 fun initStack psegs =
     0x000000007fffff20
@@ -221,15 +238,9 @@ fun doElf cycles file dis =
     let val elf   = Elf.openElf file
         val hdr   = Elf.getElfHeader elf
         val psegs = Elf.getElfProgSegments elf hdr
-    in  riscv.print     := debug_print
-      ; riscv.println   := debug_println
-
-      ; riscv.procID    := BitsN.B(!current_core_id, BitsN.size(!riscv.procID))
-      ; riscv.totalCore := 1
-      ; riscv.arch      := (if (#class hdr) = Elf.BIT_32
+    in  riscv.arch      := (if (#class hdr) = Elf.BIT_32
                             then riscv.RV32Sv32 else riscv.RV64Sv43)
 
-      ; riscv.initMem ()
       ; if !trace_elf
         then ( print "Loading elf file ...\n"
              ; Elf.printElfHeader hdr
@@ -310,6 +321,8 @@ val () =
             val () = verify := v
         in
             if List.null l then printUsage ()
-            else doElf c (List.hd l) d
+            else ( doInit ()
+                 ; doElf c (List.hd l) d
+                 )
         end
 end

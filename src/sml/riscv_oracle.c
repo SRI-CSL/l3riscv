@@ -27,3 +27,8 @@ uint32_t call_oracle (uint32_t exc_taken,
 {
   return !cissr_verify_instr(exc_taken, pc, addr, data1, data2, data3, fpdata, 1);
 }
+
+void reset_oracle (uint64_t mem_base, uint64_t mem_size)
+{
+  cissr_cpu_reset(mem_base, mem_size);
+}
