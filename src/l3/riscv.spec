@@ -559,10 +559,14 @@ regType readData(vAddr::vAddr) =
   data
 }
 
-unit writeData(vAddr::vAddr, data::regType, mask::regType) =
+unit writeData(vAddr::vAddr, rs2::reg, mask::regType) =
 {
+  data  = GPR(rs2);
   pAddr = vAddr<63:3>;
-  VMEM(pAddr) <- VMEM(pAddr) && ~mask || data && mask;
+  val   = VMEM(pAddr) && ~mask || data && mask;
+  VMEM(pAddr) <- val;
+  Delta.addr  <- vAddr;
+  Delta.data2 <- val;
   mark_log(2, log_w_mem_mask(pAddr, vAddr, mask, data))
 }
 
@@ -1009,7 +1013,7 @@ define Store > SW(rs1::reg, rs2::reg, offs::imm12) =
 {
   addr = GPR(rs1) + SignExtend(offs);
   mask = 0xFFFF_FFFF;
-  writeData(addr, GPR(rs2), mask)
+  writeData(addr, rs2, mask)
 }
 
 -----------------------------------
@@ -1019,7 +1023,7 @@ define Store > SH(rs1::reg, rs2::reg, offs::imm12) =
 {
   addr = GPR(rs1) + SignExtend(offs);
   mask = 0xFFFF;
-  writeData(addr, GPR(rs2), mask)
+  writeData(addr, rs2, mask)
 }
 
 -----------------------------------
@@ -1029,7 +1033,7 @@ define Store > SB(rs1::reg, rs2::reg, offs::imm12) =
 {
   addr = GPR(rs1) + SignExtend(offs);
   mask = 0xFF;
-  writeData(addr, GPR(rs2), mask)
+  writeData(addr, rs2, mask)
 }
 
 -----------------------------------
@@ -1040,7 +1044,7 @@ define Store > SD(rs1::reg, rs2::reg, offs::imm12) =
         signalException(Illegal_Instr)
     else {
       addr = GPR(rs1) + SignExtend(offs);
-      writeData(addr, GPR(rs2), SignExtend('1'))
+      writeData(addr, rs2, SignExtend('1'))
     }
 
 ---------------------------------------------------------------------------
