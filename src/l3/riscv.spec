@@ -526,6 +526,12 @@ component GPR(n::reg) :: regType
                    }
 }
 
+unit writeRD(rd::reg, val::regType) =
+{
+  GPR(rd)       <- val;
+  Delta.data1   <- val
+}
+
 unit dumpRegs() =
 {
     mark_log(0, "======   Registers   ======")
@@ -598,7 +604,7 @@ word option Fetch() =
 -- ADDI  rd, rs1, imm
 -----------------------------------
 define ArithI > ADDI(rd::reg, rs1::reg, imm::imm12) =
-  GPR(rd) <- GPR(rs1) + SignExtend(imm)
+    writeRD(rd, GPR(rs1) + SignExtend(imm))
 
 -----------------------------------
 -- ADDIW rd, rs1, imm   (RV64I)
@@ -608,20 +614,20 @@ define ArithI > ADDIW(rd::reg, rs1::reg, imm::imm12) =
         signalException(Illegal_Instr)
     else {
       temp = GPR(rs1) + SignExtend(imm);
-      GPR(rd) <- SignExtend(temp<31:0>)
+      writeRD(rd, SignExtend(temp<31:0>))
     }
 
 -----------------------------------
 -- SLTI  rd, rs1, imm
 -----------------------------------
 define ArithI > SLTI(rd::reg, rs1::reg, imm::imm12) =
-    GPR(rd) <- [GPR(rs1) < SignExtend(imm)]
+    writeRD(rd, [GPR(rs1) < SignExtend(imm)])
 
 -----------------------------------
 -- SLTIU rd, rs1, imm
 -----------------------------------
 define ArithI > SLTIU(rd::reg, rs1::reg, imm::imm12) =
-    GPR(rd) <- [GPR(rs1) <+ SignExtend(imm)]
+    writeRD(rd, [GPR(rs1) <+ SignExtend(imm)])
 
 -- NOTE: RISCV ANDI/ORI/XORI use sign-extended 12-bit immediates,
 -- unlike zero-extended 16-bit immediates in MIPS.
@@ -630,19 +636,19 @@ define ArithI > SLTIU(rd::reg, rs1::reg, imm::imm12) =
 -- ANDI  rd, rs1, imm
 -----------------------------------
 define ArithI > ANDI(rd::reg, rs1::reg, imm::imm12) =
-    GPR(rd) <- GPR(rs1) && SignExtend(imm)
+    writeRD(rd, GPR(rs1) && SignExtend(imm))
 
 -----------------------------------
 -- ORI   rd, rs1, imm
 -----------------------------------
 define ArithI > ORI(rd::reg, rs1::reg, imm::imm12) =
-    GPR(rd) <- GPR(rs1) || SignExtend(imm)
+    writeRD(rd, GPR(rs1) || SignExtend(imm))
 
 -----------------------------------
 -- XORI  rd, rs1, imm
 -----------------------------------
 define ArithI > XORI(rd::reg, rs1::reg, imm::imm12) =
-    GPR(rd) <- GPR(rs1) ?? SignExtend(imm)
+    writeRD(rd, GPR(rs1) ?? SignExtend(imm))
 
 
 -- NOTE: RISCV SSLI/SRLI/SRAI use zero-extended 32-bit results, unlike
@@ -655,7 +661,7 @@ define Shift > SLLI(rd::reg, rs1::reg, imm::bits(6)) =
     if is32Bit(arch) and imm<5> then
         signalException(Illegal_Instr)
     else
-        GPR(rd) <- GPR(rs1) << [imm]
+        writeRD(rd, GPR(rs1) << [imm])
 
 -----------------------------------
 -- SRLI  rd, rs1, imm
@@ -664,7 +670,7 @@ define Shift > SRLI(rd::reg, rs1::reg, imm::bits(6)) =
     if is32Bit(arch) and imm<5> then
         signalException(Illegal_Instr)
     else
-        GPR(rd) <- GPR(rs1) >>+ [imm]
+        writeRD(rd, GPR(rs1) >>+ [imm])
 
 -----------------------------------
 -- SRAI  rd, rs1, imm
@@ -673,7 +679,7 @@ define Shift > SRAI(rd::reg, rs1::reg, imm::bits(6)) =
     if is32Bit(arch) and imm<5> then
         signalException(Illegal_Instr)
     else
-        GPR(rd) <- GPR(rs1) >> [imm]
+        writeRD(rd, GPR(rs1) >> [imm])
 
 -----------------------------------
 -- SLLIW rd, rs1, imm   (RV64I)
@@ -682,7 +688,7 @@ define Shift > SLLIW(rd::reg, rs1::reg, imm::bits(5)) =
     if is32Bit(arch) or notWordValue(GPR(rs1)) then
         signalException(Illegal_Instr)
     else
-      GPR(rd) <- SignExtend(GPR(rs1)<31:0> << [imm])
+        writeRD(rd, SignExtend(GPR(rs1)<31:0> << [imm]))
 
 -----------------------------------
 -- SRLIW rd, rs1, imm   (RV64I)
@@ -691,7 +697,7 @@ define Shift > SRLIW(rd::reg, rs1::reg, imm::bits(5)) =
     if is32Bit(arch) or notWordValue(GPR(rs1)) then
         signalException(Illegal_Instr)
     else
-      GPR(rd) <- SignExtend(GPR(rs1)<31:0> >>+ [imm])
+        writeRD(rd, SignExtend(GPR(rs1)<31:0> >>+ [imm]))
 
 -----------------------------------
 -- SRAIW rd, rs1, imm   (RV64I)
@@ -700,13 +706,13 @@ define Shift > SRAIW(rd::reg, rs1::reg, imm::bits(5)) =
     if is32Bit(arch) or notWordValue(GPR(rs1)) then
         signalException(Illegal_Instr)
     else
-      GPR(rd) <- SignExtend(GPR(rs1)<31:0> >> [imm])
+        writeRD(rd, SignExtend(GPR(rs1)<31:0> >> [imm]))
 
 -----------------------------------
 -- LUI   rd, imm
 -----------------------------------
 define ArithI > LUI(rd::reg, imm::imm20) =
-   GPR(rd) <- SignExtend(imm : 0`12)
+    writeRD(rd, SignExtend(imm : 0`12))
 
 -----------------------------------
 -- AUIPC rd, imm
@@ -716,10 +722,8 @@ define ArithI > LUI(rd::reg, imm::imm20) =
 -- sign-extension.
 
 define ArithI > AUIPC(rd::reg, imm::imm20) =
-{
-  temp = SignExtend(imm : 0`12);
-  GPR(rd) <- PC + temp
-}
+    writeRD(rd, PC + SignExtend(imm : 0`12))
+
 
 -- Integer register-register
 
@@ -727,7 +731,7 @@ define ArithI > AUIPC(rd::reg, imm::imm20) =
 -- ADD   rd, rs1, rs2
 -----------------------------------
 define ArithR > ADD(rd::reg, rs1::reg, rs2::reg) =
-    GPR(rd) <- GPR(rs1) + GPR(rs2)
+    writeRD(rd, GPR(rs1) + GPR(rs2))
 
 -----------------------------------
 -- ADDW  rd, rs1, rs2   (RV64I)
@@ -736,13 +740,13 @@ define ArithR > ADDW(rd::reg, rs1::reg, rs2::reg) =
     if is32Bit(arch) then
         signalException(Illegal_Instr)
     else
-        GPR(rd) <- SignExtend(GPR(rs1)<31:0> + GPR(rs2)<31:0>)
+        writeRD(rd, SignExtend(GPR(rs1)<31:0> + GPR(rs2)<31:0>))
 
 -----------------------------------
 -- SUB   rd, rs1, rs2
 -----------------------------------
 define ArithR > SUB(rd::reg, rs1::reg, rs2::reg) =
-    GPR(rd) <- GPR(rs1) - GPR(rs2)
+    writeRD(rd, GPR(rs1) - GPR(rs2))
 
 -----------------------------------
 -- SUBW  rd, rs1, rs2   (RV64I)
@@ -751,46 +755,46 @@ define ArithR > SUBW(rd::reg, rs1::reg, rs2::reg) =
     if is32Bit(arch) then
         signalException(Illegal_Instr)
     else
-        GPR(rd) <- SignExtend(GPR(rs1)<31:0> - GPR(rs2)<31:0>)
+        writeRD(rd, SignExtend(GPR(rs1)<31:0> - GPR(rs2)<31:0>))
 
 -----------------------------------
 -- SLT   rd, rs1, rs2
 -----------------------------------
 define ArithR > SLT(rd::reg, rs1::reg, rs2::reg) =
-   GPR(rd) <- [GPR(rs1) < GPR(rs2)]
+    writeRD(rd, [GPR(rs1) < GPR(rs2)])
 
 -----------------------------------
 -- SLTU  rd, rs1, rs2
 -----------------------------------
 define ArithR > SLTU(rd::reg, rs1::reg, rs2::reg) =
-   GPR(rd) <- [GPR(rs1) <+ GPR(rs2)]
+    writeRD(rd, [GPR(rs1) <+ GPR(rs2)])
 
 -----------------------------------
 -- AND   rd, rs1, rs2
 -----------------------------------
 define ArithR > AND(rd::reg, rs1::reg, rs2::reg) =
-   GPR(rd) <- GPR(rs1) && GPR(rs2)
+    writeRD(rd, GPR(rs1) && GPR(rs2))
 
 -----------------------------------
 -- OR    rd, rs1, rs2
 -----------------------------------
 define ArithR > OR(rd::reg, rs1::reg, rs2::reg) =
-   GPR(rd) <- GPR(rs1) || GPR(rs2)
+    writeRD(rd, GPR(rs1) || GPR(rs2))
 
 -----------------------------------
 -- XOR   rd, rs1, rs2
 -----------------------------------
 define ArithR > XOR(rd::reg, rs1::reg, rs2::reg) =
-   GPR(rd) <- GPR(rs1) ?? GPR(rs2)
+    writeRD(rd, GPR(rs1) ?? GPR(rs2))
 
 -----------------------------------
 -- SLL   rd, rs1, rs2
 -----------------------------------
 define Shift > SLL(rd::reg, rs1::reg, rs2::reg) =
     if is32Bit(arch) then
-        GPR(rd) <- GPR(rs1) << ZeroExtend(GPR(rs2)<4:0>)
+        writeRD(rd, GPR(rs1) << ZeroExtend(GPR(rs2)<4:0>))
     else
-        GPR(rd) <- GPR(rs1) << ZeroExtend(GPR(rs2)<5:0>)
+        writeRD(rd, GPR(rs1) << ZeroExtend(GPR(rs2)<5:0>))
 
 -----------------------------------
 -- SLLW  rd, rs1, rs2   (RV64I)
@@ -799,16 +803,16 @@ define Shift > SLLW(rd::reg, rs1::reg, rs2::reg) =
     if is32Bit(arch) then
         signalException(Illegal_Instr)
     else
-        GPR(rd) <- SignExtend(GPR(rs1)<31:0> << ZeroExtend(GPR(rs2)<4:0>))
+        writeRD(rd, SignExtend(GPR(rs1)<31:0> << ZeroExtend(GPR(rs2)<4:0>)))
 
 -----------------------------------
 -- SRL   rd, rs1, rs2
 -----------------------------------
 define Shift > SRL(rd::reg, rs1::reg, rs2::reg) =
     if is32Bit(arch) then
-        GPR(rd) <- GPR(rs1) >>+ ZeroExtend(GPR(rs2)<4:0>)
+        writeRD(rd, GPR(rs1) >>+ ZeroExtend(GPR(rs2)<4:0>))
     else
-        GPR(rd) <- GPR(rs1) >>+ ZeroExtend(GPR(rs2)<5:0>)
+        writeRD(rd, GPR(rs1) >>+ ZeroExtend(GPR(rs2)<5:0>))
 
 -----------------------------------
 -- SRLW  rd, rs1, rs2   (RV64I)
@@ -817,16 +821,16 @@ define Shift > SRLW(rd::reg, rs1::reg, rs2::reg) =
     if is32Bit(arch) then
         signalException(Illegal_Instr)
     else
-        GPR(rd) <- SignExtend(GPR(rs1)<31:0> >>+ ZeroExtend(GPR(rs2)<4:0>))
+        writeRD(rd, SignExtend(GPR(rs1)<31:0> >>+ ZeroExtend(GPR(rs2)<4:0>)))
 
 -----------------------------------
 -- SRA   rd, rs1, rs2
 -----------------------------------
 define Shift > SRA(rd::reg, rs1::reg, rs2::reg) =
     if is32Bit(arch) then
-        GPR(rd) <- GPR(rs1) >> ZeroExtend(GPR(rs2)<4:0>)
+        writeRD(rd, GPR(rs1) >> ZeroExtend(GPR(rs2)<4:0>))
     else
-        GPR(rd) <- GPR(rs1) >> ZeroExtend(GPR(rs2)<5:0>)
+        writeRD(rd, GPR(rs1) >> ZeroExtend(GPR(rs2)<5:0>))
 
 -----------------------------------
 -- SRAW  rd, rs1, rs2   (RV64I)
@@ -835,7 +839,7 @@ define Shift > SRAW(rd::reg, rs1::reg, rs2::reg) =
     if is32Bit(arch) then
         signalException(Illegal_Instr)
     else
-        GPR(rd) <- SignExtend(GPR(rs1)<31:0> >> ZeroExtend(GPR(rs2)<4:0>))
+        writeRD(rd, SignExtend(GPR(rs1)<31:0> >> ZeroExtend(GPR(rs2)<4:0>)))
 
 ---------------------------------------------------------------------------
 -- Control Transfer Instructions
