@@ -130,9 +130,18 @@ fun disassemble pc range =
 
 (* Tandem verification *)
 
-val oracle = _import "call_oracle" : (bool
-                                      * Int64.int * Int64.int * Int64.int
-                                      * Int64.int * Int64.int * Int64.int) -> bool;
+val reset_oracle = _import "reset_oracle" : (Int64.int * Int64.int) -> unit;
+fun initVerify () =
+    reset_oracle (!mem_base_addr, !mem_size)
+
+val load_oracle  = _import "load_oracle" : string -> unit;
+fun loadVerify filename =
+    load_oracle filename
+
+val check_oracle =
+    _import "call_oracle" : (bool
+                             * Int64.int * Int64.int * Int64.int
+                             * Int64.int * Int64.int * Int64.int) -> bool;
 fun do_verify () =
     let val delta       = riscv.Delta ()
         val exc_taken   = (#exc_taken delta)
@@ -143,11 +152,11 @@ fun do_verify () =
         val data3       = Int64.fromInt (BitsN.toInt (#data3   delta))
         val fp_data     = Int64.fromInt (BitsN.toInt (#fp_data delta))
     in
-        if oracle (exc_taken, pc, addr, data1, data2, data3, fp_data)
+        if check_oracle (exc_taken, pc, addr, data1, data2, data3, fp_data)
         then ()
-        else ( print "Verification FAILED!\n"
+        else ( print "Verification error:\n"
              ; dumpRegisters (!current_core_id)
-             ; OS.Process.exit OS.Process.failure
+             ; failExit "Verification FAILED!\n"
              )
     end
 
@@ -214,11 +223,6 @@ fun loadElf segs dis =
                       )
              ) segs
 
-val reset_oracle = _import "reset_oracle" : (Int64.int * Int64.int) -> unit;
-
-fun initVerify () =
-    reset_oracle (!mem_base_addr, !mem_size)
-
 fun doInit () =
     ( riscv.print     := debug_print
     ; riscv.println   := debug_println
@@ -249,6 +253,9 @@ fun doElf cycles file dis =
       ; be := (if (#endian hdr = Elf.BIG) then true else false)
       ; loadElf psegs dis
       ; riscv.initRegs ((#entry hdr), (initStack psegs))
+      ; if !verify
+        then loadVerify file
+        else ()
 
       ; if dis
         then ( printLog (0)

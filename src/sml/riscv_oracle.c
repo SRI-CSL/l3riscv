@@ -17,6 +17,16 @@
 #include <Cissr/C_isa_verify.h>
 #include "riscv_oracle.h"
 
+void reset_oracle (uint64_t mem_base, uint64_t mem_size)
+{
+  cissr_cpu_reset(mem_base, mem_size);
+}
+
+void load_oracle (const char *filename)
+{
+  c_load_elf(filename);
+}
+
 uint32_t call_oracle (uint32_t exc_taken,
                       uint64_t pc,
                       uint64_t addr,
@@ -25,10 +35,5 @@ uint32_t call_oracle (uint32_t exc_taken,
                       uint64_t data3,
                       uint64_t fpdata)
 {
-  return !cissr_verify_instr(exc_taken, pc, addr, data1, data2, data3, fpdata, 1);
-}
-
-void reset_oracle (uint64_t mem_base, uint64_t mem_size)
-{
-  cissr_cpu_reset(mem_base, mem_size);
+  return !cissr_verify_instr(exc_taken, pc, addr, data1, data2, data3, fpdata, 2);
 }
