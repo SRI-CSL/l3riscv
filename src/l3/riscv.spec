@@ -418,6 +418,12 @@ unit setupDelta(pc::regType, instr_word::word) =
   Delta.data3   <- ZeroExtend(instr_word)
 }
 
+unit recordLoad(addr::vAddr, val::regType) =
+{
+  Delta.addr    <- addr;
+  Delta.data1   <- val
+}
+
 ---------------------------------------------------------------------------
 -- Logging
 ---------------------------------------------------------------------------
@@ -936,8 +942,9 @@ define Branch > BGEU(rs1::reg, rs2::reg, offs::imm12) =
 define Load > LW(rd::reg, rs1::reg, offs::imm12) =
 {
   addr = GPR(rs1) + SignExtend(offs);
-  val  = readData(addr);
-  GPR(rd) <- SignExtend(val<31:0>)
+  val  = SignExtend(readData(addr)<31:0>);
+  GPR(rd) <- val;
+  recordLoad(addr, val)
 }
 
 -----------------------------------
@@ -949,8 +956,9 @@ define Load > LWU(rd::reg, rs1::reg, offs::imm12) =
       signalException(Illegal_Instr)
   else {
     addr = GPR(rs1) + SignExtend(offs);
-    val  = readData(addr);
-    GPR(rd) <- ZeroExtend(val<31:0>)
+    val  = ZeroExtend(readData(addr)<31:0>);
+    GPR(rd) <- val;
+    recordLoad(addr, val)
   }
 }
 
@@ -960,8 +968,9 @@ define Load > LWU(rd::reg, rs1::reg, offs::imm12) =
 define Load > LH(rd::reg, rs1::reg, offs::imm12) =
 {
   addr = GPR(rs1) + SignExtend(offs);
-  val  = readData(addr);
-  GPR(rd) <- SignExtend(val<15:0>)
+  val  = SignExtend(readData(addr)<15:0>);
+  GPR(rd) <- val;
+  recordLoad(addr, val)
 }
 
 -----------------------------------
@@ -970,8 +979,9 @@ define Load > LH(rd::reg, rs1::reg, offs::imm12) =
 define Load > LHU(rd::reg, rs1::reg, offs::imm12) =
 {
   addr = GPR(rs1) + SignExtend(offs);
-  val  = readData(addr);
-  GPR(rd) <- ZeroExtend(val<15:0>)
+  val  = ZeroExtend(readData(addr)<15:0>);
+  GPR(rd) <- val;
+  recordLoad(addr, val)
 }
 
 -----------------------------------
@@ -980,8 +990,9 @@ define Load > LHU(rd::reg, rs1::reg, offs::imm12) =
 define Load > LB(rd::reg, rs1::reg, offs::imm12) =
 {
   addr = GPR(rs1) + SignExtend(offs);
-  val  = readData(addr);
-  GPR(rd) <- SignExtend(val<7:0>)
+  val  = SignExtend(readData(addr)<7:0>);
+  GPR(rd) <- val;
+  recordLoad(addr, val)
 }
 
 -----------------------------------
@@ -990,8 +1001,9 @@ define Load > LB(rd::reg, rs1::reg, offs::imm12) =
 define Load > LBU(rd::reg, rs1::reg, offs::imm12) =
 {
   addr = GPR(rs1) + SignExtend(offs);
-  val  = readData(addr);
-  GPR(rd) <- ZeroExtend(val<7:0>)
+  val  = ZeroExtend(readData(addr)<7:0>);
+  GPR(rd) <- val;
+  recordLoad(addr, val)
 }
 
 -----------------------------------
@@ -1003,7 +1015,8 @@ define Load > LD(rd::reg, rs1::reg, offs::imm12) =
     else {
       addr = GPR(rs1) + SignExtend(offs);
       val  = readData(addr);
-      GPR(rd) <- val
+      GPR(rd) <- val;
+      recordLoad(addr, val)
     }
 
 -----------------------------------
