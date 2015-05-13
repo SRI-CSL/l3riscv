@@ -35,5 +35,10 @@ uint32_t call_oracle (uint32_t exc_taken,
                       uint64_t data3,
                       uint64_t fpdata)
 {
-  return !cissr_verify_instr(exc_taken, pc, addr, data1, data2, data3, fpdata, 2);
+  /* Enable max verbosity. */
+  uint32_t ret = !cissr_verify_instr(exc_taken, pc, addr, data1, data2, data3, fpdata, 2);
+  /* Ensure verbose output is immediately visible instead of buffered in libc. */
+  fflush(stdout);
+  fflush(stderr);
+  return ret;
 }
