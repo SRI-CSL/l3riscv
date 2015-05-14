@@ -730,13 +730,13 @@ unit writeData(vAddr::vAddr, rs2::reg, mask::regType, nbytes::nat) =
   if align == 0     -- aligned write
   then { new = old && ~mask || val
        ; VMEM(pAddr) <- new
-       ; Delta.data2 <- val
+       ; Delta.data2 <- data
        ; mark_log(2, log_w_mem_mask(pAddr, vAddr, mask, data, old, new))
        }
   else { if align + nbytes <= Size(mask) div 8 -- write to single regType-sized block
          then { new = old && ~(mask << (align * 8)) || val << (align * 8)
               ; VMEM(pAddr) <- new
-              ; Delta.data2 <- val
+              ; Delta.data2 <- data
               ; mark_log(2, log_w_mem_mask_misaligned(pAddr, vAddr, mask, data, align, old, new))
               }
          else { mark_log(0, "XXX write of size " : [nbytes] : " with align " : [align] : " and size " : [nbytes])
