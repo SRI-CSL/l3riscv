@@ -602,6 +602,9 @@ string log_r_mem(pAddr::pAddr, vAddr::vAddr, data::regType) =
     "/" : PadLeft(#"0", 10, [vAddr]) :
     "]: 0x" : PadLeft(#"0", 16, [data])
 
+string log_tohost(tohost::regType) =
+    "-> host: " : [[tohost<7:0>]::char]
+
 declare log :: nat -> string list   -- One log per "trace level"
 
 unit mark_log(lvl::nat, s::string) = log(lvl) <- s @ log(lvl)
@@ -1712,7 +1715,14 @@ unit Next =
                  PC <- addr
                }
       case Some(_), _       => nothing
-    }
+    };
+    -- Handle the char i/o section of the Berkeley HTIF protocol
+    -- following cissrStandalone.c.
+    if SCSR.tohost <> 0x0
+    then { mark_log(0, log_tohost(SCSR.tohost))
+         ; SCSR.tohost <- 0x0
+         }
+    else ()
 }
 
 -- This initializes each core (via setting procID appropriately) on
