@@ -716,6 +716,19 @@ unit writeMem(vAddr::vAddr, data::regType) =
   mark_log(2, log_w_mem(pAddr, vAddr, data))
 }
 
+---------------------------------------------------------------------------
+-- Control Flow
+---------------------------------------------------------------------------
+
+unit branchTo(newPC::regType) =
+{
+  BranchTo   <- Some(newPC);
+  Delta.addr <- newPC
+}
+
+unit noBranch(nextPC::regType) =
+    Delta.addr <- nextPC
+
 --------------------------------------------------
 -- Instruction fetch
 --------------------------------------------------
@@ -986,8 +999,8 @@ define Shift > SRAW(rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define Branch > JAL(rd::reg, imm::imm20) =
 {
-   GPR(rd)  <- PC + 4;
-   BranchTo <- Some(PC + SignExtend(imm << 1))
+   writeRD(rd, PC + 4);
+   branchTo(PC + SignExtend(imm << 1))
 }
 
 -----------------------------------
@@ -996,8 +1009,8 @@ define Branch > JAL(rd::reg, imm::imm20) =
 define Branch > JALR(rd::reg, rs1::reg, imm::imm12) =
 {
   temp      = GPR(rs1) + SignExtend(imm);
-  GPR(rd)  <- PC + 4;
-  BranchTo <- Some(temp && SignExtend('10'))
+  writeRD(rd, PC + 4);
+  branchTo(temp && SignExtend('10'))
 }
 
 -- conditional branches
@@ -1007,54 +1020,54 @@ define Branch > JALR(rd::reg, rs1::reg, imm::imm12) =
 -----------------------------------
 define Branch > BEQ(rs1::reg, rs2::reg, offs::imm12) =
     if GPR(rs1) == GPR(rs2) then
-        BranchTo <- Some(PC + (SignExtend(offs) << 1))
+        branchTo(PC + (SignExtend(offs) << 1))
     else
-        ()
+        noBranch(PC + 4)
 
 -----------------------------------
 -- BNE   rs1, rs2, offs
 -----------------------------------
 define Branch > BNE(rs1::reg, rs2::reg, offs::imm12) =
     if GPR(rs1) <> GPR(rs2) then
-        BranchTo <- Some(PC + (SignExtend(offs) << 1))
+        branchTo(PC + (SignExtend(offs) << 1))
     else
-        ()
+        noBranch(PC + 4)
 
 -----------------------------------
 -- BLT   rs1, rs2, offs
 -----------------------------------
 define Branch > BLT(rs1::reg, rs2::reg, offs::imm12) =
     if GPR(rs1) < GPR(rs2) then
-        BranchTo <- Some(PC + (SignExtend(offs) << 1))
+        branchTo(PC + (SignExtend(offs) << 1))
     else
-        ()
+        noBranch(PC + 4)
 
 -----------------------------------
 -- BLTU  rs1, rs2, offs
 -----------------------------------
 define Branch > BLTU(rs1::reg, rs2::reg, offs::imm12) =
     if GPR(rs1) <+ GPR(rs2) then
-        BranchTo <- Some(PC + (SignExtend(offs) << 1))
+        branchTo(PC + (SignExtend(offs) << 1))
     else
-        ()
+        noBranch(PC + 4)
 
 -----------------------------------
 -- BGE   rs1, rs2, offs
 -----------------------------------
 define Branch > BGE(rs1::reg, rs2::reg, offs::imm12) =
     if GPR(rs1) >= GPR(rs2) then
-        BranchTo <- Some(PC + (SignExtend(offs) << 1))
+        branchTo(PC + (SignExtend(offs) << 1))
     else
-        ()
+        noBranch(PC + 4)
 
 -----------------------------------
 -- BGEU  rs1, rs2, offs
 -----------------------------------
 define Branch > BGEU(rs1::reg, rs2::reg, offs::imm12) =
     if GPR(rs1) >=+ GPR(rs2) then
-        BranchTo <- Some(PC + (SignExtend(offs) << 1))
+        branchTo(PC + (SignExtend(offs) << 1))
     else
-        ()
+        noBranch(PC + 4)
 
 ---------------------------------------------------------------------------
 -- Load and Store Instructions
