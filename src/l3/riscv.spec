@@ -1672,8 +1672,11 @@ unit Next =
 -- startup before execution begins.
 unit initRegs(pc::nat, stack::nat) =
 {
+   -- TODO: Check if the specs specify the initial values of the registers
+   -- on startup.  Initializing to an arbitrary value causes issues with
+   -- the verifier, which assumes 0-valued initialization.
    for i in 0 .. 31 do
-     gpr([i])   <- 0xAAAAAAAAAAAAAAAA;
+     gpr([i])   <- 0x0;
 
    gpr([STACK]) <- [stack];
 
