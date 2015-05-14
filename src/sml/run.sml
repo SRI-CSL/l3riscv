@@ -100,7 +100,7 @@ fun dumpRegisters core =
       ; let val w = #pc_instr (riscv.Delta ())
             val i = riscv.Decode w
         in  print ("Faulting instruction: (0x" ^ hex32 w ^ ") "
-                   ^ (riscv.instructionToString i)
+                   ^ riscv.instructionToString i
                    ^ "\n\n")
         end
       ; print ("PC     " ^ hex64 pc ^ "\n")
@@ -240,8 +240,8 @@ fun doElf cycles file dis =
     let val elf   = Elf.openElf file
         val hdr   = Elf.getElfHeader elf
         val psegs = Elf.getElfProgSegments elf hdr
-    in  riscv.arch      := (if (#class hdr) = Elf.BIT_32
-                            then riscv.RV32Sv32 else riscv.RV64Sv43)
+    in  riscv.setArch(if (#class hdr) = Elf.BIT_32
+                      then riscv.RV32 else riscv.RV64)
 
       ; if !trace_elf
         then ( print "Loading elf file ...\n"

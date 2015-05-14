@@ -68,12 +68,8 @@ memWidth DOUBLEWORD = 7
 
 construct Architecture
 {
-  RV32Sv32, RV64Sv43
+  RV32, RV64
 }
-
-declare arch :: Architecture
-
-bool is32Bit(a::Architecture) = arch == RV32Sv32
 
 ---------------------------------------------------------------------------
 -- Privilege levels
@@ -216,6 +212,9 @@ register cause :: regType
     4-0 : EC    -- Exception Code
 }
 
+csrAR readAR(csr::creg)  = csr<11:10>
+csrAR writeAR(csr::creg) = csr<9:8>
+
 bool is_reserved_CSR(rp::csrAR, wp::csrAR) =
     match rp, wp
     {
@@ -301,13 +300,7 @@ declare
 
   c_Exception   :: id -> ExceptionType option   -- exception
 }
--- Based on Table 1.4 of spec version 1.99.
-bool is_CSR_defined(csr::creg) =
-    (csr >= 0x001 and csr <= 0x003)
- or (csr >= 0x500 and csr <= 0x50F)
- or (csr >= 0x51E and csr <= 0x51F)
- or (csr >= 0xC00 and csr <= 0xC02)
- or ((csr >= 0xC80 and csr <= 0xC82) and is32Bit(arch))
+
 
 reg STACK = 2
 
@@ -357,11 +350,111 @@ component SCSR :: SystemCSR
    assign value = c_SCSR(procID) <- value
 }
 
+--- XXX: It is not clear in the latest (v1.7) spec how one knows if a
+--- 64-bit CPU is running in 32-bit mode, or how one can switch a
+--- 64-bit CPU into and out-of 32-bit mode.
+
+Architecture curArch () =
+    if SCSR.status.S64 then RV64 else RV32
+
+bool in32BitMode () =
+curArch () == RV32
+
+unit setArch (a::Architecture) =
+    match a
+    {
+      case RV32 => SCSR.status.S64 <- false
+      case RV64 => SCSR.status.S64 <- true
+    }
+
 component UCSR :: UserCSR
 {
    value        = c_UCSR(procID)
    assign value = c_UCSR(procID) <- value
 }
+
+-- The CSR access is very primitive, and we skimp on fine-grained
+-- access control.  The privileged spec has changed in a way that
+-- should make fine-grained access control easier.
+component CSRMap (csr::creg) :: regType
+{
+  value =
+      match csr
+      {
+        case 0x500  => c_SCSR(procID).sup0
+        case 0x501  => c_SCSR(procID).sup1
+        case 0x502  => c_SCSR(procID).epc
+
+        case 0x503  => c_SCSR(procID).badvaddr
+
+        case 0x504  => c_SCSR(procID).ptbr
+        case 0x505  => c_SCSR(procID).asid
+        case 0x506  => c_SCSR(procID).count
+        case 0x507  => c_SCSR(procID).compare
+        case 0x508  => c_SCSR(procID).evec
+
+        case 0x509  => c_SCSR(procID).&cause
+
+        case 0x50a  => c_SCSR(procID).&status
+
+        case 0x50b  => c_SCSR(procID).hartid
+        case 0x50c  => c_SCSR(procID).impl
+
+        case 0x50d  => UNKNOWN -- TODO: should trap as illegal instr
+        case 0x50e  => UNKNOWN -- TODO: should trap as illegal instr
+        case 0x50f  => UNKNOWN -- TODO: should trap as illegal instr
+
+        case 0x51e  => c_SCSR(procID).tohost
+        case 0x51f  => c_SCSR(procID).fromhost
+
+        case _      => UNKNOWN -- TODO: should trap as illegal instr
+      }
+
+  assign value =
+      match csr
+      {
+        case 0x500  => c_SCSR(procID).sup0      <- value
+        case 0x501  => c_SCSR(procID).sup1      <- value
+        case 0x502  => c_SCSR(procID).epc       <- value
+
+        case 0x503  => nothing -- TODO: should trap as illegal instr
+
+        case 0x504  => c_SCSR(procID).ptbr      <- value
+        case 0x505  => c_SCSR(procID).asid      <- value
+        case 0x506  => c_SCSR(procID).count     <- value
+        case 0x507  => c_SCSR(procID).compare   <- value
+        case 0x508  => c_SCSR(procID).evec      <- value
+
+        case 0x509  => nothing -- TODO: should trap as illegal instr
+
+        case 0x50a  => c_SCSR(procID).status    <- status(value)
+
+        case 0x50b  => nothing -- TODO: should trap as illegal instr
+        case 0x50c  => nothing -- TODO: should trap as illegal instr
+
+        case 0x50d  => c_SCSR(procID).fatc      <- value
+        case 0x50e  => c_SCSR(procID).send_ipi  <- value
+        case 0x50f  => c_SCSR(procID).clear_ipi <- value
+
+        case 0x51e  => c_SCSR(procID).tohost    <- value
+        case 0x51f  => c_SCSR(procID).fromhost  <- value
+
+        case _      => nothing -- TODO: should trap as illegal instr
+      }
+}
+
+Privilege curPrivilege () =
+    if SCSR.status.S
+    then Supervisor
+    else User
+
+-- Based on Table 1.4 of spec version 1.99.
+bool is_CSR_defined(csr::creg) =
+    (csr >= 0x001 and csr <= 0x003)
+ or (csr >= 0x500 and csr <= 0x50F)
+ or (csr >= 0x51E and csr <= 0x51F)
+ or (csr >= 0xC00 and csr <= 0xC02)
+ or ((csr >= 0xC80 and csr <= 0xC82) and in32BitMode())
 
 bool notWordValue(value::regType) =
 {
@@ -401,9 +494,9 @@ record StateDelta
 
   data3         :: regType      -- unused
 
-  pc_instr      :: word         -- the retired instruction
-
   fp_data       :: fpval        -- floating point value
+
+  pc_instr      :: word         -- the retired instruction
 }
 
 declare c_update :: id -> StateDelta
@@ -416,19 +509,29 @@ component Delta :: StateDelta
 
 unit setupDelta(pc::regType, instr_word::word) =
 {
+  Delta.exc_taken <- false;
   Delta.pc        <- pc;
+  Delta.addr      <- 0;
+  Delta.data1     <- 0;
+  Delta.data2     <- 0;
+  Delta.data3     <- 0;
+  Delta.fp_data   <- 0;
   Delta.pc_instr  <- instr_word
 }
 
 unit recordLoad(addr::vAddr, val::regType) =
 {
-  Delta.addr    <- addr;
-  Delta.data1   <- val
+  Delta.addr      <- addr;
+  Delta.data1     <- val
 }
 
 ---------------------------------------------------------------------------
 -- Logging
 ---------------------------------------------------------------------------
+
+string log_w_csr(csr::creg, data::regType) =
+    "CSR (0x" : PadLeft(#"0", 3, [csr]) : ") <- 0x" : PadLeft(#"0", 16, [data])
+
 string reg(r::reg) =
 {
   if      r ==  0 then "$0"
@@ -519,6 +622,25 @@ unit signalException(e::ExceptionType) =
 {
   SCSR.badvaddr     <- 0;
   setupException(e)
+}
+
+---------------------------------------------------------------------------
+-- CSR access with logging
+---------------------------------------------------------------------------
+
+component CSR(n::creg) :: regType
+{
+  value = CSRMap(n)
+  assign value =  { CSRMap(n) <- value
+                  ; mark_log(2, log_w_csr(n, value))
+                  }
+}
+
+unit writeCSR(csr::creg, val::regType) =
+{
+  CSR(csr)      <- val;
+  Delta.addr    <- ZeroExtend(csr);
+  Delta.data2   <- val
 }
 
 ---------------------------------------------------------------------------
@@ -622,7 +744,7 @@ define ArithI > ADDI(rd::reg, rs1::reg, imm::imm12) =
 -- ADDIW rd, rs1, imm   (RV64I)
 -----------------------------------
 define ArithI > ADDIW(rd::reg, rs1::reg, imm::imm12) =
-    if is32Bit(arch) then
+    if in32BitMode() then
         signalException(Illegal_Instr)
     else {
       temp = GPR(rs1) + SignExtend(imm);
@@ -670,7 +792,7 @@ define ArithI > XORI(rd::reg, rs1::reg, imm::imm12) =
 -- SLLI  rd, rs1, imm
 -----------------------------------
 define Shift > SLLI(rd::reg, rs1::reg, imm::bits(6)) =
-    if is32Bit(arch) and imm<5> then
+    if in32BitMode() and imm<5> then
         signalException(Illegal_Instr)
     else
         writeRD(rd, GPR(rs1) << [imm])
@@ -679,7 +801,7 @@ define Shift > SLLI(rd::reg, rs1::reg, imm::bits(6)) =
 -- SRLI  rd, rs1, imm
 -----------------------------------
 define Shift > SRLI(rd::reg, rs1::reg, imm::bits(6)) =
-    if is32Bit(arch) and imm<5> then
+    if in32BitMode() and imm<5> then
         signalException(Illegal_Instr)
     else
         writeRD(rd, GPR(rs1) >>+ [imm])
@@ -688,7 +810,7 @@ define Shift > SRLI(rd::reg, rs1::reg, imm::bits(6)) =
 -- SRAI  rd, rs1, imm
 -----------------------------------
 define Shift > SRAI(rd::reg, rs1::reg, imm::bits(6)) =
-    if is32Bit(arch) and imm<5> then
+    if in32BitMode() and imm<5> then
         signalException(Illegal_Instr)
     else
         writeRD(rd, GPR(rs1) >> [imm])
@@ -697,7 +819,7 @@ define Shift > SRAI(rd::reg, rs1::reg, imm::bits(6)) =
 -- SLLIW rd, rs1, imm   (RV64I)
 -----------------------------------
 define Shift > SLLIW(rd::reg, rs1::reg, imm::bits(5)) =
-    if is32Bit(arch) or notWordValue(GPR(rs1)) then
+    if in32BitMode() or notWordValue(GPR(rs1)) then
         signalException(Illegal_Instr)
     else
         writeRD(rd, SignExtend(GPR(rs1)<31:0> << [imm]))
@@ -706,7 +828,7 @@ define Shift > SLLIW(rd::reg, rs1::reg, imm::bits(5)) =
 -- SRLIW rd, rs1, imm   (RV64I)
 -----------------------------------
 define Shift > SRLIW(rd::reg, rs1::reg, imm::bits(5)) =
-    if is32Bit(arch) or notWordValue(GPR(rs1)) then
+    if in32BitMode() or notWordValue(GPR(rs1)) then
         signalException(Illegal_Instr)
     else
         writeRD(rd, SignExtend(GPR(rs1)<31:0> >>+ [imm]))
@@ -715,7 +837,7 @@ define Shift > SRLIW(rd::reg, rs1::reg, imm::bits(5)) =
 -- SRAIW rd, rs1, imm   (RV64I)
 -----------------------------------
 define Shift > SRAIW(rd::reg, rs1::reg, imm::bits(5)) =
-    if is32Bit(arch) or notWordValue(GPR(rs1)) then
+    if in32BitMode() or notWordValue(GPR(rs1)) then
         signalException(Illegal_Instr)
     else
         writeRD(rd, SignExtend(GPR(rs1)<31:0> >> [imm]))
@@ -749,7 +871,7 @@ define ArithR > ADD(rd::reg, rs1::reg, rs2::reg) =
 -- ADDW  rd, rs1, rs2   (RV64I)
 -----------------------------------
 define ArithR > ADDW(rd::reg, rs1::reg, rs2::reg) =
-    if is32Bit(arch) then
+    if in32BitMode() then
         signalException(Illegal_Instr)
     else
         writeRD(rd, SignExtend(GPR(rs1)<31:0> + GPR(rs2)<31:0>))
@@ -764,7 +886,7 @@ define ArithR > SUB(rd::reg, rs1::reg, rs2::reg) =
 -- SUBW  rd, rs1, rs2   (RV64I)
 -----------------------------------
 define ArithR > SUBW(rd::reg, rs1::reg, rs2::reg) =
-    if is32Bit(arch) then
+    if in32BitMode() then
         signalException(Illegal_Instr)
     else
         writeRD(rd, SignExtend(GPR(rs1)<31:0> - GPR(rs2)<31:0>))
@@ -803,7 +925,7 @@ define ArithR > XOR(rd::reg, rs1::reg, rs2::reg) =
 -- SLL   rd, rs1, rs2
 -----------------------------------
 define Shift > SLL(rd::reg, rs1::reg, rs2::reg) =
-    if is32Bit(arch) then
+    if in32BitMode() then
         writeRD(rd, GPR(rs1) << ZeroExtend(GPR(rs2)<4:0>))
     else
         writeRD(rd, GPR(rs1) << ZeroExtend(GPR(rs2)<5:0>))
@@ -812,7 +934,7 @@ define Shift > SLL(rd::reg, rs1::reg, rs2::reg) =
 -- SLLW  rd, rs1, rs2   (RV64I)
 -----------------------------------
 define Shift > SLLW(rd::reg, rs1::reg, rs2::reg) =
-    if is32Bit(arch) then
+    if in32BitMode() then
         signalException(Illegal_Instr)
     else
         writeRD(rd, SignExtend(GPR(rs1)<31:0> << ZeroExtend(GPR(rs2)<4:0>)))
@@ -821,7 +943,7 @@ define Shift > SLLW(rd::reg, rs1::reg, rs2::reg) =
 -- SRL   rd, rs1, rs2
 -----------------------------------
 define Shift > SRL(rd::reg, rs1::reg, rs2::reg) =
-    if is32Bit(arch) then
+    if in32BitMode() then
         writeRD(rd, GPR(rs1) >>+ ZeroExtend(GPR(rs2)<4:0>))
     else
         writeRD(rd, GPR(rs1) >>+ ZeroExtend(GPR(rs2)<5:0>))
@@ -830,7 +952,7 @@ define Shift > SRL(rd::reg, rs1::reg, rs2::reg) =
 -- SRLW  rd, rs1, rs2   (RV64I)
 -----------------------------------
 define Shift > SRLW(rd::reg, rs1::reg, rs2::reg) =
-    if is32Bit(arch) then
+    if in32BitMode() then
         signalException(Illegal_Instr)
     else
         writeRD(rd, SignExtend(GPR(rs1)<31:0> >>+ ZeroExtend(GPR(rs2)<4:0>)))
@@ -839,7 +961,7 @@ define Shift > SRLW(rd::reg, rs1::reg, rs2::reg) =
 -- SRA   rd, rs1, rs2
 -----------------------------------
 define Shift > SRA(rd::reg, rs1::reg, rs2::reg) =
-    if is32Bit(arch) then
+    if in32BitMode() then
         writeRD(rd, GPR(rs1) >> ZeroExtend(GPR(rs2)<4:0>))
     else
         writeRD(rd, GPR(rs1) >> ZeroExtend(GPR(rs2)<5:0>))
@@ -848,7 +970,7 @@ define Shift > SRA(rd::reg, rs1::reg, rs2::reg) =
 -- SRAW  rd, rs1, rs2   (RV64I)
 -----------------------------------
 define Shift > SRAW(rd::reg, rs1::reg, rs2::reg) =
-    if is32Bit(arch) then
+    if in32BitMode() then
         signalException(Illegal_Instr)
     else
         writeRD(rd, SignExtend(GPR(rs1)<31:0> >> ZeroExtend(GPR(rs2)<4:0>)))
@@ -954,7 +1076,7 @@ define Load > LW(rd::reg, rs1::reg, offs::imm12) =
 -----------------------------------
 define Load > LWU(rd::reg, rs1::reg, offs::imm12) =
 {
-  if is32Bit(arch) then
+  if in32BitMode() then
       signalException(Illegal_Instr)
   else {
     addr = GPR(rs1) + SignExtend(offs);
@@ -1012,7 +1134,7 @@ define Load > LBU(rd::reg, rs1::reg, offs::imm12) =
 -- LD    rd, rs1, offs  (RV64I)
 -----------------------------------
 define Load > LD(rd::reg, rs1::reg, offs::imm12) =
-    if is32Bit(arch) then
+    if in32BitMode() then
         signalException(Illegal_Instr)
     else {
       addr = GPR(rs1) + SignExtend(offs);
@@ -1055,7 +1177,7 @@ define Store > SB(rs1::reg, rs2::reg, offs::imm12) =
 -- SD    rs1, rs2, offs (RV64I)
 -----------------------------------
 define Store > SD(rs1::reg, rs2::reg, offs::imm12) =
-    if is32Bit(arch) then
+    if in32BitMode() then
         signalException(Illegal_Instr)
     else {
       addr = GPR(rs1) + SignExtend(offs);
@@ -1103,32 +1225,88 @@ define System >  SRET  = nothing
 -----------------------------------
 -- CSRRW  rd, rs1, imm
 -----------------------------------
-define System > CSRRW(rd::reg, rs1::reg, csr::imm12) = nothing
+define System > CSRRW(rd::reg, rs1::reg, csr::imm12) =
+    if (!is_CSR_defined(csr)
+        or !check_CSR_access(readAR(csr), writeAR(csr), curPrivilege(), Write))
+    then signalException(Illegal_Instr)
+    else {
+      val = CSR(csr);
+      writeCSR(csr, GPR(rs1));
+      writeRD(rd, val)
+    }
 
 -----------------------------------
 -- CSRRS  rd, rs1, imm
 -----------------------------------
-define System > CSRRS(rd::reg, rs1::reg, csr::imm12) = nothing
+define System > CSRRS(rd::reg, rs1::reg, csr::imm12) =
+    if (!is_CSR_defined(csr)
+        or !check_CSR_access(readAR(csr), writeAR(csr), curPrivilege(), Write))
+    then signalException(Illegal_Instr)
+    else {
+      val = CSR(csr);
+      -- TODO: use a more general write function that can mask unwritable bits
+      -- TODO: handle special case when GPR(rs1) == 0
+      writeCSR(csr, val || GPR(rs1));
+      writeRD(rd, val)
+    }
 
 -----------------------------------
 -- CSRRC  rd, rs1, imm
 -----------------------------------
-define System > CSRRC(rd::reg, rs1::reg, csr::imm12) = nothing
+define System > CSRRC(rd::reg, rs1::reg, csr::imm12) =
+    if (!is_CSR_defined(csr)
+        or !check_CSR_access(readAR(csr), writeAR(csr), curPrivilege(), Write))
+    then signalException(Illegal_Instr)
+    else {
+      val = CSR(csr);
+      -- TODO: use a more general write function that can mask unwritable bits
+      -- TODO: handle special case when GPR(rs1) == 0
+      writeCSR(csr, val && ~GPR(rs1));
+      writeRD(rd, val)
+    }
 
 -----------------------------------
 -- CSRRWI rd, rs1, imm
 -----------------------------------
-define System > CSRRWI(rd::reg, rs1::reg, csr::imm12) = nothing
+define System > CSRRWI(rd::reg, zimm::reg, csr::imm12) =
+    if (!is_CSR_defined(csr)
+        or !check_CSR_access(readAR(csr), writeAR(csr), curPrivilege(), Write))
+    then signalException(Illegal_Instr)
+    else {
+      val = CSR(csr);
+      writeCSR(csr, ZeroExtend(zimm));
+      writeRD(rd, val)
+    }
 
 -----------------------------------
 -- CSRRSI rd, rs1, imm
 -----------------------------------
-define System > CSRRSI(rd::reg, rs1::reg, csr::imm12) = nothing
+define System > CSRRSI(rd::reg, zimm::reg, csr::imm12) =
+    if (!is_CSR_defined(csr)
+        or !check_CSR_access(readAR(csr), writeAR(csr), curPrivilege(), Write))
+    then signalException(Illegal_Instr)
+    else {
+      val = CSR(csr);
+      -- TODO: use a more general write function that can mask unwritable bits
+      -- TODO: handle special case when zimm == 0
+      writeCSR(csr, val || ZeroExtend(zimm));
+      writeRD(rd, val)
+    }
 
 -----------------------------------
 -- CSRRCI rd, rs1, imm
 -----------------------------------
-define System > CSRRCI(rd::reg, rs1::reg, csr::imm12) = nothing
+define System > CSRRCI(rd::reg, zimm::reg, csr::imm12) =
+    if (!is_CSR_defined(csr)
+        or !check_CSR_access(readAR(csr), writeAR(csr), curPrivilege(), Write))
+    then signalException(Illegal_Instr)
+    else {
+      val = CSR(csr);
+      -- TODO: use a more general write function that can mask unwritable bits
+      -- TODO: handle special case when zimm == 0
+      writeCSR(csr, val && ~ZeroExtend(zimm));
+      writeRD(rd, val)
+    }
 
 -----------------------------------
 -- Unsupported instructions
@@ -1485,6 +1663,9 @@ unit initRegs(pc::nat, stack::nat) =
      gpr([i])   <- 0xAAAAAAAAAAAAAAAA;
 
    gpr([STACK]) <- [stack];
+
+   -- Startup in supervisor mode
+   SCSR.status.S <- true;
 
    PC           <- [pc];
    BranchTo     <- None;
