@@ -571,11 +571,26 @@ string reg(r::reg) =
 string log_w_gpr(r::reg, data::regType) =
     "Reg " : reg(r) : " (" : [[r]::nat] : ") <- 0x" : PadLeft(#"0", 16, [data])
 
-string log_w_mem_mask(pAddr::pAddr, vAddr::vAddr, mask::regType, data::regType) =
+string log_w_mem_mask(pAddr::pAddr, vAddr::vAddr, mask::regType, data::regType,
+                      old::regType, new::regType) =
     "MEM[0x" : PadLeft(#"0", 10, [pAddr]) :
     "/" : PadLeft(#"0", 10, [vAddr]) :
     "] <- (data: 0x" : PadLeft(#"0", 16, [data]) :
-    ", mask: 0x" : PadLeft(#"0", 16, [mask]) : ")"
+    ", mask: 0x" : PadLeft(#"0", 16, [mask]) :
+    ", old: 0x"  : PadLeft(#"0", 16, [old]) :
+    ", new: 0x"  : PadLeft(#"0", 16, [new]) :
+    ")"
+
+string log_w_mem_mask_misaligned(pAddr::pAddr, vAddr::vAddr, mask::regType, data::regType,
+                                 align::nat, old::regType, new::regType) =
+    "MEM[0x" : PadLeft(#"0", 10, [pAddr]) :
+    "/" : PadLeft(#"0", 10, [vAddr]) :
+    "/ misaligned@" : [align] :
+    "] <- (data: 0x" : PadLeft(#"0", 16, [data]) :
+    ", mask: 0x" : PadLeft(#"0", 16, [mask]) :
+    ", old: 0x"  : PadLeft(#"0", 16, [old]) :
+    ", new: 0x"  : PadLeft(#"0", 16, [new]) :
+    ")"
 
 string log_w_mem(pAddr::pAddr, vAddr::vAddr, data::regType) =
     "MEM[0x" : PadLeft(#"0", 10, [pAddr]) :
@@ -684,26 +699,58 @@ unit initVMEM = VMEM <- InitMap(0x0)
 regType readData(vAddr::vAddr) =
 {
   pAddr = vAddr<63:3>;
-  data  = VMEM(pAddr);
-  mark_log(2, log_r_mem(pAddr, vAddr, data));
-  data
+  align = [vAddr<2:0>]::nat;
+  if align == 0   -- aligned read
+  then { data = VMEM(pAddr)
+       ; mark_log(2, log_r_mem(pAddr,   vAddr, data))
+       ; data
+       }
+  -- TODO: optimize this to avoid the second read when possible
+  else { dw0   = VMEM(pAddr)
+       ; dw1   = VMEM(pAddr+1)
+       ; ddw   = (dw1 : dw0) >> (align * 8)
+       ; data  = ddw<63:0>
+       ; mark_log(2, log_r_mem(pAddr,   vAddr, dw0))
+       ; mark_log(2, log_r_mem(pAddr+1, vAddr, dw1))
+       ; mark_log(2, log_r_mem(pAddr,   vAddr, data))
+       ; data
+       }
 }
 
-unit writeData(vAddr::vAddr, rs2::reg, mask::regType) =
+unit writeData(vAddr::vAddr, rs2::reg, mask::regType, nbytes::nat) =
 {
   data  = GPR(rs2);
+  val   = data && mask;
   pAddr = vAddr<63:3>;
-  val   = VMEM(pAddr) && ~mask || data && mask;
-  VMEM(pAddr) <- val;
-  Delta.addr  <- vAddr;
-  Delta.data2 <- val;
-  mark_log(2, log_w_mem_mask(pAddr, vAddr, mask, data))
+  align = [vAddr<2:0>] :: nat;
+  old   = VMEM(pAddr);
+
+  mark_log(2, log_r_mem(pAddr, vAddr, old));
+
+  if align == 0     -- aligned write
+  then { new = old && ~mask || val
+       ; VMEM(pAddr) <- new
+       ; Delta.data2 <- val
+       ; mark_log(2, log_w_mem_mask(pAddr, vAddr, mask, data, old, new))
+       }
+  else { if align + nbytes <= Size(mask) div 8 -- write to single regType-sized block
+         then { new = old && ~(mask << (align * 8)) || val << (align * 8)
+              ; VMEM(pAddr) <- new
+              ; Delta.data2 <- val
+              ; mark_log(2, log_w_mem_mask_misaligned(pAddr, vAddr, mask, data, align, old, new))
+              }
+         else { mark_log(0, "XXX write of size " : [nbytes] : " with align " : [align] : " and size " : [nbytes])
+              -- TODO: handle this case
+              }
+       };
+
+  Delta.addr  <- vAddr
 }
 
 word readInst(vAddr::vAddr) =
 {
   pAddr = vAddr<63:3>;
-  data = VMEM(pAddr);
+  data  = VMEM(pAddr);
   mark_log(2, log_r_mem(pAddr, vAddr, data));
   if vAddr<2> then data<63:32> else data<31:0>
 }
@@ -1163,7 +1210,7 @@ define Store > SW(rs1::reg, rs2::reg, offs::imm12) =
 {
   addr = GPR(rs1) + SignExtend(offs);
   mask = 0xFFFF_FFFF;
-  writeData(addr, rs2, mask)
+  writeData(addr, rs2, mask, 4)
 }
 
 -----------------------------------
@@ -1173,7 +1220,7 @@ define Store > SH(rs1::reg, rs2::reg, offs::imm12) =
 {
   addr = GPR(rs1) + SignExtend(offs);
   mask = 0xFFFF;
-  writeData(addr, rs2, mask)
+  writeData(addr, rs2, mask, 2)
 }
 
 -----------------------------------
@@ -1183,7 +1230,7 @@ define Store > SB(rs1::reg, rs2::reg, offs::imm12) =
 {
   addr = GPR(rs1) + SignExtend(offs);
   mask = 0xFF;
-  writeData(addr, rs2, mask)
+  writeData(addr, rs2, mask, 1)
 }
 
 -----------------------------------
@@ -1194,7 +1241,7 @@ define Store > SD(rs1::reg, rs2::reg, offs::imm12) =
         signalException(Illegal_Instr)
     else {
       addr = GPR(rs1) + SignExtend(offs);
-      writeData(addr, rs2, SignExtend('1'))
+      writeData(addr, rs2, SignExtend('1'), 8)
     }
 
 ---------------------------------------------------------------------------
