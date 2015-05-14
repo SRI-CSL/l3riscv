@@ -42,3 +42,8 @@ uint32_t call_oracle (uint32_t exc_taken,
   fflush(stderr);
   return ret;
 }
+
+uint64_t get_exit ()
+{
+  return c_get_exit_pc();
+}

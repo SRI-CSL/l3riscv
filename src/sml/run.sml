@@ -27,7 +27,8 @@ val time_run    = ref true
 val trace_level = ref 0
 val trace_elf   = ref false
 
-val verify      = ref false
+val verify          = ref false
+val verify_exit_pc  = ref (Int64.fromInt (~1))
 
 (* Utilities *)
 
@@ -133,8 +134,12 @@ fun initVerify () =
     reset_oracle (!mem_base_addr, !mem_size)
 
 val load_oracle  = _import "load_oracle" : string -> unit;
+val get_exit_pc  = _import "get_exit"     : unit -> Int64.int;
 fun loadVerify filename =
-    load_oracle filename
+    ( load_oracle filename
+    ; verify_exit_pc := get_exit_pc ()
+    ; print ("Set exit pc to " ^ Int64.toString (!verify_exit_pc) ^ "\n")
+    )
 
 val check_oracle =
     _import "call_oracle" : (bool
@@ -158,6 +163,14 @@ fun do_verify () =
              )
     end
 
+fun is_verify_done () =
+    if !verify then
+        let val pc   = BitsN.toInt (riscv.Map.lookup(!riscv.c_PC, 0))
+            val pc64 = Int64.fromInt pc
+        in  Int64.compare (!verify_exit_pc, pc64) = EQUAL
+        end
+    else false
+
 (* Code execution *)
 
 fun log_loop mx i =
@@ -171,7 +184,7 @@ fun log_loop mx i =
       ; if 1 <= !trace_level then printLog(1) else ()
       ; if 2 <= !trace_level then printLog(2) else ()
       ; if !verify then do_verify() else ()
-      ; if !riscv.done orelse i = mx
+      ; if !riscv.done orelse i = mx orelse is_verify_done ()
         then print ("Completed " ^ Int.toString (i + 1) ^ " instructions.\n")
         else log_loop mx (i + 1)
     end
@@ -183,7 +196,8 @@ fun silent_loop mx =
                               BitsN.size(!riscv.procID))
     ; riscv.Next ()
     ; if !verify then do_verify() else ()
-    ; if !riscv.done orelse (mx = 1) then (print "done\n")
+    ; if !riscv.done orelse (mx = 1) orelse is_verify_done ()
+      then (print "done\n")
       else silent_loop (decr mx)
     )
 
