@@ -1652,11 +1652,10 @@ unit Next =
 
 -- Handle the char i/o section of the Berkeley HTIF protocol
 -- following cissrStandalone.c.
-; if SCSR.tohost <> 0x0
-  then { mark_log(0, log_tohost(SCSR.tohost))
+; when SCSR.tohost <> 0x0
+  do   { mark_log(0, log_tohost(SCSR.tohost))
        ; SCSR.tohost <- 0x0
        }
-  else ()
 
 -- XXX: Definition of instret count is not clear in the case of
 -- exceptions and traps.
