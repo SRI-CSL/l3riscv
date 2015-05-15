@@ -84,11 +84,18 @@ construct Privilege
 
 priv_level privLevel(p::Privilege) =
     match p
-    {
-      case User       => 0
+    { case User       => 0
       case Supervisor => 1
       case Hypervisor => 2
       case Trusted    => 3
+    }
+
+string privName(p::Privilege) =
+    match p
+    { case User       => "User"
+      case Supervisor => "Sup"
+      case Hypervisor => "Hyp"
+      case Trusted    => "Trst"
     }
 
 ---------------------------------------------------------------------------
@@ -158,7 +165,7 @@ ExceptionType excType(e::exc_code) =
       case _   => #UNDEFINED("Unknown exception")
     }
 
-string exceptionName(e::ExceptionType) =
+string excName(e::ExceptionType) =
     match e
     {
       case Fetch_Misaligned   => "MISALIGNED_FETCH"
@@ -251,12 +258,9 @@ type RegFile    = reg  -> regType
 
 record UserCSR
 {
-  cycle         :: id -> regType
-  time          :: id -> regType
-  instret       :: id -> regType
-  cycleh        :: id -> regType
-  timeh         :: id -> regType
-  instreth      :: id -> regType
+  cycle         :: regType
+  time          :: regType
+  instret       :: regType
 }
 
 record SystemCSR
@@ -397,6 +401,10 @@ component CSRMap (csr::creg) :: regType
 
         case 0x51e  => c_SCSR(procID).tohost
         case 0x51f  => c_SCSR(procID).fromhost
+
+        case 0xc00  => c_UCSR(procID).cycle
+        case 0xc01  => c_UCSR(procID).time
+        case 0xc02  => c_UCSR(procID).instret
 
         case _      => UNKNOWN -- TODO: should trap as illegal instr
       }
@@ -1237,87 +1245,83 @@ define System > SBREAK = signalException(Breakpoint)
 -----------------------------------
 define System >  SRET  = nothing
 
--- Timers and Counters
+-- Control and Status Registers
+
+bool checkCSROp(csr::imm12, rs1::reg) =
+{ op = if rs1 == 0x0 then Read else Write
+; (is_CSR_defined(csr))
+  and (check_CSR_access(readAR(csr), writeAR(csr), curPrivilege(), op))
+}
 
 -----------------------------------
 -- CSRRW  rd, rs1, imm
 -----------------------------------
+
 define System > CSRRW(rd::reg, rs1::reg, csr::imm12) =
-    if (!is_CSR_defined(csr)
-        or !check_CSR_access(readAR(csr), writeAR(csr), curPrivilege(), Write))
-    then signalException(Illegal_Instr)
-    else { val = CSR(csr)
+    if checkCSROp(csr, rs1)
+    then { val = CSR(csr)
          ; writeCSR(csr, GPR(rs1))
          ; writeRD(rd, val)
          }
+    else signalException(Illegal_Instr)
+
+-- TODO: use a more general write function that can mask unwritable bits
+-- TODO: handle special case of no side-effects when GPR(rs1) == 0
 
 -----------------------------------
 -- CSRRS  rd, rs1, imm
 -----------------------------------
 define System > CSRRS(rd::reg, rs1::reg, csr::imm12) =
-    if (!is_CSR_defined(csr)
-        or !check_CSR_access(readAR(csr), writeAR(csr), curPrivilege(), Write))
-    then signalException(Illegal_Instr)
-    else { val = CSR(csr)
-           -- TODO: use a more general write function that can mask unwritable bits
-           -- TODO: handle special case when GPR(rs1) == 0
+    if checkCSROp(csr, rs1)
+    then { val = CSR(csr)
          ; writeCSR(csr, val || GPR(rs1))
          ; writeRD(rd, val)
          }
+    else signalException(Illegal_Instr)
 
 -----------------------------------
 -- CSRRC  rd, rs1, imm
 -----------------------------------
 define System > CSRRC(rd::reg, rs1::reg, csr::imm12) =
-    if (!is_CSR_defined(csr)
-        or !check_CSR_access(readAR(csr), writeAR(csr), curPrivilege(), Write))
-    then signalException(Illegal_Instr)
-    else { val = CSR(csr)
-           -- TODO: use a more general write function that can mask unwritable bits
-           -- TODO: handle special case when GPR(rs1) == 0
+    if checkCSROp(csr, rs1)
+    then { val = CSR(csr)
          ; writeCSR(csr, val && ~GPR(rs1))
          ; writeRD(rd, val)
          }
+    else signalException(Illegal_Instr)
 
 -----------------------------------
 -- CSRRWI rd, rs1, imm
 -----------------------------------
 define System > CSRRWI(rd::reg, zimm::reg, csr::imm12) =
-    if (!is_CSR_defined(csr)
-        or !check_CSR_access(readAR(csr), writeAR(csr), curPrivilege(), Write))
-    then signalException(Illegal_Instr)
-    else { val = CSR(csr)
+    if checkCSROp(csr, zimm)
+    then { val = CSR(csr)
          ; writeCSR(csr, ZeroExtend(zimm))
          ; writeRD(rd, val)
-    }
+         }
+    else signalException(Illegal_Instr)
 
 -----------------------------------
 -- CSRRSI rd, rs1, imm
 -----------------------------------
 define System > CSRRSI(rd::reg, zimm::reg, csr::imm12) =
-    if (!is_CSR_defined(csr)
-        or !check_CSR_access(readAR(csr), writeAR(csr), curPrivilege(), Write))
-    then signalException(Illegal_Instr)
-    else { val = CSR(csr)
-           -- TODO: use a more general write function that can mask unwritable bits
-           -- TODO: handle special case when zimm == 0
+    if checkCSROp(csr, zimm)
+    then { val = CSR(csr)
          ; writeCSR(csr, val || ZeroExtend(zimm))
          ; writeRD(rd, val)
          }
+    else signalException(Illegal_Instr)
 
 -----------------------------------
 -- CSRRCI rd, rs1, imm
 -----------------------------------
 define System > CSRRCI(rd::reg, zimm::reg, csr::imm12) =
-    if (!is_CSR_defined(csr)
-        or !check_CSR_access(readAR(csr), writeAR(csr), curPrivilege(), Write))
-    then signalException(Illegal_Instr)
-    else { val = CSR(csr)
-           -- TODO: use a more general write function that can mask unwritable bits
-           -- TODO: handle special case when zimm == 0
+    if checkCSROp(csr, zimm)
+    then { val = CSR(csr)
          ; writeCSR(csr, val && ~ZeroExtend(zimm))
          ; writeRD(rd, val)
          }
+    else signalException(Illegal_Instr)
 
 -----------------------------------
 -- Unsupported instructions
@@ -1642,6 +1646,12 @@ string log_instruction(w::word, inst::instruction) =
 
 declare done :: bool   -- Flag to request termination
 
+unit incrCounts() =
+{ UCSR.cycle    <- UCSR.cycle + 1
+; UCSR.time     <- UCSR.time + 1
+; UCSR.instret  <- UCSR.instret + 1
+}
+
 unit Next =
 { clear_logs()
 
@@ -1654,15 +1664,6 @@ unit Next =
     case None => nothing
   }
 
-; match Exception, BranchTo
-  { case None, None       => PC <- PC + 4
-    case None, Some(addr) =>
-             { BranchTo <- None
-             ; PC <- addr
-             }
-    case Some(_), _       => nothing
-  }
-
 -- Handle the char i/o section of the Berkeley HTIF protocol
 -- following cissrStandalone.c.
 ; if SCSR.tohost <> 0x0
@@ -1670,6 +1671,26 @@ unit Next =
        ; SCSR.tohost <- 0x0
        }
   else ()
+
+-- XXX: Definition of instret count is not clear in the case of
+-- exceptions and traps.
+
+; match Exception, BranchTo
+  { case None, None       =>
+             { PC <- PC + 4
+             ; incrCounts ()
+             }
+    case None, Some(addr) =>
+             { BranchTo <- None
+             ; PC <- addr
+             ; incrCounts ()
+             }
+    case Some(e), _       =>
+             { mark_log(0, "Exception: " : [excName(e)])
+             -- TODO
+             ; nothing
+             }
+  }
 }
 
 -- This initializes each core (via setting procID appropriately) on
