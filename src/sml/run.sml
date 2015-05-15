@@ -9,6 +9,7 @@
  *
  * See the LICENSE file for details.
  *)
+
 (* --------------------------------------------------------------------------
    RISCV emulator
    -------------------------------------------------------------------------- *)
@@ -129,22 +130,22 @@ fun disassemble pc range =
 
 (* Tandem verification *)
 
-val reset_oracle = _import "reset_oracle" : (Int64.int * Int64.int) -> unit;
+val oracle_reset = _import "oracle_reset" : (Int64.int * Int64.int) -> unit;
 fun initVerify () =
-    reset_oracle (!mem_base_addr, !mem_size)
+    oracle_reset (!mem_base_addr, !mem_size)
 
-val load_oracle  = _import "load_oracle" : string -> unit;
-val get_exit_pc  = _import "get_exit"     : unit -> Int64.int;
+val oracle_load     = _import "oracle_load" : string -> unit;
+val oracle_get_exit = _import "oracle_get_exit_pc" : unit -> Int64.int;
 fun loadVerify filename =
-    ( load_oracle filename
-    ; verify_exit_pc := get_exit_pc ()
+    ( oracle_load filename
+    ; verify_exit_pc := oracle_get_exit ()
     ; print ("Set exit pc to " ^ Int64.toString (!verify_exit_pc) ^ "\n")
     )
 
-val check_oracle =
-    _import "call_oracle" : (bool
-                             * Int64.int * Int64.int * Int64.int
-                             * Int64.int * Int64.int * Int64.int) -> bool;
+val oracle_verify =
+    _import "oracle_verify" : (bool
+                               * Int64.int * Int64.int * Int64.int
+                               * Int64.int * Int64.int * Int64.int) -> bool;
 fun doVerify () =
     let val delta       = riscv.Delta ()
         val exc_taken   = #exc_taken delta
@@ -155,7 +156,7 @@ fun doVerify () =
         val data3       = Int64.fromInt (BitsN.toInt (#data3   delta))
         val fp_data     = Int64.fromInt (BitsN.toInt (#fp_data delta))
     in
-        if check_oracle (exc_taken, pc, addr, data1, data2, data3, fp_data)
+        if oracle_verify (exc_taken, pc, addr, data1, data2, data3, fp_data)
         then ()
         else ( print "Verification error:\n"
              ; dumpRegisters (!current_core_id)
@@ -277,9 +278,7 @@ fun doElf cycles file dis =
         else run cycles
     end
 
-(* ------------------------------------------------------------------------
-   Command line interface
-   ------------------------------------------------------------------------ *)
+(* Command line interface *)
 
 local
     fun printUsage () =

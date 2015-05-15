@@ -18,27 +18,27 @@
 #endif
 #include "riscv_oracle.h"
 
-void reset_oracle (uint64_t mem_base, uint64_t mem_size)
+void oracle_reset (uint64_t mem_base, uint64_t mem_size)
 {
 #ifdef USE_CISSR
   cissr_cpu_reset(mem_base, mem_size);
 #endif
 }
 
-void load_oracle (const char *filename)
+void oracle_load (const char *filename)
 {
 #ifdef USE_CISSR
   c_load_elf(filename);
 #endif
 }
 
-uint32_t call_oracle (uint32_t exc_taken,
-                      uint64_t pc,
-                      uint64_t addr,
-                      uint64_t data1,
-                      uint64_t data2,
-                      uint64_t data3,
-                      uint64_t fpdata)
+uint32_t oracle_verify (uint32_t exc_taken,
+                        uint64_t pc,
+                        uint64_t addr,
+                        uint64_t data1,
+                        uint64_t data2,
+                        uint64_t data3,
+                        uint64_t fpdata)
 { uint32_t ret = 0;
 #ifdef USE_CISSR
   /* Enable max verbosity. */
@@ -50,7 +50,7 @@ uint32_t call_oracle (uint32_t exc_taken,
   return ret;
 }
 
-uint64_t get_exit ()
+uint64_t oracle_get_exit_pc ()
 {
 #ifdef USE_CISSR
   return c_get_exit_pc();
