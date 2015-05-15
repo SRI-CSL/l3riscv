@@ -110,8 +110,7 @@ construct Interrupt
 
 nat interruptIndex(i::Interrupt) =
     match i
-    {
-      case IPI   => 5
+    { case IPI   => 5
       case Host  => 6
       case Timer => 7
     }
@@ -132,8 +131,7 @@ construct ExceptionType
 
 exc_code excCode(e::ExceptionType) =
     match e
-    {
-      case Fetch_Misaligned   => 0x0
+    { case Fetch_Misaligned   => 0x0
       case Fetch_Fault        => 0x1
       case Illegal_Instr      => 0x2
       case Priv_Instr         => 0x3
@@ -149,8 +147,7 @@ exc_code excCode(e::ExceptionType) =
 
 ExceptionType excType(e::exc_code) =
     match e
-    {
-      case 0x0 => Fetch_Misaligned
+    { case 0x0 => Fetch_Misaligned
       case 0x1 => Fetch_Fault
       case 0x2 => Illegal_Instr
       case 0x3 => Priv_Instr
@@ -167,8 +164,7 @@ ExceptionType excType(e::exc_code) =
 
 string excName(e::ExceptionType) =
     match e
-    {
-      case Fetch_Misaligned   => "MISALIGNED_FETCH"
+    { case Fetch_Misaligned   => "MISALIGNED_FETCH"
       case Fetch_Fault        => "FAULT_FETCH"
       case Illegal_Instr      => "ILLEGAL_INSTRUCTION"
       case Priv_Instr         => "PRIVILEGED_INSTRUCTION"
@@ -187,8 +183,7 @@ regType makeExceptionCause(e::ExceptionType) =
 
 bool isBadAddressException(e::ExceptionType) =
     match e
-    {
-      case Load_Misaligned
+    { case Load_Misaligned
       or   Store_Misaligned
       or   Load_Fault
       or   Store_Fault => true
@@ -200,8 +195,7 @@ bool isBadAddressException(e::ExceptionType) =
 ---------------------------------------------------------------------------
 
 register status :: regType
-{
-  31-24 : IP    -- Pending Interrupts
+{ 31-24 : IP    -- Pending Interrupts
   23-16 : IM    -- Interrupt Mask
       7 : VM    -- Virtual memory enabled (XXX: bit location not in 1.99 spec)
       6 : S64   -- RV64Sv43 in supervisor mode support
@@ -214,8 +208,7 @@ register status :: regType
 }
 
 register cause :: regType
-{
-     63 : Int   -- Interrupt
+{    63 : Int   -- Interrupt
     4-0 : EC    -- Exception Code
 }
 
@@ -224,8 +217,7 @@ csrAR writeAR(csr::creg) = csr<9:8>
 
 bool is_reserved_CSR(rp::csrAR, wp::csrAR) =
     match rp, wp
-    {
-      case 1, 0 => true
+    { case 1, 0 => true
       case 2, 0 => true
       case 2, 1 => true
       case _, _ => false
@@ -257,15 +249,13 @@ bool check_CSR_access(rp::csrAR, wp::csrAR, p::Privilege, a::accessType) =
 type RegFile    = reg  -> regType
 
 record UserCSR
-{
-  cycle         :: regType
+{ cycle         :: regType
   time          :: regType
   instret       :: regType
 }
 
 record SystemCSR
-{
-  sup0          :: regType    -- 0x500: SR/SW: scratch register for exception handlers
+{ sup0          :: regType    -- 0x500: SR/SW: scratch register for exception handlers
   sup1          :: regType    -- 0x501: SR/SW: scratch register for exception handlers
   epc           :: regType    -- 0x502: SR/SW: exception program counter
 
@@ -293,8 +283,7 @@ record SystemCSR
 }
 
 declare
-{
-  c_gpr         :: id -> RegFile                -- general purpose registers
+{ c_gpr         :: id -> RegFile                -- general purpose registers
   c_PC          :: id -> regType                -- program counter
   c_BranchTo    :: id -> regType option         -- requested branch
 
@@ -321,31 +310,31 @@ declare procID :: id
 -- general purpose register "r" in the core whose id equals procID.
 
 component gpr(n::reg) :: regType
-{ value         = { m = c_gpr(procID); m(n) }
-  assign value  = { var m = c_gpr(procID)
-                  ; m(n) <- value
-                  ; c_gpr(procID) <- m
-                  }
+{ value        = { m = c_gpr(procID); m(n) }
+  assign value = { var m = c_gpr(procID)
+                 ; m(n) <- value
+                 ; c_gpr(procID) <- m
+                 }
 }
 
 component PC :: regType
-{ value         = c_PC(procID)
-  assign value  = c_PC(procID) <- value
+{ value        = c_PC(procID)
+  assign value = c_PC(procID) <- value
 }
 
 component BranchTo :: regType option
-{  value        = c_BranchTo(procID)
-   assign value = c_BranchTo(procID) <- value
+{ value        = c_BranchTo(procID)
+  assign value = c_BranchTo(procID) <- value
 }
 
 component Exception :: ExceptionType option
-{  value        = c_Exception(procID)
-   assign value = c_Exception(procID) <- value
+{ value        = c_Exception(procID)
+  assign value = c_Exception(procID) <- value
 }
 
 component SCSR :: SystemCSR
-{  value        = c_SCSR(procID)
-   assign value = c_SCSR(procID) <- value
+{ value        = c_SCSR(procID)
+  assign value = c_SCSR(procID) <- value
 }
 
 --- XXX: It is not clear in the latest (v1.7) spec how one knows if a
@@ -1346,8 +1335,7 @@ imm12 asSImm12(immhi::bits(7), immlo::bits(5)) =  immhi : immlo
 
 instruction Decode(w::word) =
    match w
-   {
-     case 'i12 ihi rs2 rs1 000 ilo i11 11000 11' => Branch( BEQ(rs1, rs2, asImm12(i12, i11, ihi, ilo)))
+   { case 'i12 ihi rs2 rs1 000 ilo i11 11000 11' => Branch( BEQ(rs1, rs2, asImm12(i12, i11, ihi, ilo)))
      case 'i12 ihi rs2 rs1 001 ilo i11 11000 11' => Branch( BNE(rs1, rs2, asImm12(i12, i11, ihi, ilo)))
      case 'i12 ihi rs2 rs1 100 ilo i11 11000 11' => Branch( BLT(rs1, rs2, asImm12(i12, i11, ihi, ilo)))
      case 'i12 ihi rs2 rs1 101 ilo i11 11000 11' => Branch( BGE(rs1, rs2, asImm12(i12, i11, ihi, ilo)))
@@ -1454,8 +1442,7 @@ string pN1type(o::string, r::reg) =
 
 string instructionToString(i::instruction) =
    match i
-   {
-     case Branch(  BEQ(rs1, rs2, imm))      => pSBtype("BEQ",  rs1, rs2, imm)
+   { case Branch(  BEQ(rs1, rs2, imm))      => pSBtype("BEQ",  rs1, rs2, imm)
      case Branch(  BNE(rs1, rs2, imm))      => pSBtype("BNE",  rs1, rs2, imm)
      case Branch(  BLT(rs1, rs2, imm))      => pSBtype("BLT",  rs1, rs2, imm)
      case Branch(  BGE(rs1, rs2, imm))      => pSBtype("BGE",  rs1, rs2, imm)
@@ -1553,8 +1540,7 @@ opcode opc(code::bits(8)) = code<4:0> : '11'
 
 word Encode(i::instruction) =
    match i
-   {
-     case Branch(  BEQ(rs1, rs2, imm))      => SBtype(opc(0x18), 0, rs1, rs2, imm)
+   { case Branch(  BEQ(rs1, rs2, imm))      => SBtype(opc(0x18), 0, rs1, rs2, imm)
      case Branch(  BNE(rs1, rs2, imm))      => SBtype(opc(0x18), 1, rs1, rs2, imm)
      case Branch(  BLT(rs1, rs2, imm))      => SBtype(opc(0x18), 4, rs1, rs2, imm)
      case Branch(  BGE(rs1, rs2, imm))      => SBtype(opc(0x18), 5, rs1, rs2, imm)
