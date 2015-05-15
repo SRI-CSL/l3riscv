@@ -1004,6 +1004,120 @@ define Shift > SRAW(rd::reg, rs1::reg, rs2::reg) =
         writeRD(rd, SignExtend(GPR(rs1)<31:0> >> ZeroExtend(GPR(rs2)<4:0>)))
 
 ---------------------------------------------------------------------------
+-- Multiply and Divide
+---------------------------------------------------------------------------
+
+define MulDiv > MUL(rd::reg, rs1::reg, rs2::reg) =
+    writeRD(rd, GPR(rs1) * GPR(rs2))
+
+-- Assumes we are RV64.
+
+define MulDiv > MULH(rd::reg, rs1::reg, rs2::reg) =
+{ prod`128 = SignExtend(GPR(rs1)) * SignExtend(GPR(rs2))
+; writeRD(rd, prod<127:64>)
+}
+
+define MulDiv > MULHU(rd::reg, rs1::reg, rs2::reg) =
+{ prod`128 = ZeroExtend(GPR(rs1)) * ZeroExtend(GPR(rs2))
+; writeRD(rd, prod<127:64>)
+}
+
+define MulDiv > MULHSU(rd::reg, rs1::reg, rs2::reg) =
+{ prod`128 = SignExtend(GPR(rs1)) * ZeroExtend(GPR(rs2))
+; writeRD(rd, prod<127:64>)
+}
+
+define MulDiv > MULW(rd::reg, rs1::reg, rs2::reg) =
+    if in32BitMode() then
+        signalException(Illegal_Instr)
+    else { prod`64 = SignExtend(GPR(rs1)<31:0> * GPR(rs2)<31:0>)
+         ; writeRD(rd, SignExtend(prod<31:0>))
+         }
+
+define MulDiv > DIV(rd::reg, rs1::reg, rs2::reg) =
+    if GPR(rs2) == 0x0 then
+        writeRD(rd, SignExtend(1`1))
+    else { minus_one::regType   = SignExtend(1`1)
+         ; minus_max            = 0b1 << (Size(GPR(rs1)) - 1)
+         ; if GPR(rs1) == minus_max and GPR(rs2) == minus_one then
+               writeRD(rd, minus_max)
+           else
+               writeRD(rd, GPR(rs1) quot GPR(rs2))
+         }
+
+define MulDiv > REM(rd::reg, rs1::reg, rs2::reg) =
+    if GPR(rs2) == 0x0 then
+        writeRD(rd, GPR(rs1))
+    else { minus_one::regType   = SignExtend(1`1)
+         ; minus_max            = 0b1 << (Size(GPR(rs1)) - 1)
+         ; if GPR(rs1) == minus_max and GPR(rs2) == minus_one then
+               writeRD(rd, 0)
+           else
+               writeRD(rd, GPR(rs1) rem GPR(rs2))
+         }
+
+define MulDiv > DIVU(rd::reg, rs1::reg, rs2::reg) =
+    if GPR(rs2) == 0x0 then
+        writeRD(rd, SignExtend(1`1))
+    else
+        writeRD(rd, GPR(rs1) div GPR(rs2))
+
+define MulDiv > REMU(rd::reg, rs1::reg, rs2::reg) =
+    if GPR(rs2) == 0x0 then
+        writeRD(rd, GPR(rs1))
+    else
+        writeRD(rd, GPR(rs1) mod GPR(rs2))
+
+define MulDiv > DIVW(rd::reg, rs1::reg, rs2::reg) =
+    if in32BitMode() then
+        signalException(Illegal_Instr)
+    else { s1 = GPR(rs1)<31:0>
+         ; s2 = GPR(rs2)<31:0>
+         ; if s2 == 0x0 then
+               writeRD(rd, SignExtend(1`1))
+           else { minus_one::word    = SignExtend(1`1)
+                ; minus_max          = 0b1 << (Size(s1) - 1)
+                ; if s1 == minus_max and s2 == minus_one then
+                      writeRD(rd, SignExtend(minus_max))
+                  else
+                      writeRD(rd, SignExtend(s1 quot s2))
+                }
+         }
+
+define MulDiv > REMW(rd::reg, rs1::reg, rs2::reg) =
+    if in32BitMode() then
+        signalException(Illegal_Instr)
+    else { s1 = GPR(rs1)<31:0>
+         ; s2 = GPR(rs2)<31:0>
+         ; if s2 == 0x0 then
+               writeRD(rd, SignExtend(s1))
+           else
+               writeRD(rd, SignExtend(s1 rem s2))
+         }
+
+define MulDiv > DIVUW(rd::reg, rs1::reg, rs2::reg) =
+    if in32BitMode() then
+        signalException(Illegal_Instr)
+    else { s1 = GPR(rs1)<31:0>
+         ; s2 = GPR(rs2)<31:0>
+         ; if s2 == 0x0 then
+               writeRD(rd, SignExtend(1`1))
+           else
+               writeRD(rd, SignExtend(s1 div s2))
+         }
+
+define MulDiv > REMUW(rd::reg, rs1::reg, rs2::reg) =
+    if in32BitMode() then
+        signalException(Illegal_Instr)
+    else { s1 = GPR(rs1)<31:0>
+         ; s2 = GPR(rs2)<31:0>
+         ; if s2 == 0x0 then
+               writeRD(rd, SignExtend(s1))
+           else
+               writeRD(rd, SignExtend(s1 mod s2))
+         }
+
+---------------------------------------------------------------------------
 -- Control Transfer Instructions
 ---------------------------------------------------------------------------
 
@@ -1380,6 +1494,22 @@ instruction Decode(w::word) =
      case '0000000   rs2 rs1 101  rd 01110 11' =>  Shift( SRLW(rd, rs1, rs2))
      case '0100000   rs2 rs1 101  rd 01110 11' =>  Shift( SRAW(rd, rs1, rs2))
 
+     case '0000001   rs2 rs1 000  rd 01100 11' => MulDiv(   MUL(rd, rs1, rs2))
+     case '0000001   rs2 rs1 001  rd 01100 11' => MulDiv(  MULH(rd, rs1, rs2))
+     case '0000001   rs2 rs1 010  rd 01100 11' => MulDiv(MULHSU(rd, rs1, rs2))
+     case '0000001   rs2 rs1 011  rd 01100 11' => MulDiv( MULHU(rd, rs1, rs2))
+     case '0000001   rs2 rs1 100  rd 01100 11' => MulDiv(   DIV(rd, rs1, rs2))
+     case '0000001   rs2 rs1 101  rd 01100 11' => MulDiv(  DIVU(rd, rs1, rs2))
+     case '0000001   rs2 rs1 110  rd 01100 11' => MulDiv(   REM(rd, rs1, rs2))
+     case '0000001   rs2 rs1 111  rd 01100 11' => MulDiv(  REMU(rd, rs1, rs2))
+
+
+     case '0000001   rs2 rs1 000  rd 01110 11' => MulDiv(  MULW(rd, rs1, rs2))
+     case '0000001   rs2 rs1 100  rd 01110 11' => MulDiv(  DIVW(rd, rs1, rs2))
+     case '0000001   rs2 rs1 101  rd 01110 11' => MulDiv( DIVUW(rd, rs1, rs2))
+     case '0000001   rs2 rs1 110  rd 01110 11' => MulDiv(  REMW(rd, rs1, rs2))
+     case '0000001   rs2 rs1 111  rd 01110 11' => MulDiv( REMUW(rd, rs1, rs2))
+
      case 'imm           rs1 000  rd 00000 11' =>   Load(   LB(rd, rs1, imm))
      case 'imm           rs1 001  rd 00000 11' =>   Load(   LH(rd, rs1, imm))
      case 'imm           rs1 010  rd 00000 11' =>   Load(   LW(rd, rs1, imm))
@@ -1487,6 +1617,21 @@ string instructionToString(i::instruction) =
      case  Shift( SRLW(rd, rs1, rs2))       => pRtype("SRLW",  rd, rs1, rs2)
      case  Shift( SRAW(rd, rs1, rs2))       => pRtype("SRAW",  rd, rs1, rs2)
 
+     case MulDiv(    MUL(rd, rs1, rs2))     => pRtype("MUL",     rd, rs1, rs2)
+     case MulDiv(   MULH(rd, rs1, rs2))     => pRtype("MULH",    rd, rs1, rs2)
+     case MulDiv( MULHSU(rd, rs1, rs2))     => pRtype("MULHSU",  rd, rs1, rs2)
+     case MulDiv(  MULHU(rd, rs1, rs2))     => pRtype("MULHU",   rd, rs1, rs2)
+     case MulDiv(    DIV(rd, rs1, rs2))     => pRtype("DIV",     rd, rs1, rs2)
+     case MulDiv(   DIVU(rd, rs1, rs2))     => pRtype("DIVU",    rd, rs1, rs2)
+     case MulDiv(    REM(rd, rs1, rs2))     => pRtype("REM",     rd, rs1, rs2)
+     case MulDiv(   REMU(rd, rs1, rs2))     => pRtype("REMU",    rd, rs1, rs2)
+
+     case MulDiv(   MULW(rd, rs1, rs2))     => pRtype("MULW",    rd, rs1, rs2)
+     case MulDiv(   DIVW(rd, rs1, rs2))     => pRtype("DIVW",    rd, rs1, rs2)
+     case MulDiv(  DIVUW(rd, rs1, rs2))     => pRtype("DIVUW",   rd, rs1, rs2)
+     case MulDiv(   REMW(rd, rs1, rs2))     => pRtype("REMW",    rd, rs1, rs2)
+     case MulDiv(  REMUW(rd, rs1, rs2))     => pRtype("REMUW",   rd, rs1, rs2)
+
      case   Load(   LB(rd, rs1, imm))       => pItype("LB",    rd, rs1, imm)
      case   Load(   LH(rd, rs1, imm))       => pItype("LH",    rd, rs1, imm)
      case   Load(   LW(rd, rs1, imm))       => pItype("LW",    rd, rs1, imm)
@@ -1584,6 +1729,21 @@ word Encode(i::instruction) =
      case  Shift( SLLW(rd, rs1, rs2))       =>  Rtype(opc(0x0E), 1, rd, rs1, rs2, '0000000')
      case  Shift( SRLW(rd, rs1, rs2))       =>  Rtype(opc(0x0E), 5, rd, rs1, rs2, '0000000')
      case  Shift( SRAW(rd, rs1, rs2))       =>  Rtype(opc(0x0E), 5, rd, rs1, rs2, '0100000')
+
+     case MulDiv(    MUL(rd, rs1, rs2))     =>  Rtype(opc(0x0C), 0, rd, rs1, rs2, '0000001')
+     case MulDiv(   MULH(rd, rs1, rs2))     =>  Rtype(opc(0x0C), 1, rd, rs1, rs2, '0000001')
+     case MulDiv( MULHSU(rd, rs1, rs2))     =>  Rtype(opc(0x0C), 2, rd, rs1, rs2, '0000001')
+     case MulDiv(  MULHU(rd, rs1, rs2))     =>  Rtype(opc(0x0C), 3, rd, rs1, rs2, '0000001')
+     case MulDiv(    DIV(rd, rs1, rs2))     =>  Rtype(opc(0x0C), 4, rd, rs1, rs2, '0000001')
+     case MulDiv(   DIVU(rd, rs1, rs2))     =>  Rtype(opc(0x0C), 5, rd, rs1, rs2, '0000001')
+     case MulDiv(    REM(rd, rs1, rs2))     =>  Rtype(opc(0x0C), 6, rd, rs1, rs2, '0000001')
+     case MulDiv(   REMU(rd, rs1, rs2))     =>  Rtype(opc(0x0C), 7, rd, rs1, rs2, '0000001')
+
+     case MulDiv(   MULW(rd, rs1, rs2))     =>  Rtype(opc(0x0E), 0, rd, rs1, rs2, '0000001')
+     case MulDiv(   DIVW(rd, rs1, rs2))     =>  Rtype(opc(0x0E), 4, rd, rs1, rs2, '0000001')
+     case MulDiv(  DIVUW(rd, rs1, rs2))     =>  Rtype(opc(0x0E), 5, rd, rs1, rs2, '0000001')
+     case MulDiv(   REMW(rd, rs1, rs2))     =>  Rtype(opc(0x0E), 6, rd, rs1, rs2, '0000001')
+     case MulDiv(  REMUW(rd, rs1, rs2))     =>  Rtype(opc(0x0E), 7, rd, rs1, rs2, '0000001')
 
      case   Load(   LB(rd, rs1, imm))       =>  Itype(opc(0x00), 0, rd, rs1, imm)
      case   Load(   LH(rd, rs1, imm))       =>  Itype(opc(0x00), 1, rd, rs1, imm)
