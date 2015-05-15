@@ -40,8 +40,8 @@ val hex64 = phex 64
 fun failExit s = ( print (s ^ "\n"); OS.Process.exit OS.Process.failure )
 fun err e s = failExit ("Failed to " ^ e ^ " file \"" ^ s ^ "\"")
 
-fun debug_print s = print("==DEBUG== "^s)
-fun debug_println s = print("==DEBUG== "^s^"\n")
+fun debugPrint s = print("==DEBUG== "^s)
+fun debugPrintln s = print("==DEBUG== "^s^"\n")
 
 (* Bit vector utilities *)
 
@@ -145,7 +145,7 @@ val check_oracle =
     _import "call_oracle" : (bool
                              * Int64.int * Int64.int * Int64.int
                              * Int64.int * Int64.int * Int64.int) -> bool;
-fun do_verify () =
+fun doVerify () =
     let val delta       = riscv.Delta ()
         val exc_taken   = #exc_taken delta
         val pc          = Int64.fromInt (BitsN.toInt (#pc      delta))
@@ -163,7 +163,7 @@ fun do_verify () =
              )
     end
 
-fun is_verify_done () =
+fun isVerifyDone () =
     if !verify then
         let val pc   = BitsN.toInt (riscv.Map.lookup(!riscv.c_PC, 0))
             val pc64 = Int64.fromInt pc
@@ -173,7 +173,7 @@ fun is_verify_done () =
 
 (* Code execution *)
 
-fun log_loop mx i =
+fun logLoop mx i =
     let val () = riscv.procID := BitsN.B(!current_core_id,
                                          BitsN.size(!riscv.procID))
         val pc = riscv.Map.lookup(!riscv.c_PC, !current_core_id)
@@ -183,34 +183,34 @@ fun log_loop mx i =
       ; print ("\n")
       ; if 1 <= !trace_level then printLog(1) else ()
       ; if 2 <= !trace_level then printLog(2) else ()
-      ; if !verify then do_verify() else ()
-      ; if !riscv.done orelse i = mx orelse is_verify_done ()
+      ; if !verify then doVerify() else ()
+      ; if !riscv.done orelse i = mx orelse isVerifyDone ()
         then print ("Completed " ^ Int.toString (i + 1) ^ " instructions.\n")
-        else log_loop mx (i + 1)
+        else logLoop mx (i + 1)
     end
 
 fun decr i = if i <= 0 then i else i - 1
 
-fun silent_loop mx =
+fun silentLoop mx =
     ( riscv.procID := BitsN.B(!current_core_id,
                               BitsN.size(!riscv.procID))
     ; riscv.Next ()
-    ; if !verify then do_verify() else ()
-    ; if !riscv.done orelse (mx = 1) orelse is_verify_done ()
+    ; if !verify then doVerify() else ()
+    ; if !riscv.done orelse (mx = 1) orelse isVerifyDone ()
       then (print "done\n")
-      else silent_loop (decr mx)
+      else silentLoop (decr mx)
     )
 
 local
     fun t f x = if !time_run then Runtime.time f x else f x
 in
-fun run_mem mx =
+fun runMem mx =
     if   1 <= !trace_level
-    then t (log_loop mx) 0
-    else t silent_loop mx
+    then t (logLoop mx) 0
+    else t silentLoop mx
 
 fun run mx =
-    run_mem mx
+    runMem mx
     handle riscv.UNDEFINED s =>
            ( dumpRegisters (!current_core_id)
            ; failExit ("UNDEFINED \"" ^ s ^ "\"\n")
@@ -236,8 +236,8 @@ fun loadElf segs dis =
              ) segs
 
 fun doInit () =
-    ( riscv.print     := debug_print
-    ; riscv.println   := debug_println
+    ( riscv.print     := debugPrint
+    ; riscv.println   := debugPrintln
     ; riscv.procID    := BitsN.B(!current_core_id, BitsN.size(!riscv.procID))
     ; riscv.totalCore := 1
     ; riscv.initMem ()

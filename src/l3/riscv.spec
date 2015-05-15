@@ -226,9 +226,8 @@ bool is_reserved_CSR(rp::csrAR, wp::csrAR) =
 
 -- This function assumes that the CSR is not reserved.
 bool check_CSR_access(rp::csrAR, wp::csrAR, p::Privilege, a::accessType) =
-{
-  pl = privLevel(p);
-  if rp <> 0b11 then
+{ pl = privLevel(p)
+; if rp <> 0b11 then
       pl >= (if a == Read then rp else wp)
   else
       if a == Write then p == Trusted
@@ -318,8 +317,7 @@ declare procID :: id
 -- general purpose register "r" in the core whose id equals procID.
 
 component gpr(n::reg) :: regType
-{
-  value         = { m = c_gpr(procID); m(n) }
+{ value         = { m = c_gpr(procID); m(n) }
   assign value  = { var m = c_gpr(procID)
                   ; m(n) <- value
                   ; c_gpr(procID) <- m
@@ -327,26 +325,22 @@ component gpr(n::reg) :: regType
 }
 
 component PC :: regType
-{
-  value         = c_PC(procID)
+{ value         = c_PC(procID)
   assign value  = c_PC(procID) <- value
 }
 
 component BranchTo :: regType option
-{
-   value        = c_BranchTo(procID)
+{  value        = c_BranchTo(procID)
    assign value = c_BranchTo(procID) <- value
 }
 
 component Exception :: ExceptionType option
-{
-   value        = c_Exception(procID)
+{  value        = c_Exception(procID)
    assign value = c_Exception(procID) <- value
 }
 
 component SCSR :: SystemCSR
-{
-   value        = c_SCSR(procID)
+{  value        = c_SCSR(procID)
    assign value = c_SCSR(procID) <- value
 }
 
@@ -362,14 +356,12 @@ curArch () == RV32
 
 unit setArch (a::Architecture) =
     match a
-    {
-      case RV32 => SCSR.status.S64 <- false
+    { case RV32 => SCSR.status.S64 <- false
       case RV64 => SCSR.status.S64 <- true
     }
 
 component UCSR :: UserCSR
-{
-   value        = c_UCSR(procID)
+{  value        = c_UCSR(procID)
    assign value = c_UCSR(procID) <- value
 }
 
@@ -380,8 +372,7 @@ component CSRMap (csr::creg) :: regType
 {
   value =
       match csr
-      {
-        case 0x500  => c_SCSR(procID).sup0
+      { case 0x500  => c_SCSR(procID).sup0
         case 0x501  => c_SCSR(procID).sup1
         case 0x502  => c_SCSR(procID).epc
 
@@ -412,8 +403,7 @@ component CSRMap (csr::creg) :: regType
 
   assign value =
       match csr
-      {
-        case 0x500  => c_SCSR(procID).sup0      <- value
+      { case 0x500  => c_SCSR(procID).sup0      <- value
         case 0x501  => c_SCSR(procID).sup1      <- value
         case 0x502  => c_SCSR(procID).epc       <- value
 
@@ -444,9 +434,8 @@ component CSRMap (csr::creg) :: regType
 }
 
 Privilege curPrivilege () =
-    if SCSR.status.S
-    then Supervisor
-    else User
+    if SCSR.status.S then Supervisor
+    else                  User
 
 -- Based on Table 1.4 of spec version 1.99.
 bool is_CSR_defined(csr::creg) =
@@ -457,12 +446,9 @@ bool is_CSR_defined(csr::creg) =
  or ((csr >= 0xC80 and csr <= 0xC82) and in32BitMode())
 
 bool notWordValue(value::regType) =
-{
-  top = value<63:32>;
-  if value<31> then
-      top <> 0xFFFF_FFFF
-  else
-      top <> 0x0
+{ top = value<63:32>
+; if value<31> then top <> 0xFFFF_FFFF
+  else              top <> 0x0
 }
 
 ---------------------------------------------------------------------------
@@ -474,8 +460,7 @@ bool notWordValue(value::regType) =
 -- designed against its API.
 
 record StateDelta
-{
-  exc_taken     :: bool         -- whether an exception (interrupt/trap) was taken
+{ exc_taken     :: bool         -- whether an exception (interrupt/trap) was taken
   pc            :: regType      -- PC of retired instruction
 
   addr          :: regType      -- address argument for instruction:
@@ -502,27 +487,24 @@ record StateDelta
 declare c_update :: id -> StateDelta
 
 component Delta :: StateDelta
-{
-   value         = c_update(procID)
+{  value         = c_update(procID)
    assign value  = c_update(procID) <- value
 }
 
 unit setupDelta(pc::regType, instr_word::word) =
-{
-  Delta.exc_taken <- false;
-  Delta.pc        <- pc;
-  Delta.addr      <- 0;
-  Delta.data1     <- 0;
-  Delta.data2     <- 0;
-  Delta.data3     <- 0;
-  Delta.fp_data   <- 0;
-  Delta.pc_instr  <- instr_word
+{ Delta.exc_taken <- false
+; Delta.pc        <- pc
+; Delta.addr      <- 0
+; Delta.data1     <- 0
+; Delta.data2     <- 0
+; Delta.data3     <- 0
+; Delta.fp_data   <- 0
+; Delta.pc_instr  <- instr_word
 }
 
 unit recordLoad(addr::vAddr, val::regType) =
-{
-  Delta.addr      <- addr;
-  Delta.data1     <- val
+{ Delta.addr      <- addr
+; Delta.data1     <- val
 }
 
 ---------------------------------------------------------------------------
@@ -533,8 +515,7 @@ string log_w_csr(csr::creg, data::regType) =
     "CSR (0x" : PadLeft(#"0", 3, [csr]) : ") <- 0x" : PadLeft(#"0", 16, [data])
 
 string reg(r::reg) =
-{
-  if      r ==  0 then "$0"
+{ if      r ==  0 then "$0"
   else if r ==  1 then "ra"
   else if r ==  2 then "s0"
   else if r ==  3 then "s1"
@@ -619,27 +600,24 @@ string hex64(x::dword) = PadLeft(#"0", 16, [x])
 ---------------------------------------------------------------------------
 
 unit setupException(e::ExceptionType) =
-{
-  SCSR.cause.Int    <- false;
-  SCSR.cause.EC     <- excCode(e);
-  SCSR.epc          <- PC;
-  SCSR.status.PS    <- SCSR.status.S;
-  SCSR.status.S     <- true;
-  SCSR.status.PEI   <- SCSR.status.EI;
-  SCSR.status.EI    <- false;
-  Exception         <- Some(e)
+{ SCSR.cause.Int    <- false
+; SCSR.cause.EC     <- excCode(e)
+; SCSR.epc          <- PC
+; SCSR.status.PS    <- SCSR.status.S
+; SCSR.status.S     <- true
+; SCSR.status.PEI   <- SCSR.status.EI
+; SCSR.status.EI    <- false
+; Exception         <- Some(e)
 }
 
 unit signalAddressException(e::ExceptionType, vAddr::vAddr) =
-{
-  SCSR.badvaddr     <- vAddr;
-  setupException(e)
+{ SCSR.badvaddr     <- vAddr
+; setupException(e)
 }
 
 unit signalException(e::ExceptionType) =
-{
-  SCSR.badvaddr     <- 0;
-  setupException(e)
+{ SCSR.badvaddr     <- 0
+; setupException(e)
 }
 
 ---------------------------------------------------------------------------
@@ -647,16 +625,14 @@ unit signalException(e::ExceptionType) =
 ---------------------------------------------------------------------------
 
 component CSR(n::creg) :: regType
-{
-  value = CSRMap(n)
+{ value = CSRMap(n)
   assign value =  { CSRMap(n) <- value
                   ; mark_log(2, log_w_csr(n, value))
                   }
 }
 
 unit writeCSR(csr::creg, val::regType) =
-{
-  CSR(csr)      <- val;
+{ CSR(csr)      <- val;
   Delta.addr    <- ZeroExtend(csr);
   Delta.data2   <- val
 }
@@ -666,8 +642,7 @@ unit writeCSR(csr::creg, val::regType) =
 ---------------------------------------------------------------------------
 
 component GPR(n::reg) :: regType
-{
-  value = if n == 0 then 0 else gpr(n)
+{ value = if n == 0 then 0 else gpr(n)
   assign value = when n <> 0 do
                    { gpr(n) <- value
                    ; mark_log(2, log_w_gpr(n, value))
@@ -675,17 +650,15 @@ component GPR(n::reg) :: regType
 }
 
 unit writeRD(rd::reg, val::regType) =
-{
-  GPR(rd)       <- val;
-  Delta.data1   <- val
+{ GPR(rd)       <- val
+; Delta.data1   <- val
 }
 
 unit dumpRegs() =
-{
-    mark_log(0, "======   Registers   ======")
-  ; mark_log(0, "Core = " : [[procID]::nat])
-  ; mark_log(0, "PC   0x" : hex64(PC))
-  ; for i in 0 .. 31 do
+{ mark_log(0, "======   Registers   ======")
+; mark_log(0, "Core = " : [[procID]::nat])
+; mark_log(0, "PC   0x" : hex64(PC))
+; for i in 0 .. 31 do
       mark_log(0, "Reg " : (if i < 10 then " " else "") : [i] : " 0x" :
                hex64(GPR([i])))
 }
@@ -700,10 +673,9 @@ declare VMEM :: pAddr -> regType -- user-space virtual memory,
 unit initVMEM = VMEM <- InitMap(0x0)
 
 regType readData(vAddr::vAddr) =
-{
-  pAddr = vAddr<63:3>;
-  align = [vAddr<2:0>]::nat;
-  if align == 0   -- aligned read
+{ pAddr = vAddr<63:3>
+; align = [vAddr<2:0>]::nat
+; if align == 0   -- aligned read
   then { data = VMEM(pAddr)
        ; mark_log(2, log_r_mem(pAddr,   vAddr, data))
        ; data
@@ -721,16 +693,15 @@ regType readData(vAddr::vAddr) =
 }
 
 unit writeData(vAddr::vAddr, rs2::reg, mask::regType, nbytes::nat) =
-{
-  data  = GPR(rs2);
-  val   = data && mask;
-  pAddr = vAddr<63:3>;
-  align = [vAddr<2:0>] :: nat;
-  old   = VMEM(pAddr);
+{ data  = GPR(rs2)
+; val   = data && mask
+; pAddr = vAddr<63:3>
+; align = [vAddr<2:0>] :: nat
+; old   = VMEM(pAddr)
 
-  mark_log(2, log_r_mem(pAddr, vAddr, old));
+; mark_log(2, log_r_mem(pAddr, vAddr, old))
 
-  if align == 0     -- aligned write
+; if align == 0     -- aligned write
   then { new = old && ~mask || val
        ; VMEM(pAddr) <- new
        ; Delta.data2 <- data
@@ -745,25 +716,22 @@ unit writeData(vAddr::vAddr, rs2::reg, mask::regType, nbytes::nat) =
          else { mark_log(0, "XXX write of size " : [nbytes] : " with align " : [align] : " and size " : [nbytes])
               -- TODO: handle this case
               }
-       };
-
-  Delta.addr  <- vAddr
+       }
+; Delta.addr  <- vAddr
 }
 
 word readInst(vAddr::vAddr) =
-{
-  pAddr = vAddr<63:3>;
-  data  = VMEM(pAddr);
-  mark_log(2, log_r_mem(pAddr, vAddr, data));
-  if vAddr<2> then data<63:32> else data<31:0>
+{ pAddr = vAddr<63:3>
+; data  = VMEM(pAddr)
+; mark_log(2, log_r_mem(pAddr, vAddr, data))
+; if vAddr<2> then data<63:32> else data<31:0>
 }
 
 -- helper used to preload memory contents
 unit writeMem(vAddr::vAddr, data::regType) =
-{
-  pAddr = vAddr<63:3>;
-  VMEM(pAddr) <- data;
-  mark_log(2, log_w_mem(pAddr, vAddr, data))
+{ pAddr = vAddr<63:3>
+; VMEM(pAddr) <- data
+; mark_log(2, log_w_mem(pAddr, vAddr, data))
 }
 
 ---------------------------------------------------------------------------
@@ -771,9 +739,8 @@ unit writeMem(vAddr::vAddr, data::regType) =
 ---------------------------------------------------------------------------
 
 unit branchTo(newPC::regType) =
-{
-  BranchTo   <- Some(newPC);
-  Delta.addr <- newPC
+{ BranchTo   <- Some(newPC)
+; Delta.addr <- newPC
 }
 
 unit noBranch(nextPC::regType) =
@@ -784,11 +751,10 @@ unit noBranch(nextPC::regType) =
 --------------------------------------------------
 
 word option Fetch() =
-{
-  pc    = PC;
-  inst  = readInst(pc);
-  setupDelta(pc, inst);
-  Some(inst)
+{ pc    = PC
+; inst  = readInst(pc)
+; setupDelta(pc, inst)
+; Some(inst)
 }
 
 ---------------------------------------------------------------------------
@@ -809,10 +775,9 @@ define ArithI > ADDI(rd::reg, rs1::reg, imm::imm12) =
 define ArithI > ADDIW(rd::reg, rs1::reg, imm::imm12) =
     if in32BitMode() then
         signalException(Illegal_Instr)
-    else {
-      temp = GPR(rs1) + SignExtend(imm);
-      writeRD(rd, SignExtend(temp<31:0>))
-    }
+    else { temp = GPR(rs1) + SignExtend(imm)
+         ; writeRD(rd, SignExtend(temp<31:0>))
+         }
 
 -----------------------------------
 -- SLTI  rd, rs1, imm
@@ -1048,19 +1013,17 @@ define Shift > SRAW(rd::reg, rs1::reg, rs2::reg) =
 -- JAL   rd, offs
 -----------------------------------
 define Branch > JAL(rd::reg, imm::imm20) =
-{
-   writeRD(rd, PC + 4);
-   branchTo(PC + SignExtend(imm << 1))
+{ writeRD(rd, PC + 4)
+; branchTo(PC + SignExtend(imm << 1))
 }
 
 -----------------------------------
 -- JALR  rd, rs1, imm
 -----------------------------------
 define Branch > JALR(rd::reg, rs1::reg, imm::imm12) =
-{
-  temp      = GPR(rs1) + SignExtend(imm);
-  writeRD(rd, PC + 4);
-  branchTo(temp && SignExtend('10'))
+{ temp      = GPR(rs1) + SignExtend(imm)
+; writeRD(rd, PC + 4)
+; branchTo(temp && SignExtend('10'))
 }
 
 -- conditional branches
@@ -1127,70 +1090,63 @@ define Branch > BGEU(rs1::reg, rs2::reg, offs::imm12) =
 -- LW    rd, rs1, offs
 -----------------------------------
 define Load > LW(rd::reg, rs1::reg, offs::imm12) =
-{
-  addr = GPR(rs1) + SignExtend(offs);
-  val  = SignExtend(readData(addr)<31:0>);
-  GPR(rd) <- val;
-  recordLoad(addr, val)
+{ addr = GPR(rs1) + SignExtend(offs)
+; val  = SignExtend(readData(addr)<31:0>)
+; GPR(rd) <- val
+; recordLoad(addr, val)
 }
 
 -----------------------------------
 -- LWU   rd, rs1, offs  (RV64I)
 -----------------------------------
 define Load > LWU(rd::reg, rs1::reg, offs::imm12) =
-{
-  if in32BitMode() then
+{ if in32BitMode() then
       signalException(Illegal_Instr)
-  else {
-    addr = GPR(rs1) + SignExtend(offs);
-    val  = ZeroExtend(readData(addr)<31:0>);
-    GPR(rd) <- val;
-    recordLoad(addr, val)
-  }
+  else { addr = GPR(rs1) + SignExtend(offs)
+       ; val  = ZeroExtend(readData(addr)<31:0>)
+       ; GPR(rd) <- val
+       ; recordLoad(addr, val)
+       }
 }
 
 -----------------------------------
 -- LH    rd, rs1, offs
 -----------------------------------
 define Load > LH(rd::reg, rs1::reg, offs::imm12) =
-{
-  addr = GPR(rs1) + SignExtend(offs);
-  val  = SignExtend(readData(addr)<15:0>);
-  GPR(rd) <- val;
-  recordLoad(addr, val)
+{ addr = GPR(rs1) + SignExtend(offs)
+; val  = SignExtend(readData(addr)<15:0>)
+; GPR(rd) <- val
+; recordLoad(addr, val)
 }
 
 -----------------------------------
 -- LHU   rd, rs1, offs
 -----------------------------------
 define Load > LHU(rd::reg, rs1::reg, offs::imm12) =
-{
-  addr = GPR(rs1) + SignExtend(offs);
-  val  = ZeroExtend(readData(addr)<15:0>);
-  GPR(rd) <- val;
-  recordLoad(addr, val)
+{ addr = GPR(rs1) + SignExtend(offs)
+; val  = ZeroExtend(readData(addr)<15:0>)
+; GPR(rd) <- val
+; recordLoad(addr, val)
 }
 
 -----------------------------------
 -- LB    rd, rs1, offs
 -----------------------------------
 define Load > LB(rd::reg, rs1::reg, offs::imm12) =
-{
-  addr = GPR(rs1) + SignExtend(offs);
-  val  = SignExtend(readData(addr)<7:0>);
-  GPR(rd) <- val;
-  recordLoad(addr, val)
+{ addr = GPR(rs1) + SignExtend(offs)
+; val  = SignExtend(readData(addr)<7:0>)
+; GPR(rd) <- val
+; recordLoad(addr, val)
 }
 
 -----------------------------------
 -- LBU   rd, rs1, offs
 -----------------------------------
 define Load > LBU(rd::reg, rs1::reg, offs::imm12) =
-{
-  addr = GPR(rs1) + SignExtend(offs);
-  val  = ZeroExtend(readData(addr)<7:0>);
-  GPR(rd) <- val;
-  recordLoad(addr, val)
+{ addr = GPR(rs1) + SignExtend(offs)
+; val  = ZeroExtend(readData(addr)<7:0>)
+; GPR(rd) <- val
+; recordLoad(addr, val)
 }
 
 -----------------------------------
@@ -1199,41 +1155,37 @@ define Load > LBU(rd::reg, rs1::reg, offs::imm12) =
 define Load > LD(rd::reg, rs1::reg, offs::imm12) =
     if in32BitMode() then
         signalException(Illegal_Instr)
-    else {
-      addr = GPR(rs1) + SignExtend(offs);
-      val  = readData(addr);
-      GPR(rd) <- val;
-      recordLoad(addr, val)
-    }
+    else { addr = GPR(rs1) + SignExtend(offs)
+         ; val  = readData(addr)
+         ; GPR(rd) <- val
+         ; recordLoad(addr, val)
+         }
 
 -----------------------------------
 -- SW    rs1, rs2, offs
 -----------------------------------
 define Store > SW(rs1::reg, rs2::reg, offs::imm12) =
-{
-  addr = GPR(rs1) + SignExtend(offs);
-  mask = 0xFFFF_FFFF;
-  writeData(addr, rs2, mask, 4)
+{ addr = GPR(rs1) + SignExtend(offs)
+; mask = 0xFFFF_FFFF
+; writeData(addr, rs2, mask, 4)
 }
 
 -----------------------------------
 -- SH    rs1, rs2, offs
 -----------------------------------
 define Store > SH(rs1::reg, rs2::reg, offs::imm12) =
-{
-  addr = GPR(rs1) + SignExtend(offs);
-  mask = 0xFFFF;
-  writeData(addr, rs2, mask, 2)
+{ addr = GPR(rs1) + SignExtend(offs)
+; mask = 0xFFFF
+; writeData(addr, rs2, mask, 2)
 }
 
 -----------------------------------
 -- SB    rs1, rs2, offs
 -----------------------------------
 define Store > SB(rs1::reg, rs2::reg, offs::imm12) =
-{
-  addr = GPR(rs1) + SignExtend(offs);
-  mask = 0xFF;
-  writeData(addr, rs2, mask, 1)
+{ addr = GPR(rs1) + SignExtend(offs)
+; mask = 0xFF
+; writeData(addr, rs2, mask, 1)
 }
 
 -----------------------------------
@@ -1242,10 +1194,9 @@ define Store > SB(rs1::reg, rs2::reg, offs::imm12) =
 define Store > SD(rs1::reg, rs2::reg, offs::imm12) =
     if in32BitMode() then
         signalException(Illegal_Instr)
-    else {
-      addr = GPR(rs1) + SignExtend(offs);
-      writeData(addr, rs2, SignExtend('1'), 8)
-    }
+    else { addr = GPR(rs1) + SignExtend(offs)
+         ; writeData(addr, rs2, SignExtend('1'), 8)
+         }
 
 ---------------------------------------------------------------------------
 -- Memory model
@@ -1292,11 +1243,10 @@ define System > CSRRW(rd::reg, rs1::reg, csr::imm12) =
     if (!is_CSR_defined(csr)
         or !check_CSR_access(readAR(csr), writeAR(csr), curPrivilege(), Write))
     then signalException(Illegal_Instr)
-    else {
-      val = CSR(csr);
-      writeCSR(csr, GPR(rs1));
-      writeRD(rd, val)
-    }
+    else { val = CSR(csr)
+         ; writeCSR(csr, GPR(rs1))
+         ; writeRD(rd, val)
+         }
 
 -----------------------------------
 -- CSRRS  rd, rs1, imm
@@ -1305,13 +1255,12 @@ define System > CSRRS(rd::reg, rs1::reg, csr::imm12) =
     if (!is_CSR_defined(csr)
         or !check_CSR_access(readAR(csr), writeAR(csr), curPrivilege(), Write))
     then signalException(Illegal_Instr)
-    else {
-      val = CSR(csr);
-      -- TODO: use a more general write function that can mask unwritable bits
-      -- TODO: handle special case when GPR(rs1) == 0
-      writeCSR(csr, val || GPR(rs1));
-      writeRD(rd, val)
-    }
+    else { val = CSR(csr)
+           -- TODO: use a more general write function that can mask unwritable bits
+           -- TODO: handle special case when GPR(rs1) == 0
+         ; writeCSR(csr, val || GPR(rs1))
+         ; writeRD(rd, val)
+         }
 
 -----------------------------------
 -- CSRRC  rd, rs1, imm
@@ -1320,13 +1269,12 @@ define System > CSRRC(rd::reg, rs1::reg, csr::imm12) =
     if (!is_CSR_defined(csr)
         or !check_CSR_access(readAR(csr), writeAR(csr), curPrivilege(), Write))
     then signalException(Illegal_Instr)
-    else {
-      val = CSR(csr);
-      -- TODO: use a more general write function that can mask unwritable bits
-      -- TODO: handle special case when GPR(rs1) == 0
-      writeCSR(csr, val && ~GPR(rs1));
-      writeRD(rd, val)
-    }
+    else { val = CSR(csr)
+           -- TODO: use a more general write function that can mask unwritable bits
+           -- TODO: handle special case when GPR(rs1) == 0
+         ; writeCSR(csr, val && ~GPR(rs1))
+         ; writeRD(rd, val)
+         }
 
 -----------------------------------
 -- CSRRWI rd, rs1, imm
@@ -1335,10 +1283,9 @@ define System > CSRRWI(rd::reg, zimm::reg, csr::imm12) =
     if (!is_CSR_defined(csr)
         or !check_CSR_access(readAR(csr), writeAR(csr), curPrivilege(), Write))
     then signalException(Illegal_Instr)
-    else {
-      val = CSR(csr);
-      writeCSR(csr, ZeroExtend(zimm));
-      writeRD(rd, val)
+    else { val = CSR(csr)
+         ; writeCSR(csr, ZeroExtend(zimm))
+         ; writeRD(rd, val)
     }
 
 -----------------------------------
@@ -1348,13 +1295,12 @@ define System > CSRRSI(rd::reg, zimm::reg, csr::imm12) =
     if (!is_CSR_defined(csr)
         or !check_CSR_access(readAR(csr), writeAR(csr), curPrivilege(), Write))
     then signalException(Illegal_Instr)
-    else {
-      val = CSR(csr);
-      -- TODO: use a more general write function that can mask unwritable bits
-      -- TODO: handle special case when zimm == 0
-      writeCSR(csr, val || ZeroExtend(zimm));
-      writeRD(rd, val)
-    }
+    else { val = CSR(csr)
+           -- TODO: use a more general write function that can mask unwritable bits
+           -- TODO: handle special case when zimm == 0
+         ; writeCSR(csr, val || ZeroExtend(zimm))
+         ; writeRD(rd, val)
+         }
 
 -----------------------------------
 -- CSRRCI rd, rs1, imm
@@ -1363,13 +1309,12 @@ define System > CSRRCI(rd::reg, zimm::reg, csr::imm12) =
     if (!is_CSR_defined(csr)
         or !check_CSR_access(readAR(csr), writeAR(csr), curPrivilege(), Write))
     then signalException(Illegal_Instr)
-    else {
-      val = CSR(csr);
-      -- TODO: use a more general write function that can mask unwritable bits
-      -- TODO: handle special case when zimm == 0
-      writeCSR(csr, val && ~ZeroExtend(zimm));
-      writeRD(rd, val)
-    }
+    else { val = CSR(csr)
+           -- TODO: use a more general write function that can mask unwritable bits
+           -- TODO: handle special case when zimm == 0
+         ; writeCSR(csr, val && ~ZeroExtend(zimm))
+         ; writeRD(rd, val)
+         }
 
 -----------------------------------
 -- Unsupported instructions
@@ -1695,53 +1640,50 @@ string log_instruction(w::word, inst::instruction) =
 declare done :: bool   -- Flag to request termination
 
 unit Next =
-{
-    clear_logs();
-    match Fetch()
-    {
-      case Some(w) =>
-      {
-        inst = Decode(w);
-        mark_log(1, log_instruction(w, inst));
-        Run(inst)
-      }
-      case None => nothing
-    };
-    match Exception, BranchTo
-    {
-      case None, None       => PC <- PC + 4
-      case None, Some(addr) =>
-               { BranchTo <- None;
-                 PC <- addr
-               }
-      case Some(_), _       => nothing
-    };
-    -- Handle the char i/o section of the Berkeley HTIF protocol
-    -- following cissrStandalone.c.
-    if SCSR.tohost <> 0x0
-    then { mark_log(0, log_tohost(SCSR.tohost))
-         ; SCSR.tohost <- 0x0
-         }
-    else ()
+{ clear_logs()
+
+; match Fetch()
+  { case Some(w) =>
+    { inst = Decode(w)
+    ; mark_log(1, log_instruction(w, inst))
+    ; Run(inst)
+    }
+    case None => nothing
+  }
+
+; match Exception, BranchTo
+  { case None, None       => PC <- PC + 4
+    case None, Some(addr) =>
+             { BranchTo <- None
+             ; PC <- addr
+             }
+    case Some(_), _       => nothing
+  }
+
+-- Handle the char i/o section of the Berkeley HTIF protocol
+-- following cissrStandalone.c.
+; if SCSR.tohost <> 0x0
+  then { mark_log(0, log_tohost(SCSR.tohost))
+       ; SCSR.tohost <- 0x0
+       }
+  else ()
 }
 
 -- This initializes each core (via setting procID appropriately) on
 -- startup before execution begins.
 unit initRegs(pc::nat, stack::nat) =
-{
-   -- TODO: Check if the specs specify the initial values of the registers
-   -- on startup.  Initializing to an arbitrary value causes issues with
-   -- the verifier, which assumes 0-valued initialization.
-   for i in 0 .. 31 do
-     gpr([i])   <- 0x0;
+{ -- TODO: Check if the specs specify the initial values of the registers
+  -- on startup.  Initializing to an arbitrary value causes issues with
+  -- the verifier, which assumes 0-valued initialization.
+  for i in 0 .. 31 do
+    gpr([i])   <- 0x0
 
-   gpr([STACK]) <- [stack];
+; gpr([STACK]) <- [stack]
 
-   -- Startup in supervisor mode
-   SCSR.status.S <- true;
-
-   PC           <- [pc];
-   BranchTo     <- None;
-   Exception    <- None;
-   done         <- false
+  -- Startup in supervisor mode
+; SCSR.status.S <- true
+; PC           <- [pc]
+; BranchTo     <- None
+; Exception    <- None
+; done         <- false
 }
