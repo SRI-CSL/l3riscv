@@ -701,23 +701,26 @@ unit writeData(vAddr::vAddr, rs2::reg, mask::regType, nbytes::nat) =
 
 ; mark_log(2, log_r_mem(pAddr, vAddr, old))
 
+-- The cissr verifier expects to see the full register width, as
+-- opposed to the masked value for non-full-width stores.  It should
+-- accept either, ideally.
+; Delta.data2 <- data
+; Delta.addr  <- vAddr
+
 ; if align == 0     -- aligned write
   then { new = old && ~mask || val
        ; VMEM(pAddr) <- new
-       ; Delta.data2 <- data
        ; mark_log(2, log_w_mem_mask(pAddr, vAddr, mask, data, old, new))
        }
   else { if align + nbytes <= Size(mask) div 8 -- write to single regType-sized block
          then { new = old && ~(mask << (align * 8)) || val << (align * 8)
               ; VMEM(pAddr) <- new
-              ; Delta.data2 <- data
               ; mark_log(2, log_w_mem_mask_misaligned(pAddr, vAddr, mask, data, align, old, new))
               }
          else { mark_log(0, "XXX write of size " : [nbytes] : " with align " : [align] : " and size " : [nbytes])
               -- TODO: handle this case
               }
        }
-; Delta.addr  <- vAddr
 }
 
 word readInst(vAddr::vAddr) =
