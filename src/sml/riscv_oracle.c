@@ -38,11 +38,12 @@ uint32_t oracle_verify (uint32_t exc_taken,
                         uint64_t data1,
                         uint64_t data2,
                         uint64_t data3,
-                        uint64_t fpdata)
+                        uint64_t fpdata,
+                        uint32_t verbosity)
 { uint32_t ret = 0;
 #ifdef USE_CISSR
   /* Enable max verbosity. */
-  ret = !cissr_verify_instr(exc_taken, pc, addr, data1, data2, data3, fpdata, 2);
+  ret = !cissr_verify_instr(exc_taken, pc, addr, data1, data2, data3, fpdata, verbosity);
   /* Ensure verbose output is immediately visible instead of buffered in libc. */
   fflush(stdout);
   fflush(stderr);

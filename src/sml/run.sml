@@ -139,13 +139,14 @@ val oracle_get_exit = _import "oracle_get_exit_pc" : unit -> Int64.int;
 fun loadVerify filename =
     ( oracle_load filename
     ; verify_exit_pc := oracle_get_exit ()
-    ; print ("Set exit pc to " ^ Int64.toString (!verify_exit_pc) ^ "\n")
+    ; print ("Set exit pc to 0x" ^ Int64.fmt StringCvt.HEX (!verify_exit_pc) ^ "\n")
     )
 
 val oracle_verify =
     _import "oracle_verify" : (bool
                                * Int64.int * Int64.int * Int64.int
-                               * Int64.int * Int64.int * Int64.int) -> bool;
+                               * Int64.int * Int64.int * Int64.int
+                               * Int32.int) -> bool;
 fun doVerify () =
     let val delta       = riscv.Delta ()
         val exc_taken   = #exc_taken delta
@@ -155,8 +156,9 @@ fun doVerify () =
         val data2       = Int64.fromInt (BitsN.toInt (#data2   delta))
         val data3       = Int64.fromInt (BitsN.toInt (#data3   delta))
         val fp_data     = Int64.fromInt (BitsN.toInt (#fp_data delta))
+        val verbosity   = Int32.fromInt (!trace_level)
     in
-        if oracle_verify (exc_taken, pc, addr, data1, data2, data3, fp_data)
+        if oracle_verify (exc_taken, pc, addr, data1, data2, data3, fp_data, verbosity)
         then ()
         else ( print "Verification error:\n"
              ; dumpRegisters (!current_core_id)
