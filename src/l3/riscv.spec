@@ -1007,26 +1007,41 @@ define Shift > SRAW(rd::reg, rs1::reg, rs2::reg) =
 -- Multiply and Divide
 ---------------------------------------------------------------------------
 
+-- Most of the MulDiv implemention assumes we are RV64.
+
+-----------------------------------
+-- MUL   rd, rs1, rs2
+-----------------------------------
 define MulDiv > MUL(rd::reg, rs1::reg, rs2::reg) =
     writeRD(rd, GPR(rs1) * GPR(rs2))
 
--- Assumes we are RV64.
-
+-----------------------------------
+-- MULH  rd, rs1, rs2
+-----------------------------------
 define MulDiv > MULH(rd::reg, rs1::reg, rs2::reg) =
 { prod`128 = SignExtend(GPR(rs1)) * SignExtend(GPR(rs2))
 ; writeRD(rd, prod<127:64>)
 }
 
+-----------------------------------
+-- MULHU rd, rs1, rs2
+-----------------------------------
 define MulDiv > MULHU(rd::reg, rs1::reg, rs2::reg) =
 { prod`128 = ZeroExtend(GPR(rs1)) * ZeroExtend(GPR(rs2))
 ; writeRD(rd, prod<127:64>)
 }
 
+-----------------------------------
+-- MULHSU rd, rs1, rs2
+-----------------------------------
 define MulDiv > MULHSU(rd::reg, rs1::reg, rs2::reg) =
 { prod`128 = SignExtend(GPR(rs1)) * ZeroExtend(GPR(rs2))
 ; writeRD(rd, prod<127:64>)
 }
 
+-----------------------------------
+-- MULW  rd, rs1, rs2
+-----------------------------------
 define MulDiv > MULW(rd::reg, rs1::reg, rs2::reg) =
     if in32BitMode() then
         signalException(Illegal_Instr)
@@ -1034,6 +1049,9 @@ define MulDiv > MULW(rd::reg, rs1::reg, rs2::reg) =
          ; writeRD(rd, SignExtend(prod<31:0>))
          }
 
+-----------------------------------
+-- DIV   rd, rs1, rs2
+-----------------------------------
 define MulDiv > DIV(rd::reg, rs1::reg, rs2::reg) =
     if GPR(rs2) == 0x0 then
         writeRD(rd, SignExtend(1`1))
@@ -1045,6 +1063,9 @@ define MulDiv > DIV(rd::reg, rs1::reg, rs2::reg) =
                writeRD(rd, GPR(rs1) quot GPR(rs2))
          }
 
+-----------------------------------
+-- REM   rd, rs1, rs2
+-----------------------------------
 define MulDiv > REM(rd::reg, rs1::reg, rs2::reg) =
     if GPR(rs2) == 0x0 then
         writeRD(rd, GPR(rs1))
@@ -1056,18 +1077,27 @@ define MulDiv > REM(rd::reg, rs1::reg, rs2::reg) =
                writeRD(rd, GPR(rs1) rem GPR(rs2))
          }
 
+-----------------------------------
+-- DIVU  rd, rs1, rs2
+-----------------------------------
 define MulDiv > DIVU(rd::reg, rs1::reg, rs2::reg) =
     if GPR(rs2) == 0x0 then
         writeRD(rd, SignExtend(1`1))
     else
         writeRD(rd, GPR(rs1) div GPR(rs2))
 
+-----------------------------------
+-- REMU  rd, rs1, rs2
+-----------------------------------
 define MulDiv > REMU(rd::reg, rs1::reg, rs2::reg) =
     if GPR(rs2) == 0x0 then
         writeRD(rd, GPR(rs1))
     else
         writeRD(rd, GPR(rs1) mod GPR(rs2))
 
+-----------------------------------
+-- DIVW  rd, rs1, rs2
+-----------------------------------
 define MulDiv > DIVW(rd::reg, rs1::reg, rs2::reg) =
     if in32BitMode() then
         signalException(Illegal_Instr)
@@ -1084,6 +1114,9 @@ define MulDiv > DIVW(rd::reg, rs1::reg, rs2::reg) =
                 }
          }
 
+-----------------------------------
+-- REMW  rd, rs1, rs2
+-----------------------------------
 define MulDiv > REMW(rd::reg, rs1::reg, rs2::reg) =
     if in32BitMode() then
         signalException(Illegal_Instr)
@@ -1095,6 +1128,9 @@ define MulDiv > REMW(rd::reg, rs1::reg, rs2::reg) =
                writeRD(rd, SignExtend(s1 rem s2))
          }
 
+-----------------------------------
+-- DIVUW rd, rs1, rs2
+-----------------------------------
 define MulDiv > DIVUW(rd::reg, rs1::reg, rs2::reg) =
     if in32BitMode() then
         signalException(Illegal_Instr)
@@ -1106,6 +1142,9 @@ define MulDiv > DIVUW(rd::reg, rs1::reg, rs2::reg) =
                writeRD(rd, SignExtend(s1 div s2))
          }
 
+-----------------------------------
+-- REMUW rd, rs1, rs2
+-----------------------------------
 define MulDiv > REMUW(rd::reg, rs1::reg, rs2::reg) =
     if in32BitMode() then
         signalException(Illegal_Instr)
