@@ -1819,7 +1819,7 @@ word Encode(i::instruction) =
 -- RISCV memory
 ---------------------------------------------------------------------------
 
-unit initMem() = VMEM <- InitMap(0x0)
+unit initMem(val::regType) = VMEM <- InitMap(val)
 
 ---------------------------------------------------------------------------
 -- The next state function
