@@ -243,7 +243,9 @@ fun doInit () =
     ; riscv.println   := debugPrintln
     ; riscv.procID    := BitsN.B(!current_core_id, BitsN.size(!riscv.procID))
     ; riscv.totalCore := 1
-    ; riscv.initMem (if !verify then 0xaaaaaaaaAAAAAAAA else 0x0)
+    ; riscv.initMem (BitsN.fromInt
+                         ((if !verify then 0xaaaaaaaaAAAAAAAA else 0x0)
+                         , 64))
     ; if !verify
       then initVerify ()
       else ()
