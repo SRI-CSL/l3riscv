@@ -30,8 +30,7 @@ type word     = bits(32)
 type dword    = bits(64)
 type fpval    = bits(64)
 
-type exc_code   = bits(5)
-type priv_level = bits(2)
+type exc_code = bits(4)
 
 -- instruction fields
 type opcode   = bits(7)
@@ -46,7 +45,6 @@ construct fetchType  { Instruction, Data }
 type regType  = dword
 type vAddr    = dword
 type pAddr    = bits(61)        -- internal accesses are 8-byte aligned
-type csrAR    = bits(2)         -- CSR access bits (from CSR address)
 
 -- Miscellaneous
 exception UNDEFINED :: string
@@ -66,20 +64,45 @@ memWidth DOUBLEWORD = 7
 -- Processor architecture
 ---------------------------------------------------------------------------
 
+type arch_base = bits(2)
+
 construct Architecture
 {
-  RV32, RV64
+  RV32I, RV64I, RV128I
 }
+
+arch_base archBase(a::Architecture) =
+    match a
+    { case RV32I      => 0
+      case RV64I      => 2
+      case RV128I     => 3
+    }
+
+Architecture architecture(ab::arch_base) =
+    match ab
+    { case 0          => RV32I
+      case 2          => RV64I
+      case 3          => RV128I
+    }
+
+string archName(a::Architecture) =
+    match a
+    { case RV32I      => "RV32I"
+      case RV64I      => "RV64I"
+      case RV128I     => "RV128I"
+    }
 
 ---------------------------------------------------------------------------
 -- Privilege levels
 ---------------------------------------------------------------------------
 
+type priv_level = bits(2)
+
 construct Privilege
 { User
 , Supervisor
 , Hypervisor
-, Trusted
+, Machine
 }
 
 priv_level privLevel(p::Privilege) =
@@ -87,15 +110,93 @@ priv_level privLevel(p::Privilege) =
     { case User       => 0
       case Supervisor => 1
       case Hypervisor => 2
-      case Trusted    => 3
+      case Machine    => 3
+    }
+
+Privilege privilege(p::priv_level) =
+    match p
+    { case 0          => User
+      case 1          => Supervisor
+      case 2          => Hypervisor
+      case 3          => Machine
     }
 
 string privName(p::Privilege) =
     match p
-    { case User       => "User"
-      case Supervisor => "Sup"
-      case Hypervisor => "Hyp"
-      case Trusted    => "Trst"
+    { case User       => "U"
+      case Supervisor => "S"
+      case Hypervisor => "H"
+      case Machine    => "M"
+    }
+
+---------------------------------------------------------------------------
+-- Memory management and virtualization
+---------------------------------------------------------------------------
+
+type vm_mode    = bits(5)
+
+construct VM_Mode
+{ Mbare
+, Mbb
+, Mbbid
+, Sv32
+, Sv39
+, Sv48
+, Sv57
+, Sv64
+}
+
+vm_mode vmMode(vm::VM_Mode) =
+    match vm
+    { case Mbare  => 0
+      case Mbb    => 1
+      case Mbbid  => 2
+      case Sv32   => 8
+      case Sv39   => 9
+      case Sv48   => 10
+      case Sv57   => 11
+      case Sv64   => 12
+    }
+
+string vmModeName(vm::VM_Mode) =
+    match vm
+    { case Mbare  => "Mbare"
+      case Mbb    => "Mbb"
+      case Mbbid  => "Mbbid"
+      case Sv32   => "Sv32"
+      case Sv39   => "Sv39"
+      case Sv48   => "Sv48"
+      case Sv57   => "Sv57"
+      case Sv64   => "Sv64"
+    }
+
+---------------------------------------------------------------------------
+-- Extension Context Status
+---------------------------------------------------------------------------
+
+type ext_status = bits(2)
+
+construct ExtStatus
+{ Off
+, Initial
+, Clean
+, Dirty
+}
+
+ext_status extStatus(e::ExtStatus) =
+    match e
+    { case Off      => 0
+      case Initial  => 1
+      case Clean    => 2
+      case Dirty    => 3
+    }
+
+string extStatusName(e::ExtStatus) =
+    match e
+    { case Off      => "Off"
+      case Initial  => "Initial"
+      case Clean    => "Clean"
+      case Dirty    => "Dirty"
     }
 
 ---------------------------------------------------------------------------
@@ -103,30 +204,29 @@ string privName(p::Privilege) =
 ---------------------------------------------------------------------------
 
 construct Interrupt
-{ IPI
-, Host
+{ Software
 , Timer
 }
 
-nat interruptIndex(i::Interrupt) =
+exc_code interruptIndex(i::Interrupt) =
     match i
-    { case IPI   => 5
-      case Host  => 6
-      case Timer => 7
+    { case Software     => 0
+      case Timer        => 1
     }
 
 construct ExceptionType
 { Fetch_Misaligned
 , Fetch_Fault
 , Illegal_Instr
-, Priv_Instr
-, FP_Disabled
-, Syscall
 , Breakpoint
 , Load_Misaligned
-, Store_Misaligned
 , Load_Fault
+, Store_Misaligned
 , Store_Fault
+, UMode_Env_Call
+, SMode_Env_Call
+, HMode_Env_Call
+, MMode_Env_Call
 }
 
 exc_code excCode(e::ExceptionType) =
@@ -134,15 +234,17 @@ exc_code excCode(e::ExceptionType) =
     { case Fetch_Misaligned   => 0x0
       case Fetch_Fault        => 0x1
       case Illegal_Instr      => 0x2
-      case Priv_Instr         => 0x3
-      case FP_Disabled        => 0x4
+      case Breakpoint         => 0x3
 
-      case Syscall            => 0x6
-      case Breakpoint         => 0x7
-      case Load_Misaligned    => 0x8
-      case Store_Misaligned   => 0x9
-      case Load_Fault         => 0xa
-      case Store_Fault        => 0xb
+      case Load_Misaligned    => 0x4
+      case Load_Fault         => 0x5
+      case Store_Misaligned   => 0x6
+      case Store_Fault        => 0x7
+
+      case UMode_Env_Call     => 0x8
+      case SMode_Env_Call     => 0x9
+      case HMode_Env_Call     => 0xA
+      case MMode_Env_Call     => 0xB
     }
 
 ExceptionType excType(e::exc_code) =
@@ -150,15 +252,18 @@ ExceptionType excType(e::exc_code) =
     { case 0x0 => Fetch_Misaligned
       case 0x1 => Fetch_Fault
       case 0x2 => Illegal_Instr
-      case 0x3 => Priv_Instr
-      case 0x4 => FP_Disabled
+      case 0x3 => Breakpoint
 
-      case 0x6 => Syscall
-      case 0x7 => Breakpoint
-      case 0x8 => Load_Misaligned
-      case 0x9 => Store_Misaligned
-      case 0xa => Load_Fault
-      case 0xb => Store_Fault
+      case 0x4 => Load_Misaligned
+      case 0x5 => Load_Fault
+      case 0x6 => Store_Misaligned
+      case 0x7 => Store_Fault
+
+      case 0x8 => UMode_Env_Call
+      case 0x9 => SMode_Env_Call
+      case 0xA => HMode_Env_Call
+      case 0xB => MMode_Env_Call
+
       case _   => #UNDEFINED("Unknown exception")
     }
 
@@ -167,15 +272,17 @@ string excName(e::ExceptionType) =
     { case Fetch_Misaligned   => "MISALIGNED_FETCH"
       case Fetch_Fault        => "FAULT_FETCH"
       case Illegal_Instr      => "ILLEGAL_INSTRUCTION"
-      case Priv_Instr         => "PRIVILEGED_INSTRUCTION"
-      case FP_Disabled        => "FP_DISABLED"
-
-      case Syscall            => "SYSCALL"
       case Breakpoint         => "BREAKPOINT"
+
       case Load_Misaligned    => "MISALIGNED_LOAD"
-      case Store_Misaligned   => "MISALIGNED_STORE"
       case Load_Fault         => "FAULT_LOAD"
+      case Store_Misaligned   => "MISALIGNED_STORE"
       case Store_Fault        => "FAULT_STORE"
+
+      case UMode_Env_Call     => "U-EnvCall"
+      case SMode_Env_Call     => "S-EnvCall"
+      case HMode_Env_Call     => "H-EnvCall"
+      case MMode_Env_Call     => "M-EnvCall"
     }
 
 regType makeExceptionCause(e::ExceptionType) =
@@ -191,54 +298,167 @@ bool isBadAddressException(e::ExceptionType) =
     }
 
 ---------------------------------------------------------------------------
--- Control and Status Registers
+-- Control and Status Registers (CSRs)
 ---------------------------------------------------------------------------
 
-register status :: regType
-{ 31-24 : IP    -- Pending Interrupts
-  23-16 : IM    -- Interrupt Mask
-      7 : VM    -- Virtual memory enabled (XXX: bit location not in 1.99 spec)
-      6 : S64   -- RV64Sv43 in supervisor mode support
-      5 : U64   -- RV64 in user mode support
-      4 : EF    -- Enabled floating-point
-      3 : PEI   -- Previous EI
-      2 : EI    -- Enabled Interrupts
-      1 : PS    -- Previous S
-      0 : S     -- Supervisor mode
+-- Machine-Level CSRs
+
+register mcpuid :: regType
+{ 63-62 : ArchBase  -- base architecture, machine mode on reset
+,    20 : U         -- user-mode support
+,    18 : S         -- supervisor-mode support
+,    12 : M         -- integer multiply/divide support
+,     8 : I         -- integer base ISA support (XXX: this seems unnecessary)
 }
 
-register cause :: regType
+register mimpid :: regType
+{ 63-16 : RVImpl
+,  15-0 : RVSource
+}
+
+register mstatus :: regType
+{    63 : MSD       -- extended context dirty status
+, 21-17 : VM        -- memory management and virtualization
+,    16 : MMPRV     -- load/store memory privilege
+, 15-14 : MXS       -- extension context status
+, 13-12 : MFS       -- floating-point context status
+            -- privilege and global interrupt-enable stack
+, 11-10 : MPRV3
+,     9 : MIE3
+,   8-7 : MPRV2
+,     6 : MIE2
+,   5-4 : MPRV1
+,     3 : MIE1
+,   2-1 : MPRV
+,     0 : MIE
+}
+
+register mtdeleg :: regType
+{ 63-16 : Intr_deleg
+, 15-0  : Exc_deleg
+}
+
+register mip :: regType
+{           -- pending timer interrupts (read-only)
+      7 : MTIP
+,     6 : HTIP
+,     5 : STIP
+            -- pending software interrupts (read/write)
+,     3 : MSIP
+,     2 : HSIP
+,     1 : SSIP
+}
+
+register mie :: regType
+{           -- enable timer interrupts (read-only)
+      7 : MTIE
+,     6 : HTIE
+,     5 : STIE
+            -- enable software interrupts (read/write)
+,     3 : MSIE
+,     2 : HSIE
+,     1 : SSIE
+}
+
+register mcause :: regType
 {    63 : Int   -- Interrupt
     4-0 : EC    -- Exception Code
 }
 
-csrAR readAR(csr::creg)  = csr<11:10>
-csrAR writeAR(csr::creg) = csr<9:8>
+record MachineCSR
+{ mcpuid        :: mcpuid       -- information registers
+  mimpid        :: mimpid
+  mhartid       :: regType
 
-bool is_reserved_CSR(rp::csrAR, wp::csrAR) =
-    match rp, wp
-    { case 1, 0 => true
-      case 2, 0 => true
-      case 2, 1 => true
-      case _, _ => false
-    }
+  mstatus       :: mstatus      -- trap setup
+  mtvec         :: regType
+  mtdeleg       :: mtdeleg
+  mie           :: mie
+  mtimecmp      :: regType
 
--- This function assumes that the CSR is not reserved.
-bool check_CSR_access(rp::csrAR, wp::csrAR, p::Privilege, a::accessType) =
-{ pl = privLevel(p)
-; if rp <> 0b11 then
-      pl >= (if a == Read then rp else wp)
-  else
-      if a == Write then p == Trusted
-      else               pl >= rp
+  mtime         :: regType      -- timers and counters
+
+  mscratch      :: regType      -- trap handling
+  mepc          :: regType
+  mcause        :: regType
+  mbadaddr      :: regType
+  mip           :: mip
+
+  mbase         :: regType     -- protection and translation
+  mbound        :: regType
+  mibase        :: regType
+  mibound       :: regType
+  mdbase        :: regType
+  mdbound       :: regType
+
+                   -- host-target interface (berkeley extensions)
+  mtohost       :: regType     -- output register to host
+  mfromhost     :: regType     -- input register from host
 }
 
--- XXX: The supervisor spec, v1.99, does not explicitly define *which*
--- exception is raised when a CSR is accessed without appropriate
--- privilege, or when a non-existent CSR is accessed.
+-- Hypervisor-Level CSRs
 
--- Update: This is fixed in the *later* v1.7 spec, where it says that
--- the illegal instruction exception is raised in both cases.
+record HypervisorCSR
+{ hstatus       :: mstatus      -- trap setup
+  htvec         :: regType
+  htdeleg       :: mtdeleg
+  htimecmp      :: regType
+
+  htime         :: regType      -- timer
+
+  hscratch      :: regType      -- trap handling
+  hepc          :: regType
+  hcause        :: mcause
+  hbadaddr      :: regType
+}
+
+-- Supervisor-Level CSRs
+
+register sstatus :: regType
+{    63 : SSD       -- extended context dirty status
+,    16 : SMPRV     -- load/store memory privilege
+, 15-14 : SXS       -- extension context status
+, 13-12 : SFS       -- floating-point context status
+,     4 : SPS       -- previous privilege level before entering supervisor mode
+,     3 : SPIE      -- interrupt-enable before entering supervisor mode
+,     0 : SIE       -- supervisor-level interrupt-enable
+}
+
+register sip :: regType
+{     5 : STIP      -- pending timer interrupt
+,     1 : SSIP      -- pending software interrupt
+}
+
+register sie :: regType
+{     5 : STIE      -- enable timer interrupt
+,     1 : SSIE      -- enable software interrupt
+}
+
+record SupervisorCSR
+{ sstatus       :: sstatus      -- trap setup
+  stvec         :: regType
+  sie           :: sie
+  stimecmp      :: regType
+
+  stime         :: regType      -- timers and counters
+
+  sscratch      :: regType      -- trap handling
+  sepc          :: regType
+  scause        :: mcause
+  sbadaddr      :: regType
+  sip           :: sip
+
+  sptbr         :: regType     -- memory protection and translation
+  sasid         :: regType
+}
+
+-- User-Level CSRs
+
+record UserCSR
+{ cycle         :: regType
+  time          :: regType
+  instret       :: regType
+}
 
 ---------------------------------------------------------------------------
 -- Register state space
@@ -248,51 +468,18 @@ bool check_CSR_access(rp::csrAR, wp::csrAR, p::Privilege, a::accessType) =
 
 type RegFile    = reg  -> regType
 
-record UserCSR
-{ cycle         :: regType
-  time          :: regType
-  instret       :: regType
-}
-
-record SystemCSR
-{ sup0          :: regType    -- 0x500: SR/SW: scratch register for exception handlers
-  sup1          :: regType    -- 0x501: SR/SW: scratch register for exception handlers
-  epc           :: regType    -- 0x502: SR/SW: exception program counter
-
-  badvaddr      :: regType    -- 0x503: SR:    bad virtual address
-
-  ptbr          :: regType    -- 0x504: SR/SW: page table base register
-  asid          :: regType    -- 0x505: SR/SW: address space ID
-  count         :: regType    -- 0x506: SR/SW: cycle counter for timer
-  compare       :: regType    -- 0x507: SR/SW: timer compare value
-  evec          :: regType    -- 0x508: SR/SW: exception handler address
-
-  cause         :: cause      -- 0x509: SR:    cause of exception
-
-  status        :: status     -- 0x50a: SR/SW: status register
-
-  hartid        :: regType    -- 0x50b: SR:    hardware thread ID
-  impl          :: regType    -- 0x50c: SR:    implementation ID
-
-  fatc          :: regType    -- 0x50d: SW:    flush address translation cache
-  send_ipi      :: regType    -- 0x50e: SW:    send inter-processor interrupt
-  clear_ipi     :: regType    -- 0x50f: SW:    clear inter-processor interrupt
-
-  tohost        :: regType    -- 0x51e: SR/SW: test output register
-  fromhost      :: regType    -- 0x51f: SR/SW: test input register
-}
-
 declare
 { c_gpr         :: id -> RegFile                -- general purpose registers
   c_PC          :: id -> regType                -- program counter
   c_BranchTo    :: id -> regType option         -- requested branch
 
-  c_UCSR        :: id -> UserCSR                -- user-mode accessible CSRs
-  c_SCSR        :: id -> SystemCSR              -- system-level CSRs
+  c_UCSR        :: id -> UserCSR                -- user-level CSRs
+  c_SCSR        :: id -> SupervisorCSR          -- supervisor-level CSRs
+  c_HCSR        :: id -> HypervisorCSR          -- hypervisor-level CSRs
+  c_MCSR        :: id -> MachineCSR             -- machine-level CSRs
 
   c_Exception   :: id -> ExceptionType option   -- exception
 }
-
 
 reg STACK = 2
 
@@ -332,75 +519,196 @@ component Exception :: ExceptionType option
   assign value = c_Exception(procID) <- value
 }
 
-component SCSR :: SystemCSR
-{ value        = c_SCSR(procID)
-  assign value = c_SCSR(procID) <- value
-}
-
---- XXX: It is not clear in the latest (v1.7) spec how one knows if a
---- 64-bit CPU is running in 32-bit mode, or how one can switch a
---- 64-bit CPU into and out-of 32-bit mode.
-
-Architecture curArch () =
-    if SCSR.status.S64 then RV64 else RV32
-
-bool in32BitMode () =
-curArch () == RV32
-
-unit setArch (a::Architecture) =
-    match a
-    { case RV32 => SCSR.status.S64 <- false
-      case RV64 => SCSR.status.S64 <- true
-    }
-
 component UCSR :: UserCSR
 {  value        = c_UCSR(procID)
    assign value = c_UCSR(procID) <- value
 }
 
--- The CSR access is very primitive, and we skimp on fine-grained
--- access control.  The privileged spec has changed in a way that
--- should make fine-grained access control easier.
-component CSRMap (csr::creg) :: regType
+component SCSR :: SupervisorCSR
+{ value        = c_SCSR(procID)
+  assign value = c_SCSR(procID) <- value
+}
+
+component HCSR :: HypervisorCSR
+{ value        = c_HCSR(procID)
+  assign value = c_HCSR(procID) <- value
+}
+
+component MCSR :: MachineCSR
+{ value        = c_MCSR(procID)
+  assign value = c_MCSR(procID) <- value
+}
+
+-- machine state utilities
+
+Architecture curArch() =
+    architecture(MCSR.mcpuid.ArchBase)
+
+bool in32BitMode() =
+    curArch() == RV32I
+
+unit setArch(a::Architecture) =
+    MCSR.mcpuid.ArchBase <- archBase(a)
+
+Privilege curPrivilege() =
+    privilege(MCSR.mstatus.MPRV)
+
+---------------------------------------------------------------------------
+-- CSR Register address map
+---------------------------------------------------------------------------
+
+-- CSR access control
+
+type csrRW    = bits(2)         -- read/write check
+type csrPR    = bits(2)         -- privilege check
+
+csrRW csrRW(csr::creg)  = csr<11:10>
+csrPR csrPR(csr::creg)  = csr<9:8>
+
+-- this only checks register-level access.  some registers have
+-- additional bit-specific read/write controls.
+bool check_CSR_access(rw::csrRW, pr::csrPR, p::Privilege, a::accessType) =
+    (privLevel(p) >= pr) and (a == Read or rw == 0b11)
+
+-- XXX: Revise this to handle absence of counter regs in RV32E.
+bool is_CSR_defined(csr::creg) =
+    -- user-mode
+ {- XXX: skip since we don't have floating-point yet
+    (csr >= 0x001 and csr <= 0x003)
+  -}
+    (csr >= 0xC00 and csr <= 0xC02)
+ or (csr >= 0xC80 and csr <= 0xC82 and in32BitMode())
+
+    -- supervisor-mode
+ or (csr >= 0x100 and csr <= 0x101)
+ or  csr == 0x104 or  csr == 0x121
+
+ or  csr == 0xD01 or (csr == 0xD81 and in32BitMode())
+
+ or (csr >= 0x140 and csr <= 0x141) or csr == 0x144
+ or (csr >= 0xD42 and csr <= 0xD43)
+
+ or (csr >= 0x180 and csr <= 0x181)
+
+ or (csr >= 0x900 and csr <= 0x902)
+ or (csr >= 0x980 and csr <= 0x982 and in32BitMode())
+
+    -- machine-mode
+ or (csr >= 0xF00 and csr <= 0xF01) or csr == 0xF10
+ or (csr >= 0x300 and csr <= 0x302) or csr == 0x304 or csr == 0x321
+ or  csr == 0x701 or (csr == 0x741 and in32BitMode())
+ or (csr >= 0x340 and csr <= 0x344)
+ or (csr >= 0x380 and csr <= 0x385)
+ or  csr >= 0xB01 or (csr == 0xB81 and in32BitMode())
+ or (csr >= 0x780 and csr <= 0x781)
+
+component CSRMap(csr::creg) :: regType
 {
   value =
       match csr
-      { case 0x500  => c_SCSR(procID).sup0
-        case 0x501  => c_SCSR(procID).sup1
-        case 0x502  => c_SCSR(procID).epc
+      { -- user counter/timers
+        case 0xC00  => c_UCSR(procID).cycle
+        case 0xC01  => c_UCSR(procID).time
+        case 0xC02  => c_UCSR(procID).instret
+        case 0xC80  => SignExtend(c_UCSR(procID).cycle<63:32>)
+        case 0xC81  => SignExtend(c_UCSR(procID).time<63:32>)
+        case 0xC82  => SignExtend(c_UCSR(procID).instret<63:32>)
 
-        case 0x503  => c_SCSR(procID).badvaddr
+        -- supervisor trap setup
+        case 0x100  => c_SCSR(procID).&sstatus
+        case 0x101  => c_SCSR(procID).stvec
+        case 0x104  => c_SCSR(procID).&sie
+        case 0x121  => c_SCSR(procID).stimecmp
 
-        case 0x504  => c_SCSR(procID).ptbr
-        case 0x505  => c_SCSR(procID).asid
-        case 0x506  => c_SCSR(procID).count
-        case 0x507  => c_SCSR(procID).compare
-        case 0x508  => c_SCSR(procID).evec
+        -- supervisor timer
+        case 0xD01  => c_SCSR(procID).stime
+        case 0xD81  => SignExtend(c_SCSR(procID).stime<63:32>)
 
-        case 0x509  => c_SCSR(procID).&cause
+        -- supervisor trap handling
+        case 0x140  => c_SCSR(procID).sscratch
+        case 0x141  => c_SCSR(procID).sepc
+        case 0xD42  => c_SCSR(procID).&scause
+        case 0xD43  => c_SCSR(procID).sbadaddr
+        case 0x144  => c_SCSR(procID).&sip
 
-        case 0x50a  => c_SCSR(procID).&status
+        -- supervisor protection and translation
+        case 0x180  => c_SCSR(procID).sptbr
+        case 0x181  => c_SCSR(procID).sasid
 
-        case 0x50b  => c_SCSR(procID).hartid
-        case 0x50c  => c_SCSR(procID).impl
+        -- supervisor read/write shadow of user read-only registers
+        case 0x900  => c_UCSR(procID).cycle
+        case 0x901  => c_UCSR(procID).time
+        case 0x902  => c_UCSR(procID).instret
+        case 0x980  => SignExtend(c_UCSR(procID).cycle<63:32>)
+        case 0x981  => SignExtend(c_UCSR(procID).time<63:32>)
+        case 0x982  => SignExtend(c_UCSR(procID).instret<63:32>)
 
-        case 0x50d  => UNKNOWN -- TODO: should trap as illegal instr
-        case 0x50e  => UNKNOWN -- TODO: should trap as illegal instr
-        case 0x50f  => UNKNOWN -- TODO: should trap as illegal instr
+        -- hypervisor trap setup
+        case 0x200  => c_HCSR(procID).&hstatus
+        case 0x201  => c_HCSR(procID).htvec
+        case 0x202  => c_HCSR(procID).&htdeleg
+        case 0x221  => c_HCSR(procID).htimecmp
 
-        case 0x51e  => c_SCSR(procID).tohost
-        case 0x51f  => c_SCSR(procID).fromhost
+        -- hypervisor timer
+        case 0xE01  => c_HCSR(procID).htime
+        case 0xE81  => SignExtend(c_HCSR(procID).htime<63:32>)
 
-        case 0xc00  => c_UCSR(procID).cycle
-        case 0xc01  => c_UCSR(procID).time
-        case 0xc02  => c_UCSR(procID).instret
+        -- hypervisor trap handling
+        case 0x240  => c_HCSR(procID).hscratch
+        case 0x241  => c_HCSR(procID).hepc
+        case 0x242  => c_HCSR(procID).&hcause
+        case 0x243  => c_HCSR(procID).hbadaddr
+
+        -- hypervisor read/write shadow of supervisor read-only registers
+        case 0xA01  => c_SCSR(procID).stime
+        case 0xA81  => SignExtend(c_SCSR(procID).stime<63:32>)
+
+        -- machine information registers
+        case 0xF00  => c_MCSR(procID).&mcpuid
+        case 0xF01  => c_MCSR(procID).&mimpid
+        case 0xF10  => c_MCSR(procID).mhartid
+
+        -- machine trap setup
+        case 0x300  => c_MCSR(procID).&mstatus
+        case 0x301  => c_MCSR(procID).mtvec
+        case 0x302  => c_MCSR(procID).&mtdeleg
+        case 0x304  => c_MCSR(procID).&mie
+        case 0x321  => c_MCSR(procID).mtimecmp
+
+        -- machine timers and counters
+        case 0x701  => c_MCSR(procID).mtime
+        case 0x741  => SignExtend(c_MCSR(procID).mtime<63:32>)
+
+        -- machine trap handling
+        case 0x340  => c_MCSR(procID).mscratch
+        case 0x341  => c_MCSR(procID).mepc
+        case 0x342  => c_MCSR(procID).mcause
+        case 0x343  => c_MCSR(procID).mbadaddr
+        case 0x344  => c_MCSR(procID).&mip
+
+        -- machine protection and translation
+        case 0x380  => c_MCSR(procID).mbase
+        case 0x381  => c_MCSR(procID).mbound
+        case 0x382  => c_MCSR(procID).mibase
+        case 0x383  => c_MCSR(procID).mibound
+        case 0x384  => c_MCSR(procID).mdbase
+        case 0x385  => c_MCSR(procID).mdbound
+
+        -- machine read-write shadow of hypervisor read-only registers
+        case 0xB01  => c_HCSR(procID).htime
+        case 0xB81  => SignExtend(c_HCSR(procID).htime<63:32>)
+
+        -- machine host-target interface (berkeley extension)
+        case 0x780  => c_MCSR(procID).mtohost
+        case 0x781  => c_MCSR(procID).mfromhost
 
         case _      => UNKNOWN -- TODO: should trap as illegal instr
       }
 
   assign value =
       match csr
-      { case 0x500  => c_SCSR(procID).sup0      <- value
+      {
+{-      case 0x500  => c_SCSR(procID).sup0      <- value
         case 0x501  => c_SCSR(procID).sup1      <- value
         case 0x502  => c_SCSR(procID).epc       <- value
 
@@ -425,27 +733,9 @@ component CSRMap (csr::creg) :: regType
 
         case 0x51e  => c_SCSR(procID).tohost    <- value
         case 0x51f  => c_SCSR(procID).fromhost  <- value
-
+-}
         case _      => nothing -- TODO: should trap as illegal instr
       }
-}
-
-Privilege curPrivilege () =
-    if SCSR.status.S then Supervisor
-    else                  User
-
--- Based on Table 1.4 of spec version 1.99.
-bool is_CSR_defined(csr::creg) =
-    (csr >= 0x001 and csr <= 0x003)
- or (csr >= 0x500 and csr <= 0x50F)
- or (csr >= 0x51E and csr <= 0x51F)
- or (csr >= 0xC00 and csr <= 0xC02)
- or ((csr >= 0xC80 and csr <= 0xC82) and in32BitMode())
-
-bool notWordValue(value::regType) =
-{ top = value<63:32>
-; if value<31> then top <> 0xFFFF_FFFF
-  else              top <> 0x0
 }
 
 ---------------------------------------------------------------------------
@@ -461,13 +751,13 @@ record StateDelta
   pc            :: regType      -- PC of retired instruction
 
   addr          :: regType      -- address argument for instruction:
-                                --   new control flow target for jump, exception branch, SRET
+                                --   new control flow target for jump, exception branch, ERET
                                 --   memory address for memory ops and AMOs
                                 --   CSR register address for CSR instructions
 
   data1         :: regType      -- data result for instruction:
                                 --   new value for rd for ALU ops, LOAD, LOAD_FP, LR, SC, CSR ops
-                                --   new csr_status for exceptions and SRET
+                                --   new csr_status for exceptions and ERET
 
   data2         :: regType      -- data argument for instruction:
                                 --   new csr_cause for exceptions
@@ -597,7 +887,8 @@ string hex64(x::dword) = PadLeft(#"0", 16, [x])
 ---------------------------------------------------------------------------
 
 unit setupException(e::ExceptionType) =
-{ SCSR.cause.Int    <- false
+    nothing
+{- SCSR.cause.Int    <- false
 ; SCSR.cause.EC     <- excCode(e)
 ; SCSR.epc          <- PC
 ; SCSR.status.PS    <- SCSR.status.S
@@ -605,17 +896,21 @@ unit setupException(e::ExceptionType) =
 ; SCSR.status.PEI   <- SCSR.status.EI
 ; SCSR.status.EI    <- false
 ; Exception         <- Some(e)
-}
+-}
 
 unit signalAddressException(e::ExceptionType, vAddr::vAddr) =
-{ SCSR.badvaddr     <- vAddr
+{ MCSR.mbadaddr     <- vAddr
 ; setupException(e)
 }
 
 unit signalException(e::ExceptionType) =
-{ SCSR.badvaddr     <- 0
+{ MCSR.mbadaddr     <- 0
 ; setupException(e)
 }
+
+unit signalEnvCall() =
+    -- XXX: TODO
+    nothing
 
 ---------------------------------------------------------------------------
 -- CSR access with logging
@@ -842,6 +1137,15 @@ define Shift > SRAI(rd::reg, rs1::reg, imm::bits(6)) =
         signalException(Illegal_Instr)
     else
         writeRD(rd, GPR(rs1) >> [imm])
+
+------------------------------------------
+-- utility function for shift instructions
+------------------------------------------
+bool notWordValue(value::regType) =
+{ top = value<63:32>
+; if value<31> then top <> 0xFFFF_FFFF
+  else              top <> 0x0
+}
 
 -----------------------------------
 -- SLLIW rd, rs1, imm   (RV64I)
@@ -1370,29 +1674,27 @@ define FENCE_I(rd::reg, rs1::reg, imm::imm12) = nothing
 ---------------------------------------------------------------------------
 
 -----------------------------------
--- SCALL
+-- ECALL
 -----------------------------------
-define System > SCALL  = signalException(Syscall)
+define System > ECALL  = signalEnvCall()
 
 -----------------------------------
--- SBREAK
+-- EBREAK
 -----------------------------------
--- XXX: The spec doesn't explicitly say that the Breakpoint exception
--- is raised by SBREAK.  Fixed in the *later* 1.7 spec.
 
-define System > SBREAK = signalException(Breakpoint)
+define System > EBREAK = signalException(Breakpoint)
 
 -----------------------------------
--- SCALL
+-- ECALL
 -----------------------------------
-define System >  SRET  = nothing
+define System > ERET   = nothing
 
 -- Control and Status Registers
 
 bool checkCSROp(csr::imm12, rs1::reg) =
 { op = if rs1 == 0x0 then Read else Write
 ; (is_CSR_defined(csr))
-  and (check_CSR_access(readAR(csr), writeAR(csr), curPrivilege(), op))
+  and (check_CSR_access(csrRW(csr), csrPR(csr), curPrivilege(), op))
 }
 
 -----------------------------------
@@ -1572,9 +1874,9 @@ instruction Decode(w::word) =
      case 'csr           rs1 110  rd 11100 11' => System(CSRRSI(rd, rs1, csr))
      case 'csr           rs1 111  rd 11100 11' => System(CSRRCI(rd, rs1, csr))
 
-     case '000000000000  00000 000 00000 11100 11' =>   System( SCALL)
-     case '000000000001  00000 000 00000 11100 11' =>   System(SBREAK)
-     case '100000000000  00000 000 00000 11100 11' =>   System(  SRET)
+     case '000000000000  00000 000 00000 11100 11' =>   System( ECALL)
+     case '000000000001  00000 000 00000 11100 11' =>   System(EBREAK)
+     case '100000000000  00000 000 00000 11100 11' =>   System(  ERET)
 
      -- unsupported instructions
      case _                                        =>   UnknownInstruction
@@ -1684,12 +1986,12 @@ string instructionToString(i::instruction) =
      case  Store(   SW(rs1, rs2, imm))      => pStype("SW",    rs1, rs2, imm)
      case  Store(   SD(rs1, rs2, imm))      => pStype("SD",    rs1, rs2, imm)
 
-     case        FENCE(rd, rs1, pred, succ) => pN0type("FENCE")
-     case      FENCE_I(rd, rs1, imm)        => pN0type("FENCE.I")
+     case   FENCE(rd, rs1, pred, succ)      => pN0type("FENCE")
+     case FENCE_I(rd, rs1, imm)             => pN0type("FENCE.I")
 
-     case System( SCALL)                    => pN0type("SCALL")
-     case System(SBREAK)                    => pN0type("SBREAK")
-     case System(  SRET)                    => pN0type("SRET")
+     case System( ECALL)                    => pN0type("ECALL")
+     case System(EBREAK)                    => pN0type("EBREAK")
+     case System(  ERET)                    => pN0type("ERET")
 
      case System( CSRRW(rd, rs1, csr))      => pItype("CSRRW",  rd, rs1, csr)
      case System( CSRRS(rd, rs1, csr))      => pItype("CSRRS",  rd, rs1, csr)
@@ -1797,12 +2099,12 @@ word Encode(i::instruction) =
      case  Store(   SW(rs1, rs2, imm))      =>  Stype(opc(0x08), 2, rs1, rs2, imm)
      case  Store(   SD(rs1, rs2, imm))      =>  Stype(opc(0x08), 3, rs1, rs2, imm)
 
-     case        FENCE(rd, rs1, pred, succ) =>  Itype(opc(0x03), 0, rd, rs1, '0000' : pred : succ)
-     case      FENCE_I(rd, rs1, imm)        =>  Itype(opc(0x03), 1, rd, rs1, imm)
+     case   FENCE(rd, rs1, pred, succ)      =>  Itype(opc(0x03), 0, rd, rs1, '0000' : pred : succ)
+     case FENCE_I(rd, rs1, imm)             =>  Itype(opc(0x03), 1, rd, rs1, imm)
 
-     case System( SCALL)                    =>  Itype(opc(0x1C), 0, 0, 0, 0)
-     case System(SBREAK)                    =>  Itype(opc(0x1C), 0, 0, 0, 1)
-     case System(  SRET)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x800)
+     case System( ECALL)                    =>  Itype(opc(0x1C), 0, 0, 0, 0)
+     case System(EBREAK)                    =>  Itype(opc(0x1C), 0, 0, 0, 1)
+     case System(  ERET)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x800)
 
      case System( CSRRW(rd, rs1, csr))      =>  Itype(opc(0x1C), 1, rd, rs1, csr)
      case System( CSRRS(rd, rs1, csr))      =>  Itype(opc(0x1C), 2, rd, rs1, csr)
@@ -1851,9 +2153,9 @@ unit Next =
 
 -- Handle the char i/o section of the Berkeley HTIF protocol
 -- following cissrStandalone.c.
-; when SCSR.tohost <> 0x0
-  do   { mark_log(0, log_tohost(SCSR.tohost))
-       ; SCSR.tohost <- 0x0
+; when MCSR.mtohost <> 0x0
+  do   { mark_log(0, log_tohost(MCSR.mtohost))
+       ; MCSR.mtohost <- 0x0
        }
 
 -- XXX: Definition of instret count is not clear in the case of
@@ -1877,6 +2179,24 @@ unit Next =
   }
 }
 
+unit initIdent(arch::Architecture) =
+{ MCSR.mcpuid.ArchBase <- archBase(arch)
+; MCSR.mcpuid.U        <- true
+; MCSR.mcpuid.S        <- true
+; MCSR.mcpuid.M        <- true
+; MCSR.mcpuid.I        <- true
+
+; MCSR.mimpid.RVSource <- 0x8000 -- anonymous source
+; MCSR.mimpid.RVImpl   <- 0x0
+}
+
+unit initMachine() =
+{ -- Startup in Mbare machine mode, with interrupts disabled.
+  MCSR.mstatus.VM   <- vmMode(Mbare)
+; MCSR.mstatus.MPRV <- privLevel(Machine)
+; MCSR.mstatus.MIE  <- false
+
+}
 -- This initializes each core (via setting procID appropriately) on
 -- startup before execution begins.
 unit initRegs(pc::nat, stack::nat) =
@@ -1888,8 +2208,6 @@ unit initRegs(pc::nat, stack::nat) =
 
 ; gpr([STACK]) <- [stack]
 
-  -- Startup in supervisor mode
-; SCSR.status.S <- true
 ; PC           <- [pc]
 ; BranchTo     <- None
 ; Exception    <- None

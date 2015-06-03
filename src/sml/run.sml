@@ -260,7 +260,7 @@ fun doElf cycles file dis =
         val hdr   = Elf.getElfHeader elf
         val psegs = Elf.getElfProgSegments elf hdr
     in  riscv.setArch(if (#class hdr) = Elf.BIT_32
-                      then riscv.RV32 else riscv.RV64)
+                      then riscv.RV32I else riscv.RV64I)
 
       ; if !trace_elf
         then ( print "Loading elf file ...\n"
