@@ -362,7 +362,7 @@ register mie :: regType
 
 register mcause :: regType
 {    63 : Int   -- Interrupt
-    4-0 : EC    -- Exception Code
+    3-0 : EC    -- Exception Code
 }
 
 record MachineCSR
@@ -380,7 +380,7 @@ record MachineCSR
 
   mscratch      :: regType      -- trap handling
   mepc          :: regType
-  mcause        :: regType
+  mcause        :: mcause
   mbadaddr      :: regType
   mip           :: mip
 
@@ -437,7 +437,7 @@ register sie :: regType
 record SupervisorCSR
 { sstatus       :: sstatus      -- trap setup
   stvec         :: regType
-  sie           :: sie
+  -- sie :: sie is a projection of mie :: mie
   stimecmp      :: regType
 
   stime         :: regType      -- timers and counters
@@ -446,7 +446,7 @@ record SupervisorCSR
   sepc          :: regType
   scause        :: mcause
   sbadaddr      :: regType
-  sip           :: sip
+  -- sip :: sip is a projection of mip :: mip
 
   sptbr         :: regType     -- memory protection and translation
   sasid         :: regType
@@ -458,6 +458,86 @@ record UserCSR
 { cycle         :: regType
   time          :: regType
   instret       :: regType
+}
+
+-- Machine state projections
+
+sip lift_mip_sip(mip::mip) =
+{ var sip = sip(0)
+; sip.STIP  <- mip.STIP
+; sip.SSIP  <- mip.SSIP
+; sip
+}
+
+sie lift_mie_sie(mie::mie) =
+{ var sie = sie(0)
+; sie.STIE  <- mie.STIE
+; sie.SSIE  <- mie.SSIE
+; sie
+}
+
+mip lower_sip_mip(sip::sip, mip::mip) =
+{ var m = mip
+; m.STIP    <- sip.STIP
+; m.SSIP    <- sip.SSIP
+; m
+}
+
+mie lower_sie_mie(sie::sie, mie::mie) =
+{ var m = mie
+; m.STIE    <- sie.STIE
+; m.SSIE    <- sie.SSIE
+; m
+}
+
+-- We need both status registers here since some bits of status are
+-- local to S-mode, while others are projections.
+sstatus lift_mstatus_sstatus(mst::mstatus, sst::sstatus) =
+{ var st = sstatus(0)
+-- local state
+; st.SMPRV  <- sst.SMPRV
+
+-- shared state
+; st.SSD    <- mst.MSD
+; st.SXS    <- mst.MXS
+; st.SFS    <- mst.MFS
+
+-- projected state
+; st.SPS    <- not (privilege(mst.MPRV1) == User)
+; st.SPIE   <- mst.MIE1
+
+-- conditional projections
+; st.SIE    <- if privilege(mst.MPRV) == Supervisor
+               then mst.MIE else sst.SIE
+
+; st
+}
+
+-- A write to sstatus results in updates to both sstatus as well as
+-- mstatus, so this function returns the updated versions of both
+-- registers.
+sstatus * mstatus lower_sstatus_mstatus(new_sst::sstatus, old_sst::sstatus,
+                                        mst::mstatus) =
+{ var mt = mstatus(&mst)
+; var st = sstatus(&new_sst)
+
+-- shared state
+; mt.MSD    <- st.SSD
+; mt.MXS    <- st.SXS
+; mt.MFS    <- st.SFS
+
+-- back-projected state
+; chk = sstatus (&new_sst ?? &old_sst)
+; when chk.SPS do
+   mt.MPRV1  <- privLevel(if new_sst.SPS then Supervisor else User)
+; when chk.SPIE do
+   mt.MIE1  <- new_sst.SPIE
+
+-- conditional back-projections
+; when chk.SIE and privilege(mst.MPRV) == Supervisor
+  do mt.MIE <- new_sst.SIE
+
+; (st, mt)
 }
 
 ---------------------------------------------------------------------------
@@ -615,9 +695,10 @@ component CSRMap(csr::creg) :: regType
         case 0xC82  => SignExtend(c_UCSR(procID).instret<63:32>)
 
         -- supervisor trap setup
-        case 0x100  => c_SCSR(procID).&sstatus
+        case 0x100  => &lift_mstatus_sstatus(c_MCSR(procID).mstatus,
+                                             c_SCSR(procID).sstatus)
         case 0x101  => c_SCSR(procID).stvec
-        case 0x104  => c_SCSR(procID).&sie
+        case 0x104  => &lift_mie_sie(c_MCSR(procID).mie)
         case 0x121  => c_SCSR(procID).stimecmp
 
         -- supervisor timer
@@ -629,7 +710,7 @@ component CSRMap(csr::creg) :: regType
         case 0x141  => c_SCSR(procID).sepc
         case 0xD42  => c_SCSR(procID).&scause
         case 0xD43  => c_SCSR(procID).sbadaddr
-        case 0x144  => c_SCSR(procID).&sip
+        case 0x144  => &lift_mip_sip(c_MCSR(procID).mip)
 
         -- supervisor protection and translation
         case 0x180  => c_SCSR(procID).sptbr
@@ -682,7 +763,7 @@ component CSRMap(csr::creg) :: regType
         -- machine trap handling
         case 0x340  => c_MCSR(procID).mscratch
         case 0x341  => c_MCSR(procID).mepc
-        case 0x342  => c_MCSR(procID).mcause
+        case 0x342  => c_MCSR(procID).&mcause
         case 0x343  => c_MCSR(procID).mbadaddr
         case 0x344  => c_MCSR(procID).&mip
 
@@ -707,34 +788,88 @@ component CSRMap(csr::creg) :: regType
 
   assign value =
       match csr
-      {
-{-      case 0x500  => c_SCSR(procID).sup0      <- value
-        case 0x501  => c_SCSR(procID).sup1      <- value
-        case 0x502  => c_SCSR(procID).epc       <- value
+      { -- user counters/timers are URO
 
-        case 0x503  => nothing -- TODO: should trap as illegal instr
+        -- supervisor trap setup
+        case 0x100  =>
+        { st_mt = lower_sstatus_mstatus(sstatus(value), c_SCSR(procID).sstatus,
+                                        c_MCSR(procID).mstatus)
+        ; c_SCSR(procID).sstatus <- Fst(st_mt)
+        ; c_MCSR(procID).mstatus <- Snd(st_mt)
+        }
+        case 0x101  => c_SCSR(procID).stvec             <- value
+        -- sie back-projects to mie
+        case 0x104  => c_MCSR(procID).mie               <- lower_sie_mie(sie(value), c_MCSR(procID).mie)
+        case 0x121  =>
+        { c_SCSR(procID).stimecmp <- value
+        ; c_MCSR(procID).mip.STIP <- false
+        }
 
-        case 0x504  => c_SCSR(procID).ptbr      <- value
-        case 0x505  => c_SCSR(procID).asid      <- value
-        case 0x506  => c_SCSR(procID).count     <- value
-        case 0x507  => c_SCSR(procID).compare   <- value
-        case 0x508  => c_SCSR(procID).evec      <- value
+        -- supervisor trap handling
+        case 0x140  => c_SCSR(procID).sscratch          <- value
+        case 0x141  => c_SCSR(procID).sepc              <- (value && SignExtend(0b100`3))  -- no 16-bit instr support
+        -- scause, sbadaddr are SRO
+        -- sip back-projects to mip
+        case 0x144  => c_MCSR(procID).mip               <- lower_sip_mip(sip(value), c_MCSR(procID).mip)
 
-        case 0x509  => nothing -- TODO: should trap as illegal instr
+        -- supervisor protection and translation
+        case 0x180  => c_SCSR(procID).sptbr             <- value
+        case 0x181  => c_SCSR(procID).sasid             <- value
 
-        case 0x50a  => c_SCSR(procID).status    <- status(value)
+        -- supervisor read/write shadow of user read-only registers
+        case 0x900  => c_UCSR(procID).cycle             <- value
+        case 0x901  => c_UCSR(procID).time              <- value
+        case 0x902  => c_UCSR(procID).instret           <- value
+        case 0x980  => c_UCSR(procID).cycle<63:32>      <- value<31:0>
+        case 0x981  => c_UCSR(procID).time<63:32>       <- value<31:0>
+        case 0x982  => c_UCSR(procID).instret<63:32>    <- value<31:0>
 
-        case 0x50b  => nothing -- TODO: should trap as illegal instr
-        case 0x50c  => nothing -- TODO: should trap as illegal instr
 
-        case 0x50d  => c_SCSR(procID).fatc      <- value
-        case 0x50e  => c_SCSR(procID).send_ipi  <- value
-        case 0x50f  => c_SCSR(procID).clear_ipi <- value
+        -- TODO: hypervisor register write support
 
-        case 0x51e  => c_SCSR(procID).tohost    <- value
-        case 0x51f  => c_SCSR(procID).fromhost  <- value
--}
-        case _      => nothing -- TODO: should trap as illegal instr
+        -- machine information registers are MRO
+
+        -- machine trap setup
+        case 0x300  => c_MCSR(procID).mstatus           <- mstatus(value)
+        case 0x301  => c_MCSR(procID).mtvec             <- value
+        case 0x302  => c_MCSR(procID).mtdeleg           <- mtdeleg(value)
+        case 0x304  => c_MCSR(procID).mie               <- mie(value)
+        case 0x321  =>
+        { c_MCSR(procID).mtimecmp <- value
+        ; c_MCSR(procID).mip.MTIP <- false
+        }
+
+        -- machine timers and counters
+        case 0x701  => c_MCSR(procID).mtime             <- value
+        case 0x741  => c_MCSR(procID).mtime<63:32>      <- value<31:0>
+
+        -- machine trap handling
+        case 0x340  => c_MCSR(procID).mscratch          <- value
+        case 0x341  => c_MCSR(procID).mepc              <- (value && SignExtend(0b100`3))  -- no 16-bit instr support
+        case 0x342  => c_MCSR(procID).mcause            <- mcause(value)
+        case 0x343  => c_MCSR(procID).mbadaddr          <- value
+        case 0x344  => c_MCSR(procID).mip               <- mip(value)
+
+        -- machine protection and translation
+        case 0x380  => c_MCSR(procID).mbase             <- value
+        case 0x381  => c_MCSR(procID).mbound            <- value
+        case 0x382  => c_MCSR(procID).mibase            <- value
+        case 0x383  => c_MCSR(procID).mibound           <- value
+        case 0x384  => c_MCSR(procID).mdbase            <- value
+        case 0x385  => c_MCSR(procID).mdbound           <- value
+
+        -- machine read-write shadow of hypervisor read-only registers
+        case 0xB01  => c_HCSR(procID).htime             <- value
+        case 0xB81  => c_HCSR(procID).htime<63:32>      <- value<31:0>
+
+        -- machine host-target interface (berkeley extension)
+        -- TODO: XXX: set I/O pending bit
+        case 0x780  =>
+        { c_MCSR(procID).mtohost    <- value }
+        case 0x781  =>
+        { c_MCSR(procID).mfromhost  <- value }
+
+        case _      => nothing -- TODO: should never get here (internal error)
       }
 }
 
@@ -909,8 +1044,14 @@ unit signalException(e::ExceptionType) =
 }
 
 unit signalEnvCall() =
-    -- XXX: TODO
-    nothing
+{ e = match privilege(MCSR.mstatus.MPRV)
+      { case User       => UMode_Env_Call
+        case Supervisor => SMode_Env_Call
+        case Hypervisor => HMode_Env_Call
+        case Machine    => MMode_Env_Call
+      }
+; setupException(e)
+}
 
 ---------------------------------------------------------------------------
 -- CSR access with logging
