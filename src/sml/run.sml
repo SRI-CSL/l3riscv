@@ -339,7 +339,7 @@ val () =
             val d = Option.getOpt (Option.map getBool d, false)
             val t = Option.getOpt (Option.map getNumber t, !trace_level)
             val () = trace_level := Int.max (0, t)
-            val v = Option.getOpt (Option.map getBool v, true)
+            val v = Option.getOpt (Option.map getBool v, !verify)
             val () = verify := v
         in
             if List.null l then printUsage ()
