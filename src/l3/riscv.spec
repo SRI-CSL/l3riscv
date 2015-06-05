@@ -1136,9 +1136,8 @@ regType readData(vAddr::vAddr) =
        }
 }
 
-unit writeData(vAddr::vAddr, rs2::reg, mask::regType, nbytes::nat) =
-{ data  = GPR(rs2)
-; val   = data && mask
+unit writeData(vAddr::vAddr, data::regType, mask::regType, nbytes::nat) =
+{ val   = data && mask
 ; pAddr = vAddr<63:3>
 ; align = [vAddr<2:0>] :: nat
 ; old   = VMEM(pAddr)
@@ -1776,7 +1775,8 @@ define Load > LD(rd::reg, rs1::reg, offs::imm12) =
 define Store > SW(rs1::reg, rs2::reg, offs::imm12) =
 { addr = GPR(rs1) + SignExtend(offs)
 ; mask = 0xFFFF_FFFF
-; writeData(addr, rs2, mask, 4)
+; data = GPR(rs2)
+; writeData(addr, data, mask, 4)
 }
 
 -----------------------------------
@@ -1785,7 +1785,8 @@ define Store > SW(rs1::reg, rs2::reg, offs::imm12) =
 define Store > SH(rs1::reg, rs2::reg, offs::imm12) =
 { addr = GPR(rs1) + SignExtend(offs)
 ; mask = 0xFFFF
-; writeData(addr, rs2, mask, 2)
+; data = GPR(rs2)
+; writeData(addr, data, mask, 2)
 }
 
 -----------------------------------
@@ -1794,7 +1795,8 @@ define Store > SH(rs1::reg, rs2::reg, offs::imm12) =
 define Store > SB(rs1::reg, rs2::reg, offs::imm12) =
 { addr = GPR(rs1) + SignExtend(offs)
 ; mask = 0xFF
-; writeData(addr, rs2, mask, 1)
+; data = GPR(rs2)
+; writeData(addr, data, mask, 1)
 }
 
 -----------------------------------
@@ -1804,7 +1806,8 @@ define Store > SD(rs1::reg, rs2::reg, offs::imm12) =
     if in32BitMode() then
         signalException(Illegal_Instr)
     else { addr = GPR(rs1) + SignExtend(offs)
-         ; writeData(addr, rs2, SignExtend('1'), 8)
+         ; data = GPR(rs2)
+         ; writeData(addr, data, SignExtend('1'), 8)
          }
 
 ---------------------------------------------------------------------------
@@ -1828,155 +1831,341 @@ define FENCE_I(rd::reg, rs1::reg, imm::imm12) = nothing
 -----------------------------------
 
 define AMO > LR_W(aq::amo, rl::amo, rd::reg, rs1::reg) =
-    nothing
+    nothing -- TODO
 
 -----------------------------------
 -- LR.D [aq,rl] rd, rs1
 -----------------------------------
 
 define AMO > LR_D(aq::amo, rl::amo, rd::reg, rs1::reg) =
-    nothing
+    nothing -- TODO
 
 -----------------------------------
 -- SC.W [aq,rl] rd, rs1, rs2
 -----------------------------------
 
 define AMO > SC_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    nothing
+    nothing -- TODO
 
 -----------------------------------
 -- SC.D [aq,rl] rd, rs1, rs2
 -----------------------------------
 
 define AMO > SC_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    nothing
+    nothing -- TODO
 
 -----------------------------------
 -- AMOSWAP.W [aq,rl] rd, rs1, rs2
 -----------------------------------
 
 define AMO > AMOSWAP_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    nothing
+{ addr = GPR(rs1)
+; if addr<1:0> != 0 then
+      signalException(Store_Misaligned)             -- XXX: fix exc name
+  else { memv = SignExtend(readData(addr)<31:0>)
+       ; data = GPR(rs2)
+       ; GPR(rd) <- memv
+       ; mask = 0xFFFF_FFFF
+       ; writeData(addr, data, mask, 4)
+       ; recordLoad(addr, memv)
+       }
+}
 
 -----------------------------------
 -- AMOSWAP.D [aq,rl] rd, rs1, rs2
 -----------------------------------
 
 define AMO > AMOSWAP_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    nothing
+{ addr = GPR(rs1)
+; if addr<2:0> != 0 then
+      signalException(Store_Misaligned)             -- XXX: fix exc name
+  else { memv = readData(addr)
+       ; data = GPR(rs2)
+       ; GPR(rd) <- memv
+       ; writeData(addr, data, SignExtend('1'), 8)
+       ; recordLoad(addr, memv)
+       }
+}
 
 -----------------------------------
 -- AMOADD.W [aq,rl] rd, rs1, rs2
 -----------------------------------
 
 define AMO > AMOADD_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    nothing
+{ addr = GPR(rs1)
+; if addr<1:0> != 0 then
+      signalException(Store_Misaligned)             -- XXX: fix exc name
+  else { memv = SignExtend(readData(addr)<31:0>)
+       ; data = GPR(rs2)
+       ; GPR(rd) <- memv
+       ; val  = data + memv
+       ; mask = 0xFFFF_FFFF
+       ; writeData(addr, val, mask, 4)
+       ; recordLoad(addr, memv)
+       }
+}
 
 -----------------------------------
 -- AMOADD.D [aq,rl] rd, rs1, rs2
 -----------------------------------
 
 define AMO > AMOADD_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    nothing
+{ addr = GPR(rs1)
+; if addr<2:0> != 0 then
+      signalException(Store_Misaligned)             -- XXX: fix exc name
+  else { memv = readData(addr)
+       ; data = GPR(rs2)
+       ; GPR(rd) <- memv
+       ; val  = data + memv
+       ; writeData(addr, val, SignExtend('1'), 8)
+       ; recordLoad(addr, memv)
+       }
+}
 
 -----------------------------------
 -- AMOXOR.W [aq,rl] rd, rs1, rs2
 -----------------------------------
 
 define AMO > AMOXOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    nothing
+{ addr = GPR(rs1)
+; if addr<1:0> != 0 then
+      signalException(Store_Misaligned)             -- XXX: fix exc name
+  else { memv = SignExtend(readData(addr)<31:0>)
+       ; data = GPR(rs2)
+       ; GPR(rd) <- memv
+       ; val  = data ?? memv
+       ; mask = 0xFFFF_FFFF
+       ; writeData(addr, val, mask, 4)
+       ; recordLoad(addr, memv)
+       }
+}
 
 -----------------------------------
 -- AMOXOR.D [aq,rl] rd, rs1, rs2
 -----------------------------------
 
 define AMO > AMOXOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    nothing
+{ addr = GPR(rs1)
+; if addr<2:0> != 0 then
+      signalException(Store_Misaligned)             -- XXX: fix exc name
+  else { memv = readData(addr)
+       ; data = GPR(rs2)
+       ; GPR(rd) <- memv
+       ; val  = data ?? memv
+       ; writeData(addr, val, SignExtend('1'), 8)
+       ; recordLoad(addr, memv)
+       }
+}
 
 -----------------------------------
 -- AMOAND.W [aq,rl] rd, rs1, rs2
 -----------------------------------
 
 define AMO > AMOAND_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    nothing
+    { addr = GPR(rs1)
+; if addr<1:0> != 0 then
+      signalException(Store_Misaligned)             -- XXX: fix exc name
+  else { memv = SignExtend(readData(addr)<31:0>)
+       ; data = GPR(rs2)
+       ; GPR(rd) <- memv
+       ; val  = data && memv
+       ; mask = 0xFFFF_FFFF
+       ; writeData(addr, val, mask, 4)
+       ; recordLoad(addr, memv)
+       }
+}
 
 -----------------------------------
 -- AMOAND.D [aq,rl] rd, rs1, rs2
 -----------------------------------
 
 define AMO > AMOAND_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    nothing
+{ addr = GPR(rs1)
+; if addr<2:0> != 0 then
+      signalException(Store_Misaligned)             -- XXX: fix exc name
+  else { memv = readData(addr)
+       ; data = GPR(rs2)
+       ; GPR(rd) <- memv
+       ; val  = data && memv
+       ; writeData(addr, val, SignExtend('1'), 8)
+       ; recordLoad(addr, memv)
+       }
+}
 
 -----------------------------------
 -- AMOOR.W [aq,rl] rd, rs1, rs2
 -----------------------------------
 
 define AMO > AMOOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    nothing
+    { addr = GPR(rs1)
+; if addr<1:0> != 0 then
+      signalException(Store_Misaligned)             -- XXX: fix exc name
+  else { memv = SignExtend(readData(addr)<31:0>)
+       ; data = GPR(rs2)
+       ; GPR(rd) <- memv
+       ; val  = data || memv
+       ; mask = 0xFFFF_FFFF
+       ; writeData(addr, val, mask, 4)
+       ; recordLoad(addr, memv)
+       }
+}
 
 -----------------------------------
 -- AMOOR.D [aq,rl] rd, rs1, rs2
 -----------------------------------
 
 define AMO > AMOOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    nothing
+{ addr = GPR(rs1)
+; if addr<2:0> != 0 then
+      signalException(Store_Misaligned)             -- XXX: fix exc name
+  else { memv = readData(addr)
+       ; data = GPR(rs2)
+       ; GPR(rd) <- memv
+       ; val  = data || memv
+       ; writeData(addr, val, SignExtend('1'), 8)
+       ; recordLoad(addr, memv)
+       }
+}
 
 -----------------------------------
 -- AMOMIN.W [aq,rl] rd, rs1, rs2
 -----------------------------------
 
 define AMO > AMOMIN_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    nothing
+    { addr = GPR(rs1)
+; if addr<1:0> != 0 then
+      signalException(Store_Misaligned)             -- XXX: fix exc name
+  else { memv = SignExtend(readData(addr)<31:0>)
+       ; data = GPR(rs2)
+       ; GPR(rd) <- memv
+       ; val  = SignedMin(data, memv)
+       ; mask = 0xFFFF_FFFF
+       ; writeData(addr, val, mask, 4)
+       ; recordLoad(addr, memv)
+       }
+}
 
 -----------------------------------
 -- AMOMIN.D [aq,rl] rd, rs1, rs2
 -----------------------------------
 
 define AMO > AMOMIN_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    nothing
+{ addr = GPR(rs1)
+; if addr<2:0> != 0 then
+      signalException(Store_Misaligned)             -- XXX: fix exc name
+  else { memv = readData(addr)
+       ; data = GPR(rs2)
+       ; GPR(rd) <- memv
+       ; val  = SignedMin(data, memv)
+       ; writeData(addr, val, SignExtend('1'), 8)
+       ; recordLoad(addr, memv)
+       }
+}
 
 -----------------------------------
 -- AMOMAX.W [aq,rl] rd, rs1, rs2
 -----------------------------------
 
 define AMO > AMOMAX_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    nothing
+    { addr = GPR(rs1)
+; if addr<1:0> != 0 then
+      signalException(Store_Misaligned)             -- XXX: fix exc name
+  else { memv = SignExtend(readData(addr)<31:0>)
+       ; data = GPR(rs2)
+       ; GPR(rd) <- memv
+       ; val  = SignedMax(data, memv)
+       ; mask = 0xFFFF_FFFF
+       ; writeData(addr, val, mask, 4)
+       ; recordLoad(addr, memv)
+       }
+}
 
 -----------------------------------
 -- AMOMAX.D [aq,rl] rd, rs1, rs2
 -----------------------------------
 
 define AMO > AMOMAX_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    nothing
+{ addr = GPR(rs1)
+; if addr<2:0> != 0 then
+      signalException(Store_Misaligned)             -- XXX: fix exc name
+  else { memv = readData(addr)
+       ; data = GPR(rs2)
+       ; GPR(rd) <- memv
+       ; val  = SignedMax(data, memv)
+       ; writeData(addr, val, SignExtend('1'), 8)
+       ; recordLoad(addr, memv)
+       }
+}
 
 -----------------------------------
 -- AMOMINU.W [aq,rl] rd, rs1, rs2
 -----------------------------------
 
 define AMO > AMOMINU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    nothing
+    { addr = GPR(rs1)
+; if addr<1:0> != 0 then
+      signalException(Store_Misaligned)             -- XXX: fix exc name
+  else { memv = SignExtend(readData(addr)<31:0>)
+       ; data = GPR(rs2)
+       ; GPR(rd) <- memv
+       ; val  = Min(data, memv)
+       ; mask = 0xFFFF_FFFF
+       ; writeData(addr, val, mask, 4)
+       ; recordLoad(addr, memv)
+       }
+}
 
 -----------------------------------
 -- AMOMINU.D [aq,rl] rd, rs1, rs2
 -----------------------------------
 
 define AMO > AMOMINU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    nothing
+{ addr = GPR(rs1)
+; if addr<2:0> != 0 then
+      signalException(Store_Misaligned)             -- XXX: fix exc name
+  else { memv = readData(addr)
+       ; data = GPR(rs2)
+       ; GPR(rd) <- memv
+       ; val  = Min(data, memv)
+       ; writeData(addr, val, SignExtend('1'), 8)
+       ; recordLoad(addr, memv)
+       }
+}
 
 -----------------------------------
 -- AMOMAXU.W [aq,rl] rd, rs1, rs2
 -----------------------------------
 
 define AMO > AMOMAXU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    nothing
+    { addr = GPR(rs1)
+; if addr<1:0> != 0 then
+      signalException(Store_Misaligned)             -- XXX: fix exc name
+  else { memv = SignExtend(readData(addr)<31:0>)
+       ; data = GPR(rs2)
+       ; GPR(rd) <- memv
+       ; val  = Max(data, memv)
+       ; mask = 0xFFFF_FFFF
+       ; writeData(addr, val, mask, 4)
+       ; recordLoad(addr, memv)
+       }
+}
 
 -----------------------------------
 -- AMOMAXU.D [aq,rl] rd, rs1, rs2
 -----------------------------------
 
 define AMO > AMOMAXU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    nothing
-
+{ addr = GPR(rs1)
+; if addr<2:0> != 0 then
+      signalException(Store_Misaligned)             -- XXX: fix exc name
+  else { memv = readData(addr)
+       ; data = GPR(rs2)
+       ; GPR(rd) <- memv
+       ; val  = Max(data, memv)
+       ; writeData(addr, val, SignExtend('1'), 8)
+       ; recordLoad(addr, memv)
+       }
+}
 
 ---------------------------------------------------------------------------
 -- System Instructions
