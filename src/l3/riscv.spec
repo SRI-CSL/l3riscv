@@ -36,6 +36,7 @@ type exc_code = bits(4)
 type opcode   = bits(7)
 type imm12    = bits(12)
 type imm20    = bits(20)
+type amo      = bits(1)
 
 construct accessType { Read, Write }
 construct fetchType  { Instruction, Data }
@@ -551,14 +552,16 @@ type RegFile    = reg  -> regType
 declare
 { c_gpr         :: id -> RegFile                -- general purpose registers
   c_PC          :: id -> regType                -- program counter
-  c_BranchTo    :: id -> regType option         -- requested branch
 
   c_UCSR        :: id -> UserCSR                -- user-level CSRs
   c_SCSR        :: id -> SupervisorCSR          -- supervisor-level CSRs
   c_HCSR        :: id -> HypervisorCSR          -- hypervisor-level CSRs
   c_MCSR        :: id -> MachineCSR             -- machine-level CSRs
 
+  -- interpreter execution context
+  c_BranchTo    :: id -> regType option         -- requested branch
   c_Exception   :: id -> ExceptionType option   -- exception
+  c_ReserveLoad :: id -> regType option         -- load reservation for LL/SC
 }
 
 reg STACK = 2
@@ -589,16 +592,6 @@ component PC :: regType
   assign value = c_PC(procID) <- value
 }
 
-component BranchTo :: regType option
-{ value        = c_BranchTo(procID)
-  assign value = c_BranchTo(procID) <- value
-}
-
-component Exception :: ExceptionType option
-{ value        = c_Exception(procID)
-  assign value = c_Exception(procID) <- value
-}
-
 component UCSR :: UserCSR
 {  value        = c_UCSR(procID)
    assign value = c_UCSR(procID) <- value
@@ -617,6 +610,21 @@ component HCSR :: HypervisorCSR
 component MCSR :: MachineCSR
 { value        = c_MCSR(procID)
   assign value = c_MCSR(procID) <- value
+}
+
+component BranchTo :: regType option
+{ value        = c_BranchTo(procID)
+  assign value = c_BranchTo(procID) <- value
+}
+
+component Exception :: ExceptionType option
+{ value        = c_Exception(procID)
+  assign value = c_Exception(procID) <- value
+}
+
+component ReserveLoad :: regType option
+{ value        = c_ReserveLoad(procID)
+  assign value = c_ReserveLoad(procID) <- value
 }
 
 -- machine state utilities
@@ -1067,7 +1075,10 @@ component CSR(n::creg) :: regType
 unit writeCSR(csr::creg, val::regType) =
 { CSR(csr)      <- val;
   Delta.addr    <- ZeroExtend(csr);
-  Delta.data2   <- val
+  Delta.data2   <- CSR(csr) -- Note that writes to CSR are intercepted
+                            -- and controlled by CSRMap, so we need to
+                            -- use what was finally written to the
+                            -- CSR, and not val itself.
 }
 
 ---------------------------------------------------------------------------
@@ -1810,6 +1821,163 @@ define FENCE(rd::reg, rs1::reg, pred::bits(4), succ::bits(4)) = nothing
 -----------------------------------
 define FENCE_I(rd::reg, rs1::reg, imm::imm12) = nothing
 
+-- Atomics --
+
+-----------------------------------
+-- LR.W [aq,rl] rd, rs1
+-----------------------------------
+
+define AMO > LR_W(aq::amo, rl::amo, rd::reg, rs1::reg) =
+    nothing
+
+-----------------------------------
+-- LR.D [aq,rl] rd, rs1
+-----------------------------------
+
+define AMO > LR_D(aq::amo, rl::amo, rd::reg, rs1::reg) =
+    nothing
+
+-----------------------------------
+-- SC.W [aq,rl] rd, rs1, rs2
+-----------------------------------
+
+define AMO > SC_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
+    nothing
+
+-----------------------------------
+-- SC.D [aq,rl] rd, rs1, rs2
+-----------------------------------
+
+define AMO > SC_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
+    nothing
+
+-----------------------------------
+-- AMOSWAP.W [aq,rl] rd, rs1, rs2
+-----------------------------------
+
+define AMO > AMOSWAP_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
+    nothing
+
+-----------------------------------
+-- AMOSWAP.D [aq,rl] rd, rs1, rs2
+-----------------------------------
+
+define AMO > AMOSWAP_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
+    nothing
+
+-----------------------------------
+-- AMOADD.W [aq,rl] rd, rs1, rs2
+-----------------------------------
+
+define AMO > AMOADD_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
+    nothing
+
+-----------------------------------
+-- AMOADD.D [aq,rl] rd, rs1, rs2
+-----------------------------------
+
+define AMO > AMOADD_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
+    nothing
+
+-----------------------------------
+-- AMOXOR.W [aq,rl] rd, rs1, rs2
+-----------------------------------
+
+define AMO > AMOXOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
+    nothing
+
+-----------------------------------
+-- AMOXOR.D [aq,rl] rd, rs1, rs2
+-----------------------------------
+
+define AMO > AMOXOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
+    nothing
+
+-----------------------------------
+-- AMOAND.W [aq,rl] rd, rs1, rs2
+-----------------------------------
+
+define AMO > AMOAND_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
+    nothing
+
+-----------------------------------
+-- AMOAND.D [aq,rl] rd, rs1, rs2
+-----------------------------------
+
+define AMO > AMOAND_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
+    nothing
+
+-----------------------------------
+-- AMOOR.W [aq,rl] rd, rs1, rs2
+-----------------------------------
+
+define AMO > AMOOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
+    nothing
+
+-----------------------------------
+-- AMOOR.D [aq,rl] rd, rs1, rs2
+-----------------------------------
+
+define AMO > AMOOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
+    nothing
+
+-----------------------------------
+-- AMOMIN.W [aq,rl] rd, rs1, rs2
+-----------------------------------
+
+define AMO > AMOMIN_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
+    nothing
+
+-----------------------------------
+-- AMOMIN.D [aq,rl] rd, rs1, rs2
+-----------------------------------
+
+define AMO > AMOMIN_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
+    nothing
+
+-----------------------------------
+-- AMOMAX.W [aq,rl] rd, rs1, rs2
+-----------------------------------
+
+define AMO > AMOMAX_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
+    nothing
+
+-----------------------------------
+-- AMOMAX.D [aq,rl] rd, rs1, rs2
+-----------------------------------
+
+define AMO > AMOMAX_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
+    nothing
+
+-----------------------------------
+-- AMOMINU.W [aq,rl] rd, rs1, rs2
+-----------------------------------
+
+define AMO > AMOMINU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
+    nothing
+
+-----------------------------------
+-- AMOMINU.D [aq,rl] rd, rs1, rs2
+-----------------------------------
+
+define AMO > AMOMINU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
+    nothing
+
+-----------------------------------
+-- AMOMAXU.W [aq,rl] rd, rs1, rs2
+-----------------------------------
+
+define AMO > AMOMAXU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
+    nothing
+
+-----------------------------------
+-- AMOMAXU.D [aq,rl] rd, rs1, rs2
+-----------------------------------
+
+define AMO > AMOMAXU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
+    nothing
+
+
 ---------------------------------------------------------------------------
 -- System Instructions
 ---------------------------------------------------------------------------
@@ -1985,7 +2153,6 @@ instruction Decode(w::word) =
      case '0000001   rs2 rs1 110  rd 01100 11' => MulDiv(   REM(rd, rs1, rs2))
      case '0000001   rs2 rs1 111  rd 01100 11' => MulDiv(  REMU(rd, rs1, rs2))
 
-
      case '0000001   rs2 rs1 000  rd 01110 11' => MulDiv(  MULW(rd, rs1, rs2))
      case '0000001   rs2 rs1 100  rd 01110 11' => MulDiv(  DIVW(rd, rs1, rs2))
      case '0000001   rs2 rs1 101  rd 01110 11' => MulDiv( DIVUW(rd, rs1, rs2))
@@ -2008,28 +2175,67 @@ instruction Decode(w::word) =
      case '_`4 pred succ rs1 000  rd 00011 11' =>        FENCE(rd, rs1, pred, succ)
      case 'imm           rs1 001  rd 00011 11' =>      FENCE_I(rd, rs1, imm)
 
-     case 'csr           rs1 001  rd 11100 11' => System( CSRRW(rd, rs1, csr))
-     case 'csr           rs1 010  rd 11100 11' => System( CSRRS(rd, rs1, csr))
-     case 'csr           rs1 011  rd 11100 11' => System( CSRRC(rd, rs1, csr))
-     case 'csr           rs1 101  rd 11100 11' => System(CSRRWI(rd, rs1, csr))
-     case 'csr           rs1 110  rd 11100 11' => System(CSRRSI(rd, rs1, csr))
-     case 'csr           rs1 111  rd 11100 11' => System(CSRRCI(rd, rs1, csr))
+     case '00010 aq rl 00000  rs1 010 rd 01011 11' => AMO(     LR_W(aq, rl, rd, rs1))
+     case '00010 aq rl 00000  rs1 011 rd 01011 11' => AMO(     LR_D(aq, rl, rd, rs1))
+     case '00011 aq rl rs2    rs1 010 rd 01011 11' => AMO(     SC_W(aq, rl, rd, rs1, rs2))
+     case '00011 aq rl rs2    rs1 011 rd 01011 11' => AMO(     SC_D(aq, rl, rd, rs1, rs2))
 
-     case '000000000000  00000 000 00000 11100 11' =>   System( ECALL)
-     case '000000000001  00000 000 00000 11100 11' =>   System(EBREAK)
-     case '100000000000  00000 000 00000 11100 11' =>   System(  ERET)
+     case '00001 aq rl rs2    rs1 010 rd 01011 11' => AMO(AMOSWAP_W(aq, rl, rd, rs1, rs2))
+     case '00000 aq rl rs2    rs1 010 rd 01011 11' => AMO( AMOADD_W(aq, rl, rd, rs1, rs2))
+     case '00100 aq rl rs2    rs1 010 rd 01011 11' => AMO( AMOXOR_W(aq, rl, rd, rs1, rs2))
+     case '01100 aq rl rs2    rs1 010 rd 01011 11' => AMO( AMOAND_W(aq, rl, rd, rs1, rs2))
+     case '01000 aq rl rs2    rs1 010 rd 01011 11' => AMO(  AMOOR_W(aq, rl, rd, rs1, rs2))
+     case '10000 aq rl rs2    rs1 010 rd 01011 11' => AMO( AMOMIN_W(aq, rl, rd, rs1, rs2))
+     case '10100 aq rl rs2    rs1 010 rd 01011 11' => AMO( AMOMAX_W(aq, rl, rd, rs1, rs2))
+     case '11000 aq rl rs2    rs1 010 rd 01011 11' => AMO(AMOMINU_W(aq, rl, rd, rs1, rs2))
+     case '11100 aq rl rs2    rs1 010 rd 01011 11' => AMO(AMOMAXU_W(aq, rl, rd, rs1, rs2))
+
+     case '00001 aq rl rs2    rs1 011 rd 01011 11' => AMO(AMOSWAP_D(aq, rl, rd, rs1, rs2))
+     case '00000 aq rl rs2    rs1 011 rd 01011 11' => AMO( AMOADD_D(aq, rl, rd, rs1, rs2))
+     case '00100 aq rl rs2    rs1 011 rd 01011 11' => AMO( AMOXOR_D(aq, rl, rd, rs1, rs2))
+     case '01100 aq rl rs2    rs1 011 rd 01011 11' => AMO( AMOAND_D(aq, rl, rd, rs1, rs2))
+     case '01000 aq rl rs2    rs1 011 rd 01011 11' => AMO(  AMOOR_D(aq, rl, rd, rs1, rs2))
+     case '10000 aq rl rs2    rs1 011 rd 01011 11' => AMO( AMOMIN_D(aq, rl, rd, rs1, rs2))
+     case '10100 aq rl rs2    rs1 011 rd 01011 11' => AMO( AMOMAX_D(aq, rl, rd, rs1, rs2))
+     case '11000 aq rl rs2    rs1 011 rd 01011 11' => AMO(AMOMINU_D(aq, rl, rd, rs1, rs2))
+     case '11100 aq rl rs2    rs1 011 rd 01011 11' => AMO(AMOMAXU_D(aq, rl, rd, rs1, rs2))
+
+     case 'csr                rs1 001 rd 11100 11' => System( CSRRW(rd, rs1, csr))
+     case 'csr                rs1 010 rd 11100 11' => System( CSRRS(rd, rs1, csr))
+     case 'csr                rs1 011 rd 11100 11' => System( CSRRC(rd, rs1, csr))
+     case 'csr                rs1 101 rd 11100 11' => System(CSRRWI(rd, rs1, csr))
+     case 'csr                rs1 110 rd 11100 11' => System(CSRRSI(rd, rs1, csr))
+     case 'csr                rs1 111 rd 11100 11' => System(CSRRCI(rd, rs1, csr))
+
+     case '000000000000  00000 000 00000 11100 11' => System( ECALL)
+     case '000000000001  00000 000 00000 11100 11' => System(EBREAK)
+     case '100000000000  00000 000 00000 11100 11' => System(  ERET)
 
      -- unsupported instructions
-     case _                                        =>   UnknownInstruction
+     case _                                        => UnknownInstruction
    }
 
 -- instruction printer
 
 string imm(i::bits(N))  = "0x" : [i]
-string instr(o::string) = PadRight(#" ", 7, o)
+string instr(o::string) = PadRight(#" ", 12, o)
+
+string amotype(aq::amo, rl::amo) =
+    match aq, rl
+    { case 0, 0 => ""
+      case 1, 0 => ".aq"
+      case 0, 1 => ".rl"
+      case 1, 1 => ".sc"
+    }
 
 string pRtype(o::string, rd::reg, rs1::reg, rs2::reg) =
     instr(o) : " " : reg(rd) : ", " : reg(rs1) : ", " : reg(rs2)
+
+string pARtype(o::string, aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
+    pRtype([o : amotype(aq, rl)], rd, rs1, rs2)
+
+string pLRtype(o::string, aq::amo, rl::amo, rd::reg, rs1::reg) =
+    instr([o : amotype(aq, rl)]) : " " : reg(rd) : ", " : reg(rs1)
 
 string pItype(o::string, rd::reg, rs1::reg, i::bits(N)) =
     instr(o) : " " : reg(rd) : ", " : reg(rs1) : ", " : imm(i)
@@ -2130,6 +2336,31 @@ string instructionToString(i::instruction) =
      case   FENCE(rd, rs1, pred, succ)      => pN0type("FENCE")
      case FENCE_I(rd, rs1, imm)             => pN0type("FENCE.I")
 
+     case AMO(     LR_W(aq, rl, rd, rs1))       => pLRtype("LR.W",      aq, rl, rd, rs1)
+     case AMO(     LR_D(aq, rl, rd, rs1))       => pLRtype("LR.D",      aq, rl, rd, rs1)
+     case AMO(     SC_W(aq, rl, rd, rs1, rs2))  => pARtype("SC.W",      aq, rl, rd, rs1, rs2)
+     case AMO(     SC_D(aq, rl, rd, rs1, rs2))  => pARtype("SC.D",      aq, rl, rd, rs1, rs2)
+
+     case AMO(AMOSWAP_W(aq, rl, rd, rs1, rs2))  => pARtype("AMOSWAP.W", aq, rl, rd, rs1, rs2)
+     case AMO( AMOADD_W(aq, rl, rd, rs1, rs2))  => pARtype("AMOADD.W",  aq, rl, rd, rs1, rs2)
+     case AMO( AMOXOR_W(aq, rl, rd, rs1, rs2))  => pARtype("AMOXOR.W",  aq, rl, rd, rs1, rs2)
+     case AMO( AMOAND_W(aq, rl, rd, rs1, rs2))  => pARtype("AMOAND.W",  aq, rl, rd, rs1, rs2)
+     case AMO(  AMOOR_W(aq, rl, rd, rs1, rs2))  => pARtype("AMOOR.W",   aq, rl, rd, rs1, rs2)
+     case AMO( AMOMIN_W(aq, rl, rd, rs1, rs2))  => pARtype("AMOMIN.W",  aq, rl, rd, rs1, rs2)
+     case AMO( AMOMAX_W(aq, rl, rd, rs1, rs2))  => pARtype("AMOMAX.W",  aq, rl, rd, rs1, rs2)
+     case AMO(AMOMINU_W(aq, rl, rd, rs1, rs2))  => pARtype("AMOMINU.W", aq, rl, rd, rs1, rs2)
+     case AMO(AMOMAXU_W(aq, rl, rd, rs1, rs2))  => pARtype("AMOMAXU.W", aq, rl, rd, rs1, rs2)
+
+     case AMO(AMOSWAP_D(aq, rl, rd, rs1, rs2))  => pARtype("AMOSWAP.D", aq, rl, rd, rs1, rs2)
+     case AMO( AMOADD_D(aq, rl, rd, rs1, rs2))  => pARtype("AMOADD.D",  aq, rl, rd, rs1, rs2)
+     case AMO( AMOXOR_D(aq, rl, rd, rs1, rs2))  => pARtype("AMOXOR.D",  aq, rl, rd, rs1, rs2)
+     case AMO( AMOAND_D(aq, rl, rd, rs1, rs2))  => pARtype("AMOAND.D",  aq, rl, rd, rs1, rs2)
+     case AMO(  AMOOR_D(aq, rl, rd, rs1, rs2))  => pARtype("AMOOR.D",   aq, rl, rd, rs1, rs2)
+     case AMO( AMOMIN_D(aq, rl, rd, rs1, rs2))  => pARtype("AMOMIN.D",  aq, rl, rd, rs1, rs2)
+     case AMO( AMOMAX_D(aq, rl, rd, rs1, rs2))  => pARtype("AMOMAX.D",  aq, rl, rd, rs1, rs2)
+     case AMO(AMOMINU_D(aq, rl, rd, rs1, rs2))  => pARtype("AMOMINU.D", aq, rl, rd, rs1, rs2)
+     case AMO(AMOMAXU_D(aq, rl, rd, rs1, rs2))  => pARtype("AMOMAXU.D", aq, rl, rd, rs1, rs2)
+
      case System( ECALL)                    => pN0type("ECALL")
      case System(EBREAK)                    => pN0type("EBREAK")
      case System(  ERET)                    => pN0type("ERET")
@@ -2164,6 +2395,9 @@ word UJtype(o::opcode, rd::reg, imm::imm20) =
     [imm<19>]::bits(1) : imm<9:0> : [imm<10>]::bits(1) : imm<18:11> : rd : o
 
 opcode opc(code::bits(8)) = code<4:0> : '11'
+
+bits(7) amofunc(code::bits(5), aq::amo, rl::amo) =
+    code : aq : rl
 
 word Encode(i::instruction) =
    match i
@@ -2242,6 +2476,31 @@ word Encode(i::instruction) =
 
      case   FENCE(rd, rs1, pred, succ)      =>  Itype(opc(0x03), 0, rd, rs1, '0000' : pred : succ)
      case FENCE_I(rd, rs1, imm)             =>  Itype(opc(0x03), 1, rd, rs1, imm)
+
+     case AMO(     LR_W(aq, rl, rd, rs1))       => Rtype(opc(0x0B), 2, rd, rs1, 0,   amofunc('00010', aq, rl))
+     case AMO(     LR_D(aq, rl, rd, rs1))       => Rtype(opc(0x0B), 3, rd, rs1, 0,   amofunc('00010', aq, rl))
+     case AMO(     SC_W(aq, rl, rd, rs1, rs2))  => Rtype(opc(0x0B), 2, rd, rs1, rs2, amofunc('00011', aq, rl))
+     case AMO(     SC_D(aq, rl, rd, rs1, rs2))  => Rtype(opc(0x0B), 3, rd, rs1, rs2, amofunc('00010', aq, rl))
+
+     case AMO(AMOSWAP_W(aq, rl, rd, rs1, rs2))  => Rtype(opc(0x0B), 2, rd, rs1, rs2, amofunc('00001', aq, rl))
+     case AMO( AMOADD_W(aq, rl, rd, rs1, rs2))  => Rtype(opc(0x0B), 2, rd, rs1, rs2, amofunc('00000', aq, rl))
+     case AMO( AMOXOR_W(aq, rl, rd, rs1, rs2))  => Rtype(opc(0x0B), 2, rd, rs1, rs2, amofunc('00100', aq, rl))
+     case AMO( AMOAND_W(aq, rl, rd, rs1, rs2))  => Rtype(opc(0x0B), 2, rd, rs1, rs2, amofunc('01100', aq, rl))
+     case AMO(  AMOOR_W(aq, rl, rd, rs1, rs2))  => Rtype(opc(0x0B), 2, rd, rs1, rs2, amofunc('01000', aq, rl))
+     case AMO( AMOMIN_W(aq, rl, rd, rs1, rs2))  => Rtype(opc(0x0B), 2, rd, rs1, rs2, amofunc('10000', aq, rl))
+     case AMO( AMOMAX_W(aq, rl, rd, rs1, rs2))  => Rtype(opc(0x0B), 2, rd, rs1, rs2, amofunc('10100', aq, rl))
+     case AMO(AMOMINU_W(aq, rl, rd, rs1, rs2))  => Rtype(opc(0x0B), 2, rd, rs1, rs2, amofunc('11000', aq, rl))
+     case AMO(AMOMAXU_W(aq, rl, rd, rs1, rs2))  => Rtype(opc(0x0B), 2, rd, rs1, rs2, amofunc('11100', aq, rl))
+
+     case AMO(AMOSWAP_D(aq, rl, rd, rs1, rs2))  => Rtype(opc(0x0B), 3, rd, rs1, rs2, amofunc('00001', aq, rl))
+     case AMO( AMOADD_D(aq, rl, rd, rs1, rs2))  => Rtype(opc(0x0B), 3, rd, rs1, rs2, amofunc('00000', aq, rl))
+     case AMO( AMOXOR_D(aq, rl, rd, rs1, rs2))  => Rtype(opc(0x0B), 3, rd, rs1, rs2, amofunc('00100', aq, rl))
+     case AMO( AMOAND_D(aq, rl, rd, rs1, rs2))  => Rtype(opc(0x0B), 3, rd, rs1, rs2, amofunc('01100', aq, rl))
+     case AMO(  AMOOR_D(aq, rl, rd, rs1, rs2))  => Rtype(opc(0x0B), 3, rd, rs1, rs2, amofunc('01000', aq, rl))
+     case AMO( AMOMIN_D(aq, rl, rd, rs1, rs2))  => Rtype(opc(0x0B), 3, rd, rs1, rs2, amofunc('10000', aq, rl))
+     case AMO( AMOMAX_D(aq, rl, rd, rs1, rs2))  => Rtype(opc(0x0B), 3, rd, rs1, rs2, amofunc('10100', aq, rl))
+     case AMO(AMOMINU_D(aq, rl, rd, rs1, rs2))  => Rtype(opc(0x0B), 3, rd, rs1, rs2, amofunc('11000', aq, rl))
+     case AMO(AMOMAXU_D(aq, rl, rd, rs1, rs2))  => Rtype(opc(0x0B), 3, rd, rs1, rs2, amofunc('11100', aq, rl))
 
      case System( ECALL)                    =>  Itype(opc(0x1C), 0, 0, 0, 0)
      case System(EBREAK)                    =>  Itype(opc(0x1C), 0, 0, 0, 1)
