@@ -385,7 +385,7 @@ record MachineCSR
   mbadaddr      :: regType
   mip           :: mip
 
-  mbase         :: regType     -- protection and translation
+  mbase         :: regType      -- protection and translation
   mbound        :: regType
   mibase        :: regType
   mibound       :: regType
@@ -393,8 +393,8 @@ record MachineCSR
   mdbound       :: regType
 
                    -- host-target interface (berkeley extensions)
-  mtohost       :: regType     -- output register to host
-  mfromhost     :: regType     -- input register from host
+  mtohost       :: regType      -- output register to host
+  mfromhost     :: regType      -- input register from host
 }
 
 -- Hypervisor-Level CSRs
@@ -449,7 +449,7 @@ record SupervisorCSR
   sbadaddr      :: regType
   -- sip :: sip is a projection of mip :: mip
 
-  sptbr         :: regType     -- memory protection and translation
+  sptbr         :: regType      -- memory protection and translation
   sasid         :: regType
 }
 
