@@ -881,6 +881,106 @@ component CSRMap(csr::creg) :: regType
       }
 }
 
+string csrName(csr::creg) =
+    match csr
+    { -- user counter/timers
+      case 0xC00  => "cycle"
+      case 0xC01  => "time"
+      case 0xC02  => "instret"
+      case 0xC80  => "cycleh"
+      case 0xC81  => "timeh"
+      case 0xC82  => "instreth"
+
+      -- supervisor trap setup
+      case 0x100  => "sstatus"
+      case 0x101  => "stvec"
+      case 0x104  => "sie"
+      case 0x121  => "stimecmp"
+
+      -- supervisor timer
+      case 0xD01  => "stime"
+      case 0xD81  => "stimeh"
+
+      -- supervisor trap handling
+      case 0x140  => "sscratch"
+      case 0x141  => "sepc"
+      case 0xD42  => "scause"
+      case 0xD43  => "sbadaddr"
+      case 0x144  => "mip"
+
+      -- supervisor protection and translation
+      case 0x180  => "sptbr"
+      case 0x181  => "sasid"
+
+      -- supervisor read/write shadow of user read-only registers
+      case 0x900  => "cycle"
+      case 0x901  => "time"
+      case 0x902  => "instret"
+      case 0x980  => "cycleh"
+      case 0x981  => "timeh"
+      case 0x982  => "instreth"
+
+      -- hypervisor trap setup
+      case 0x200  => "hstatus"
+      case 0x201  => "htvec"
+      case 0x202  => "htdeleg"
+      case 0x221  => "htimecmp"
+
+      -- hypervisor timer
+      case 0xE01  => "htime"
+      case 0xE81  => "htimeh"
+
+      -- hypervisor trap handling
+      case 0x240  => "hscratch"
+      case 0x241  => "hepc"
+      case 0x242  => "hcause"
+      case 0x243  => "hbadaddr"
+
+      -- hypervisor read/write shadow of supervisor read-only registers
+      case 0xA01  => "stime"
+      case 0xA81  => "stimeh"
+
+      -- machine information registers
+      case 0xF00  => "mcpuid"
+      case 0xF01  => "mimpid"
+      case 0xF10  => "mhartid"
+
+      -- machine trap setup
+      case 0x300  => "mstatus"
+      case 0x301  => "mtvec"
+      case 0x302  => "mtdeleg"
+      case 0x304  => "mie"
+      case 0x321  => "mtimecmp"
+
+      -- machine timers and counters
+      case 0x701  => "mtime"
+      case 0x741  => "mtimeh"
+
+      -- machine trap handling
+      case 0x340  => "mscratch"
+      case 0x341  => "mepc"
+      case 0x342  => "mcause"
+      case 0x343  => "mbadaddr"
+      case 0x344  => "mip"
+
+      -- machine protection and translation
+      case 0x380  => "mbase"
+      case 0x381  => "mbound"
+      case 0x382  => "mibase"
+      case 0x383  => "mibound"
+      case 0x384  => "mdbase"
+      case 0x385  => "mdbound"
+
+      -- machine read-write shadow of hypervisor read-only registers
+      case 0xB01  => "htime"
+      case 0xB81  => "htimeh"
+
+      -- machine host-target interface (berkeley extension)
+      case 0x780  => "mtohost"
+      case 0x781  => "mfromhost"
+
+      case _      => "UNKNOWN"
+    }
 ---------------------------------------------------------------------------
 -- Tandem verification
 ---------------------------------------------------------------------------
@@ -2429,6 +2529,9 @@ string pLRtype(o::string, aq::amo, rl::amo, rd::reg, rs1::reg) =
 string pItype(o::string, rd::reg, rs1::reg, i::bits(N)) =
     instr(o) : " " : reg(rd) : ", " : reg(rs1) : ", " : imm(i)
 
+string pCSRtype(o::string, rd::reg, rs1::reg, csr::creg) =
+    instr(o) : " " : reg(rd) : ", " : reg(rs1) : ", " : csrName(csr)
+
 string pStype(o::string, rs1::reg, rs2::reg, i::bits(N)) =
     instr(o) : " " : reg(rs1) : ", " : reg(rs2) : ", " : imm(i)
 
@@ -2554,12 +2657,12 @@ string instructionToString(i::instruction) =
      case System(EBREAK)                    => pN0type("EBREAK")
      case System(  ERET)                    => pN0type("ERET")
 
-     case System( CSRRW(rd, rs1, csr))      => pItype("CSRRW",  rd, rs1, csr)
-     case System( CSRRS(rd, rs1, csr))      => pItype("CSRRS",  rd, rs1, csr)
-     case System( CSRRC(rd, rs1, csr))      => pItype("CSRRC",  rd, rs1, csr)
-     case System(CSRRWI(rd, rs1, csr))      => pItype("CSRRWI", rd, rs1, csr)
-     case System(CSRRSI(rd, rs1, csr))      => pItype("CSRRSI", rd, rs1, csr)
-     case System(CSRRCI(rd, rs1, csr))      => pItype("CSRRCI", rd, rs1, csr)
+     case System( CSRRW(rd, rs1, csr))      => pCSRtype("CSRRW",  rd, rs1, csr)
+     case System( CSRRS(rd, rs1, csr))      => pCSRtype("CSRRS",  rd, rs1, csr)
+     case System( CSRRC(rd, rs1, csr))      => pCSRtype("CSRRC",  rd, rs1, csr)
+     case System(CSRRWI(rd, rs1, csr))      => pCSRtype("CSRRWI", rd, rs1, csr)
+     case System(CSRRSI(rd, rs1, csr))      => pCSRtype("CSRRSI", rd, rs1, csr)
+     case System(CSRRCI(rd, rs1, csr))      => pCSRtype("CSRRCI", rd, rs1, csr)
 
      case UnknownInstruction                => pN0type("UNKNOWN")
    }
