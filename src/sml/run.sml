@@ -22,6 +22,10 @@ val mem_size        = ref 4000000
 
 (* Execution parameters *)
 
+(* true  -> init starting PC to reset vector
+   false -> use start offset from ELF *)
+val boot        = ref true
+
 val be          = ref false (* little-endian *)
 val time_run    = ref true
 
@@ -251,17 +255,13 @@ fun doInit () =
       else ()
     )
 
-(* TODO: initialize stack memory *)
-fun initStack psegs =
-    0x000000007fffff20
-
 fun doElf cycles file dis =
     let val elf   = Elf.openElf file
         val hdr   = Elf.getElfHeader elf
         val psegs = Elf.getElfProgSegments elf hdr
-    in  riscv.setArch(if (#class hdr) = Elf.BIT_32
-                      then riscv.RV32I else riscv.RV64I)
-
+    in  riscv.initIdent(if (#class hdr) = Elf.BIT_32
+                        then riscv.RV32I else riscv.RV64I)
+      ; riscv.initMachine(BitsN.B(!current_core_id, BitsN.size(!riscv.procID)))
       ; if !trace_elf
         then ( print "Loading elf file ...\n"
              ; Elf.printElfHeader hdr
@@ -269,7 +269,7 @@ fun doElf cycles file dis =
         else ()
       ; be := (if (#endian hdr = Elf.BIG) then true else false)
       ; loadElf psegs dis
-      ; riscv.initRegs ((#entry hdr), (initStack psegs))
+      ; riscv.initRegs (if !boot then 0x200 else (#entry hdr))
       ; if !verify
         then loadVerify file
         else ()

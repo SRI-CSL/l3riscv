@@ -564,8 +564,6 @@ declare
   c_ReserveLoad :: id -> regType option         -- load reservation for LL/SC
 }
 
-reg STACK = 2
-
 -- Instruction counter
 declare instCnt :: nat
 
@@ -634,9 +632,6 @@ Architecture curArch() =
 
 bool in32BitMode() =
     curArch() == RV32I
-
-unit setArch(a::Architecture) =
-    MCSR.mcpuid.ArchBase <- archBase(a)
 
 Privilege curPrivilege() =
     privilege(MCSR.mstatus.MPRV)
@@ -2882,23 +2877,22 @@ unit initIdent(arch::Architecture) =
 ; MCSR.mimpid.RVImpl   <- 0x0
 }
 
-unit initMachine() =
+unit initMachine(hartid::id) =
 { -- Startup in Mbare machine mode, with interrupts disabled.
   MCSR.mstatus.VM   <- vmMode(Mbare)
 ; MCSR.mstatus.MPRV <- privLevel(Machine)
 ; MCSR.mstatus.MIE  <- false
-
+  -- Setup hartid
+; MCSR.mhartid      <- ZeroExtend(hartid)
 }
 -- This initializes each core (via setting procID appropriately) on
 -- startup before execution begins.
-unit initRegs(pc::nat, stack::nat) =
+unit initRegs(pc::nat) =
 { -- TODO: Check if the specs specify the initial values of the registers
   -- on startup.  Initializing to an arbitrary value causes issues with
   -- the verifier, which assumes 0-valued initialization.
   for i in 0 .. 31 do
     gpr([i])   <- 0x0
-
-; gpr([STACK]) <- [stack]
 
 ; PC           <- [pc]
 ; BranchTo     <- None
