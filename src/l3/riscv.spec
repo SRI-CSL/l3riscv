@@ -651,7 +651,8 @@ csrPR csrPR(csr::creg)  = csr<9:8>
 -- this only checks register-level access.  some registers have
 -- additional bit-specific read/write controls.
 bool check_CSR_access(rw::csrRW, pr::csrPR, p::Privilege, a::accessType) =
-    (privLevel(p) >= pr) and (a == Read or rw == 0b11)
+    (privLevel(p) == pr and (a == Read or rw != 0b11))
+ or (privLevel(p) >+ pr)
 
 -- XXX: Revise this to handle absence of counter regs in RV32E.
 bool is_CSR_defined(csr::creg) =
@@ -1108,6 +1109,9 @@ string log_r_mem(pAddr::pAddr, vAddr::vAddr, data::regType) =
     "/" : PadLeft(#"0", 10, [vAddr]) :
     "]: 0x" : PadLeft(#"0", 16, [data])
 
+string log_exc(e::ExceptionType) =
+    " Exception " : excName(e) : " raised!"
+
 string log_tohost(tohost::regType) =
     "-> host: " : [[tohost<7:0>]::char]
 
@@ -1125,7 +1129,7 @@ string hex64(x::dword) = PadLeft(#"0", 16, [x])
 ---------------------------------------------------------------------------
 
 unit setupException(e::ExceptionType) =
-    nothing
+    mark_log(2, log_exc(e))
 {- SCSR.cause.Int    <- false
 ; SCSR.cause.EC     <- excCode(e)
 ; SCSR.epc          <- PC
@@ -2284,18 +2288,15 @@ define System > ERET   = nothing
 
 -- Control and Status Registers
 
-bool checkCSROp(csr::imm12, rs1::reg) =
-{ op = if rs1 == 0x0 then Read else Write
-; (is_CSR_defined(csr))
-  and (check_CSR_access(csrRW(csr), csrPR(csr), curPrivilege(), op))
-}
+bool checkCSROp(csr::imm12, rs1::reg, a::accessType) =
+    is_CSR_defined(csr) and check_CSR_access(csrRW(csr), csrPR(csr), curPrivilege(), a)
 
 -----------------------------------
 -- CSRRW  rd, rs1, imm
 -----------------------------------
 
 define System > CSRRW(rd::reg, rs1::reg, csr::imm12) =
-    if checkCSROp(csr, rs1)
+    if checkCSROp(csr, rs1, Write)
     then { val = CSR(csr)
          ; writeCSR(csr, GPR(rs1))
          ; writeRD(rd, val)
@@ -2309,7 +2310,7 @@ define System > CSRRW(rd::reg, rs1::reg, csr::imm12) =
 -- CSRRS  rd, rs1, imm
 -----------------------------------
 define System > CSRRS(rd::reg, rs1::reg, csr::imm12) =
-    if checkCSROp(csr, rs1)
+    if checkCSROp(csr, rs1, if rs1 == 0 then Read else Write)
     then { val = CSR(csr)
          ; when rs1 != 0
            do writeCSR(csr, val || GPR(rs1))
@@ -2321,7 +2322,7 @@ define System > CSRRS(rd::reg, rs1::reg, csr::imm12) =
 -- CSRRC  rd, rs1, imm
 -----------------------------------
 define System > CSRRC(rd::reg, rs1::reg, csr::imm12) =
-    if checkCSROp(csr, rs1)
+    if checkCSROp(csr, rs1, if rs1 == 0 then Read else Write)
     then { val = CSR(csr)
          ; when rs1 != 0
            do writeCSR(csr, val && ~GPR(rs1))
@@ -2333,7 +2334,7 @@ define System > CSRRC(rd::reg, rs1::reg, csr::imm12) =
 -- CSRRWI rd, rs1, imm
 -----------------------------------
 define System > CSRRWI(rd::reg, zimm::reg, csr::imm12) =
-    if checkCSROp(csr, zimm)
+    if checkCSROp(csr, zimm, if zimm == 0 then Read else Write)
     then { val = CSR(csr)
          ; when zimm != 0
            do writeCSR(csr, ZeroExtend(zimm))
@@ -2345,7 +2346,7 @@ define System > CSRRWI(rd::reg, zimm::reg, csr::imm12) =
 -- CSRRSI rd, rs1, imm
 -----------------------------------
 define System > CSRRSI(rd::reg, zimm::reg, csr::imm12) =
-    if checkCSROp(csr, zimm)
+    if checkCSROp(csr, zimm, if zimm == 0 then Read else Write)
     then { val = CSR(csr)
          ; when zimm != 0
            do writeCSR(csr, val || ZeroExtend(zimm))
@@ -2357,7 +2358,7 @@ define System > CSRRSI(rd::reg, zimm::reg, csr::imm12) =
 -- CSRRCI rd, rs1, imm
 -----------------------------------
 define System > CSRRCI(rd::reg, zimm::reg, csr::imm12) =
-    if checkCSROp(csr, zimm)
+    if checkCSROp(csr, zimm, if zimm == 0 then Read else Write)
     then { val = CSR(csr)
          ; when zimm != 0
            do writeCSR(csr, val && ~ZeroExtend(zimm))
