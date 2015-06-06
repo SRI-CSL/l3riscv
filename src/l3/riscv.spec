@@ -2499,7 +2499,7 @@ instruction Decode(w::word) =
 
      case '000000000000  00000 000 00000 11100 11' => System( ECALL)
      case '000000000001  00000 000 00000 11100 11' => System(EBREAK)
-     case '100000000000  00000 000 00000 11100 11' => System(  ERET)
+     case '000100000000  00000 000 00000 11100 11' => System(  ERET)
 
      -- unsupported instructions
      case _                                        => UnknownInstruction
@@ -2795,9 +2795,9 @@ word Encode(i::instruction) =
      case AMO(AMOMINU_D(aq, rl, rd, rs1, rs2))  => Rtype(opc(0x0B), 3, rd, rs1, rs2, amofunc('11000', aq, rl))
      case AMO(AMOMAXU_D(aq, rl, rd, rs1, rs2))  => Rtype(opc(0x0B), 3, rd, rs1, rs2, amofunc('11100', aq, rl))
 
-     case System( ECALL)                    =>  Itype(opc(0x1C), 0, 0, 0, 0)
-     case System(EBREAK)                    =>  Itype(opc(0x1C), 0, 0, 0, 1)
-     case System(  ERET)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x800)
+     case System( ECALL)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x000)
+     case System(EBREAK)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x001)
+     case System(  ERET)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x100)
 
      case System( CSRRW(rd, rs1, csr))      =>  Itype(opc(0x1C), 1, rd, rs1, csr)
      case System( CSRRS(rd, rs1, csr))      =>  Itype(opc(0x1C), 2, rd, rs1, csr)
