@@ -1037,7 +1037,7 @@ unit recordLoad(addr::vAddr, val::regType) =
 ---------------------------------------------------------------------------
 
 string log_w_csr(csr::creg, data::regType) =
-    "CSR (0x" : PadLeft(#"0", 3, [csr]) : ") <- 0x" : PadLeft(#"0", 16, [data])
+    "CSR (" : csrName(csr) : ") <- 0x" : PadLeft(#"0", 16, [data])
 
 string reg(r::reg) =
 { if      r ==  0 then "$0"
@@ -2311,7 +2311,8 @@ define System > CSRRW(rd::reg, rs1::reg, csr::imm12) =
 define System > CSRRS(rd::reg, rs1::reg, csr::imm12) =
     if checkCSROp(csr, rs1)
     then { val = CSR(csr)
-         ; writeCSR(csr, val || GPR(rs1))
+         ; when rs1 != 0
+           do writeCSR(csr, val || GPR(rs1))
          ; writeRD(rd, val)
          }
     else signalException(Illegal_Instr)
@@ -2322,7 +2323,8 @@ define System > CSRRS(rd::reg, rs1::reg, csr::imm12) =
 define System > CSRRC(rd::reg, rs1::reg, csr::imm12) =
     if checkCSROp(csr, rs1)
     then { val = CSR(csr)
-         ; writeCSR(csr, val && ~GPR(rs1))
+         ; when rs1 != 0
+           do writeCSR(csr, val && ~GPR(rs1))
          ; writeRD(rd, val)
          }
     else signalException(Illegal_Instr)
@@ -2333,7 +2335,8 @@ define System > CSRRC(rd::reg, rs1::reg, csr::imm12) =
 define System > CSRRWI(rd::reg, zimm::reg, csr::imm12) =
     if checkCSROp(csr, zimm)
     then { val = CSR(csr)
-         ; writeCSR(csr, ZeroExtend(zimm))
+         ; when zimm != 0
+           do writeCSR(csr, ZeroExtend(zimm))
          ; writeRD(rd, val)
          }
     else signalException(Illegal_Instr)
@@ -2344,7 +2347,8 @@ define System > CSRRWI(rd::reg, zimm::reg, csr::imm12) =
 define System > CSRRSI(rd::reg, zimm::reg, csr::imm12) =
     if checkCSROp(csr, zimm)
     then { val = CSR(csr)
-         ; writeCSR(csr, val || ZeroExtend(zimm))
+         ; when zimm != 0
+           do writeCSR(csr, val || ZeroExtend(zimm))
          ; writeRD(rd, val)
          }
     else signalException(Illegal_Instr)
@@ -2355,7 +2359,8 @@ define System > CSRRSI(rd::reg, zimm::reg, csr::imm12) =
 define System > CSRRCI(rd::reg, zimm::reg, csr::imm12) =
     if checkCSROp(csr, zimm)
     then { val = CSR(csr)
-         ; writeCSR(csr, val && ~ZeroExtend(zimm))
+         ; when zimm != 0
+           do writeCSR(csr, val && ~ZeroExtend(zimm))
          ; writeRD(rd, val)
          }
     else signalException(Illegal_Instr)
