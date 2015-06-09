@@ -554,6 +554,17 @@ mstatus popPrivilegeStack (mst::mstatus) =
 ; st
 }
 
+mstatus pushPrivilegeStack (mst::mstatus, p::Privilege) =
+{ var st = mst
+; st.MIE2   <- mst.MIE1
+; st.MPRV2  <- mst.MPRV1
+; st.MIE1   <- mst.MIE
+; st.MPRV1  <- mst.MPRV
+; st.MIE    <- false
+; st.MPRV   <- privLevel(p)
+; st
+}
+
 ---------------------------------------------------------------------------
 -- Instruction fetch control
 ---------------------------------------------------------------------------
@@ -1155,21 +1166,24 @@ string hex64(x::dword) = PadLeft(#"0", 16, [x])
 
 unit setupException(e::ExceptionType) =
 { mark_log(2, log_exc(e))
--- TODO:
---
--- . cancel any load reservation
---
--- . set MPRV to zero *in each privilege level*.
---
--- . check mtdeleg to figure out privilege level for exception handler
---
--- . set exc code in appropriate cause register
---
--- . set appropriate badaddr if needed
---
--- . set epc
+; ReserveLoad        <- None        -- cancel any load reservation
+; MCSR.mstatus.MMPRV <- false       -- unset MPRV in each privilege level
+; SCSR.sstatus.SMPRV <- false
 
-; NextFetch         <- Some(SynchronousTrap(Machine))
+; exc                 = excCode(e)
+; if MCSR.mtdeleg.Exc_deleg<[exc]::nat>
+  then { SCSR.scause.EC     <- exc
+       ; SCSR.scause.Int    <- false
+       ; SCSR.sepc          <- PC
+         -- TODO: set SCSR.sbadaddr
+       ; NextFetch          <- Some(SynchronousTrap(Supervisor))
+       }
+  else { MCSR.mcause.EC     <- exc
+       ; MCSR.mcause.Int    <- false
+       ; MCSR.mepc          <- PC
+       -- TODO: set MCSR.mbadaddr
+       ; NextFetch      <- Some(SynchronousTrap(Machine))
+       }
 }
 {- SCSR.cause.Int   <- false
 ; SCSR.cause.EC     <- excCode(e)
@@ -2912,11 +2926,22 @@ unit Next =
              ; PC           <- curEPC()
              ; MCSR.mstatus <- popPrivilegeStack(MCSR.mstatus)
              ; to   = curPrivilege()
-             ; mark_log(0, ["exception return from " : privName(from) : " to " : privName(to)])
+             ; mark_log(0, ["exception return from " : privName(from)
+                            : " to " : privName(to)])
              }
-    case Some(SynchronousTrap(p)) =>
-             { mark_log(0, "Trapping to change privilege")
-             ; #INTERNAL_ERROR("Trap handling unimplemented")
+    case Some(SynchronousTrap(toP)) =>
+             { NextFetch    <- None
+             ; fromP        = curPrivilege()
+             ; mark_log(0, ["trapping from " : privName(fromP)
+                            : " to " : privName(toP)])
+             ; MCSR.mstatus <- pushPrivilegeStack(MCSR.mstatus, toP)
+             ; PC           <- match toP
+                               { case User       => #INTERNAL_ERROR("Illegal trap to U-mode")
+                                 case Supervisor => SCSR.stvec
+                                 case Machine    => (MCSR.mtvec
+                                                     + ([privLevel(fromP)]::regType) * 0x40)
+                                 case Hypervisor => #INTERNAL_ERROR("H-mode not implemented")
+                               }
              }
   }
 }
@@ -2939,6 +2964,8 @@ unit initMachine(hartid::id) =
 ; MCSR.mstatus.MIE  <- false
   -- Setup hartid
 ; MCSR.mhartid      <- ZeroExtend(hartid)
+  -- Initialize mtvec to lower address (other option is 0xF...FFE00)
+; MCSR.mtvec        <- ZeroExtend(0x100`16)
 }
 -- This initializes each core (via setting procID appropriately) on
 -- startup before execution begins.
