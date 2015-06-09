@@ -542,6 +542,18 @@ sstatus * mstatus lower_sstatus_mstatus(new_sst::sstatus, old_sst::sstatus,
 ; (st, mt)
 }
 
+-- pop the privilege stack for ERET
+mstatus popPrivilegeStack (mst::mstatus) =
+{ var st = mst
+; st.MIE    <- mst.MIE1
+; st.MPRV   <- mst.MPRV1
+; st.MIE1   <- mst.MIE2
+; st.MPRV1  <- mst.MPRV2
+; st.MIE2   <- true
+; st.MPRV2  <- privLevel(User)
+; st
+}
+
 ---------------------------------------------------------------------------
 -- Instruction fetch control
 ---------------------------------------------------------------------------
@@ -640,6 +652,14 @@ bool in32BitMode() =
 
 Privilege curPrivilege() =
     privilege(MCSR.mstatus.MPRV)
+
+regType curEPC() =
+    match curPrivilege()
+    { case User         => #INTERNAL_ERROR("No EPC in U-mode")
+      case Supervisor   => SCSR.sepc
+      case Hypervisor   => HCSR.hepc
+      case Machine      => MCSR.mepc
+    }
 
 ---------------------------------------------------------------------------
 -- CSR Register address map
@@ -2887,8 +2907,12 @@ unit Next =
              ; incrCounts ()
              }
     case Some(Ereturn) =>
-             { mark_log(0, "Exception return")
-             ; #INTERNAL_ERROR("Exception return unimplemented")
+             { NextFetch <- None
+             ; from = curPrivilege()
+             ; PC           <- curEPC()
+             ; MCSR.mstatus <- popPrivilegeStack(MCSR.mstatus)
+             ; to   = curPrivilege()
+             ; mark_log(0, ["exception return from " : privName(from) : " to " : privName(to)])
              }
     case Some(SynchronousTrap(p)) =>
              { mark_log(0, "Trapping to change privilege")
