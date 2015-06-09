@@ -595,6 +595,7 @@ declare
   -- interpreter execution context
   c_NextFetch   :: id -> TransferControl option
   c_ReserveLoad :: id -> regType option         -- load reservation for LL/SC
+  c_ExitCode    :: id -> regType                -- derived from Berkeley HTIF
 }
 
 -- Instruction counter
@@ -651,6 +652,11 @@ component NextFetch :: TransferControl option
 component ReserveLoad :: regType option
 { value        = c_ReserveLoad(procID)
   assign value = c_ReserveLoad(procID) <- value
+}
+
+component ExitCode :: regType
+{ value        = c_ExitCode(procID)
+  assign value = c_ExitCode(procID) <- value
 }
 
 -- machine state utilities
@@ -2882,6 +2888,9 @@ string log_instruction(w::word, inst::instruction) =
 
 declare done :: bool   -- Flag to request termination
 
+nat exitCode() =
+    [ExitCode]::nat
+
 unit incrCounts() =
 { UCSR.cycle    <- UCSR.cycle + 1
 ; UCSR.time     <- UCSR.time + 1
@@ -2904,7 +2913,13 @@ unit Next =
 -- following cissrStandalone.c.
 ; when MCSR.mtohost <> 0x0
   do   { mark_log(0, log_tohost(MCSR.mtohost))
-       ; MCSR.mtohost <- 0x0
+       -- The HTIF protocol sets bit 0 to indicate exit, with actual
+       -- exit code left-shifted by 1 bit.
+       ; if MCSR.mtohost<0>
+         then { done <- true
+              ; ExitCode <- MCSR.mtohost >> 1
+              }
+         else MCSR.mtohost <- 0x0   -- TODO: rest of relevant HTIF protocol
        }
 
 -- XXX: Definition of instret count is not clear in the case of

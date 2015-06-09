@@ -192,7 +192,9 @@ fun logLoop mx i =
       ; if 2 <= !trace_level then printLog(2) else ()
       ; if !verify then doVerify() else ()
       ; if !riscv.done orelse i = mx orelse isVerifyDone ()
-        then print ("Completed " ^ Int.toString (i + 1) ^ " instructions.\n")
+        then ( print ("ExitCode: " ^ Nat.toString (riscv.exitCode ()) ^ "\n")
+             ; print ("Completed " ^ Int.toString (i + 1) ^ " instructions.\n")
+             )
         else logLoop mx (i + 1)
     end
 
