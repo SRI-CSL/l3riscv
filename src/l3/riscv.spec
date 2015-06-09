@@ -48,7 +48,8 @@ type vAddr    = dword
 type pAddr    = bits(61)        -- internal accesses are 8-byte aligned
 
 -- Miscellaneous
-exception UNDEFINED :: string
+exception UNDEFINED         :: string
+exception INTERNAL_ERROR    :: string
 
 ---------------------------------------------------------------------------
 -- Memory types for Load/Store instructions
@@ -787,7 +788,7 @@ component CSRMap(csr::creg) :: regType
         case 0x780  => c_MCSR(procID).mtohost
         case 0x781  => c_MCSR(procID).mfromhost
 
-        case _      => UNKNOWN -- TODO: should trap as illegal instr
+        case _      => #INTERNAL_ERROR("unexpected CSR access")
       }
 
   assign value =
@@ -873,7 +874,7 @@ component CSRMap(csr::creg) :: regType
         case 0x781  =>
         { c_MCSR(procID).mfromhost  <- value }
 
-        case _      => nothing -- TODO: should never get here (internal error)
+        case _      => #INTERNAL_ERROR("assignment to unexpected CSR address")
       }
 }
 
@@ -1129,8 +1130,10 @@ string hex64(x::dword) = PadLeft(#"0", 16, [x])
 ---------------------------------------------------------------------------
 
 unit setupException(e::ExceptionType) =
-    mark_log(2, log_exc(e))
-{- SCSR.cause.Int    <- false
+{ mark_log(2, log_exc(e))
+; Exception         <- Some(e)
+}
+{- SCSR.cause.Int   <- false
 ; SCSR.cause.EC     <- excCode(e)
 ; SCSR.epc          <- PC
 ; SCSR.status.PS    <- SCSR.status.S
@@ -1260,7 +1263,7 @@ unit writeData(vAddr::vAddr, data::regType, mask::regType, nbytes::nat) =
               ; mark_log(2, log_w_mem_mask_misaligned(pAddr, vAddr, mask, data, align, old, new))
               }
          else { mark_log(0, "XXX write of size " : [nbytes] : " with align " : [align] : " and size " : [nbytes])
-              -- TODO: handle this case
+              ; #INTERNAL_ERROR("unimplemented cross-block write")
               }
        }
 }
@@ -1930,28 +1933,28 @@ define FENCE_I(rd::reg, rs1::reg, imm::imm12) = nothing
 -----------------------------------
 
 define AMO > LR_W(aq::amo, rl::amo, rd::reg, rs1::reg) =
-    nothing -- TODO
+    #INTERNAL_ERROR("unimplemented")
 
 -----------------------------------
 -- LR.D [aq,rl] rd, rs1
 -----------------------------------
 
 define AMO > LR_D(aq::amo, rl::amo, rd::reg, rs1::reg) =
-    nothing -- TODO
+    #INTERNAL_ERROR("unimplemented")
 
 -----------------------------------
 -- SC.W [aq,rl] rd, rs1, rs2
 -----------------------------------
 
 define AMO > SC_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    nothing -- TODO
+    #INTERNAL_ERROR("unimplemented")
 
 -----------------------------------
 -- SC.D [aq,rl] rd, rs1, rs2
 -----------------------------------
 
 define AMO > SC_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    nothing -- TODO
+    #INTERNAL_ERROR("unimplemented")
 
 -----------------------------------
 -- AMOSWAP.W [aq,rl] rd, rs1, rs2
@@ -2284,7 +2287,7 @@ define System > EBREAK = signalException(Breakpoint)
 -----------------------------------
 -- ECALL
 -----------------------------------
-define System > ERET   = nothing
+define System > ERET   = signalException(Breakpoint)
 
 -- Control and Status Registers
 
@@ -2866,8 +2869,7 @@ unit Next =
              }
     case Some(e), _       =>
              { mark_log(0, "Exception: " : [excName(e)])
-             -- TODO
-             ; nothing
+             ; #INTERNAL_ERROR("Exception handling unimplemented")
              }
   }
 }

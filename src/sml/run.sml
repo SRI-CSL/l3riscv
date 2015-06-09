@@ -222,6 +222,10 @@ fun run mx =
            ( dumpRegisters (!current_core_id)
            ; failExit ("UNDEFINED \"" ^ s ^ "\"\n")
            )
+         | riscv.INTERNAL_ERROR s =>
+           ( dumpRegisters (!current_core_id)
+           ; failExit ("INTERNAL_ERROR \"" ^ s ^ "\"\n")
+           )
 end
 
 fun loadElf segs dis =
