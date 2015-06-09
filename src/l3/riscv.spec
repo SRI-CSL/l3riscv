@@ -543,6 +543,16 @@ sstatus * mstatus lower_sstatus_mstatus(new_sst::sstatus, old_sst::sstatus,
 }
 
 ---------------------------------------------------------------------------
+-- Instruction fetch control
+---------------------------------------------------------------------------
+
+construct TransferControl
+{ SynchronousTrap :: Privilege
+, BranchTo        :: regType
+, Ereturn
+}
+
+---------------------------------------------------------------------------
 -- Register state space
 ---------------------------------------------------------------------------
 
@@ -560,8 +570,7 @@ declare
   c_MCSR        :: id -> MachineCSR             -- machine-level CSRs
 
   -- interpreter execution context
-  c_BranchTo    :: id -> regType option         -- requested branch
-  c_Exception   :: id -> ExceptionType option   -- exception
+  c_NextFetch   :: id -> TransferControl option
   c_ReserveLoad :: id -> regType option         -- load reservation for LL/SC
 }
 
@@ -611,14 +620,9 @@ component MCSR :: MachineCSR
   assign value = c_MCSR(procID) <- value
 }
 
-component BranchTo :: regType option
-{ value        = c_BranchTo(procID)
-  assign value = c_BranchTo(procID) <- value
-}
-
-component Exception :: ExceptionType option
-{ value        = c_Exception(procID)
-  assign value = c_Exception(procID) <- value
+component NextFetch :: TransferControl option
+{ value        = c_NextFetch(procID)
+  assign value = c_NextFetch(procID) <- value
 }
 
 component ReserveLoad :: regType option
@@ -1131,7 +1135,21 @@ string hex64(x::dword) = PadLeft(#"0", 16, [x])
 
 unit setupException(e::ExceptionType) =
 { mark_log(2, log_exc(e))
-; Exception         <- Some(e)
+-- TODO:
+--
+-- . cancel any load reservation
+--
+-- . set MPRV to zero *in each privilege level*.
+--
+-- . check mtdeleg to figure out privilege level for exception handler
+--
+-- . set exc code in appropriate cause register
+--
+-- . set appropriate badaddr if needed
+--
+-- . set epc
+
+; NextFetch         <- Some(SynchronousTrap(Machine))
 }
 {- SCSR.cause.Int   <- false
 ; SCSR.cause.EC     <- excCode(e)
@@ -1287,7 +1305,7 @@ unit writeMem(vAddr::vAddr, data::regType) =
 ---------------------------------------------------------------------------
 
 unit branchTo(newPC::regType) =
-{ BranchTo   <- Some(newPC)
+{ NextFetch  <- Some(BranchTo(newPC))
 ; Delta.addr <- newPC
 }
 
@@ -2287,7 +2305,8 @@ define System > EBREAK = signalException(Breakpoint)
 -----------------------------------
 -- ECALL
 -----------------------------------
-define System > ERET   = signalException(Breakpoint)
+define System > ERET   =
+    NextFetch <- Some(Ereturn)
 
 -- Control and Status Registers
 
@@ -2857,19 +2876,23 @@ unit Next =
 -- XXX: Definition of instret count is not clear in the case of
 -- exceptions and traps.
 
-; match Exception, BranchTo
-  { case None, None       =>
+; match NextFetch
+  { case None =>
              { PC <- PC + 4
              ; incrCounts ()
              }
-    case None, Some(addr) =>
-             { BranchTo <- None
+    case Some(BranchTo(addr)) =>
+             { NextFetch <- None
              ; PC <- addr
              ; incrCounts ()
              }
-    case Some(e), _       =>
-             { mark_log(0, "Exception: " : [excName(e)])
-             ; #INTERNAL_ERROR("Exception handling unimplemented")
+    case Some(Ereturn) =>
+             { mark_log(0, "Exception return")
+             ; #INTERNAL_ERROR("Exception return unimplemented")
+             }
+    case Some(SynchronousTrap(p)) =>
+             { mark_log(0, "Trapping to change privilege")
+             ; #INTERNAL_ERROR("Trap handling unimplemented")
              }
   }
 }
@@ -2903,7 +2926,6 @@ unit initRegs(pc::nat) =
     gpr([i])   <- 0x0
 
 ; PC           <- [pc]
-; BranchTo     <- None
-; Exception    <- None
+; NextFetch    <- None
 ; done         <- false
 }
