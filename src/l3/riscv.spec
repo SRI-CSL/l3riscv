@@ -1449,20 +1449,11 @@ define Shift > SRAI(rd::reg, rs1::reg, imm::bits(6)) =
     else
         writeRD(rd, GPR(rs1) >> [imm])
 
-------------------------------------------
--- utility function for shift instructions
-------------------------------------------
-bool notWordValue(value::regType) =
-{ top = value<63:32>
-; if value<31> then top <> 0xFFFF_FFFF
-  else              top <> 0x0
-}
-
 -----------------------------------
 -- SLLIW rd, rs1, imm   (RV64I)
 -----------------------------------
 define Shift > SLLIW(rd::reg, rs1::reg, imm::bits(5)) =
-    if in32BitMode() or notWordValue(GPR(rs1)) then
+    if in32BitMode() then
         signalException(Illegal_Instr)
     else
         writeRD(rd, SignExtend(GPR(rs1)<31:0> << [imm]))
@@ -1471,7 +1462,7 @@ define Shift > SLLIW(rd::reg, rs1::reg, imm::bits(5)) =
 -- SRLIW rd, rs1, imm   (RV64I)
 -----------------------------------
 define Shift > SRLIW(rd::reg, rs1::reg, imm::bits(5)) =
-    if in32BitMode() or notWordValue(GPR(rs1)) then
+    if in32BitMode() then
         signalException(Illegal_Instr)
     else
         writeRD(rd, SignExtend(GPR(rs1)<31:0> >>+ [imm]))
@@ -1480,7 +1471,7 @@ define Shift > SRLIW(rd::reg, rs1::reg, imm::bits(5)) =
 -- SRAIW rd, rs1, imm   (RV64I)
 -----------------------------------
 define Shift > SRAIW(rd::reg, rs1::reg, imm::bits(5)) =
-    if in32BitMode() or notWordValue(GPR(rs1)) then
+    if in32BitMode() then
         signalException(Illegal_Instr)
     else
         writeRD(rd, SignExtend(GPR(rs1)<31:0> >> [imm]))
