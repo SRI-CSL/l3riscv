@@ -206,7 +206,12 @@ fun silentLoop mx =
     ; riscv.Next ()
     ; if !verify then doVerify() else ()
     ; if !riscv.done orelse (mx = 1) orelse isVerifyDone ()
-      then (print "done\n")
+      then let val ec = riscv.exitCode ()
+           in print ("done: exit code " ^ Nat.toString ec ^ "\n")
+            ; OS.Process.exit (if ec = 0
+                               then OS.Process.success
+                               else OS.Process.failure)
+           end
       else silentLoop (decr mx)
     )
 
