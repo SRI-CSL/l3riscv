@@ -2343,7 +2343,7 @@ define System > ECALL  = signalEnvCall()
 define System > EBREAK = signalException(Breakpoint)
 
 -----------------------------------
--- ECALL
+-- ERET
 -----------------------------------
 define System > ERET   =
     NextFetch <- Some(Ereturn)
