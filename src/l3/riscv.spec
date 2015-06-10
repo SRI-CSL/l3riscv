@@ -573,6 +573,7 @@ construct TransferControl
 { SynchronousTrap :: Privilege
 , BranchTo        :: regType
 , Ereturn
+, Mrts
 }
 
 ---------------------------------------------------------------------------
@@ -2372,6 +2373,19 @@ define System > EBREAK = signalException(Breakpoint)
 define System > ERET   =
     NextFetch <- Some(Ereturn)
 
+-----------------------------------
+-- MRTS
+-----------------------------------
+define System > MRTS   =
+{ SCSR.scause       <- MCSR.mcause
+; SCSR.sbadaddr     <- MCSR.mbadaddr
+; SCSR.sepc         <- MCSR.mepc
+
+; MCSR.mstatus.MPRV <- privLevel(Supervisor)
+
+; NextFetch         <- Some(Mrts)
+}
+
 -- Control and Status Registers
 
 bool checkCSROp(csr::imm12, rs1::reg, a::accessType) =
@@ -2587,6 +2601,7 @@ instruction Decode(w::word) =
      case '000000000001  00000 000 00000 11100 11' => System(EBREAK)
      case '000100000000  00000 000 00000 11100 11' => System(  ERET)
 
+     case '001100000101  00000 000 00000 11100 11' => System( MRTS)
      -- unsupported instructions
      case _                                        => UnknownInstruction
    }
@@ -2747,6 +2762,8 @@ string instructionToString(i::instruction) =
      case System(EBREAK)                    => pN0type("EBREAK")
      case System(  ERET)                    => pN0type("ERET")
 
+     case System(  MRTS)                    => pN0type("MRTS")
+
      case System( CSRRW(rd, rs1, csr))      => pCSRtype("CSRRW",  rd, rs1, csr)
      case System( CSRRS(rd, rs1, csr))      => pCSRtype("CSRRS",  rd, rs1, csr)
      case System( CSRRC(rd, rs1, csr))      => pCSRtype("CSRRC",  rd, rs1, csr)
@@ -2887,6 +2904,7 @@ word Encode(i::instruction) =
      case System( ECALL)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x000)
      case System(EBREAK)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x001)
      case System(  ERET)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x100)
+     case System(  MRTS)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x305)
 
      case System( CSRRW(rd, rs1, csr))      =>  Itype(opc(0x1C), 1, rd, rs1, csr)
      case System( CSRRS(rd, rs1, csr))      =>  Itype(opc(0x1C), 2, rd, rs1, csr)
@@ -2984,6 +3002,10 @@ unit Next =
                                                      + ([privLevel(fromP)]::regType) * 0x40)
                                  case Hypervisor => #INTERNAL_ERROR("H-mode not implemented")
                                }
+             }
+    case Some(Mrts) =>
+             { NextFetch    <- None
+             ; PC           <- SCSR.stvec
              }
   }
 }
