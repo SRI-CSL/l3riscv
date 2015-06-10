@@ -693,8 +693,7 @@ csrPR csrPR(csr::creg)  = csr<9:8>
 -- this only checks register-level access.  some registers have
 -- additional bit-specific read/write controls.
 bool check_CSR_access(rw::csrRW, pr::csrPR, p::Privilege, a::accessType) =
-    (privLevel(p) == pr and (a == Read or rw != 0b11))
- or (privLevel(p) >+ pr)
+    (a == Read or rw != 0b11) and (privLevel(p) >=+ pr)
 
 -- XXX: Revise this to handle absence of counter regs in RV32E.
 bool is_CSR_defined(csr::creg) =
