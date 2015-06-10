@@ -2580,9 +2580,9 @@ instruction Decode(w::word) =
      case 'csr                rs1 001 rd 11100 11' => System( CSRRW(rd, rs1, csr))
      case 'csr                rs1 010 rd 11100 11' => System( CSRRS(rd, rs1, csr))
      case 'csr                rs1 011 rd 11100 11' => System( CSRRC(rd, rs1, csr))
-     case 'csr                rs1 101 rd 11100 11' => System(CSRRWI(rd, rs1, csr))
-     case 'csr                rs1 110 rd 11100 11' => System(CSRRSI(rd, rs1, csr))
-     case 'csr                rs1 111 rd 11100 11' => System(CSRRCI(rd, rs1, csr))
+     case 'csr                imm 101 rd 11100 11' => System(CSRRWI(rd, imm, csr))
+     case 'csr                imm 110 rd 11100 11' => System(CSRRSI(rd, imm, csr))
+     case 'csr                imm 111 rd 11100 11' => System(CSRRCI(rd, imm, csr))
 
      case '000000000000  00000 000 00000 11100 11' => System( ECALL)
      case '000000000001  00000 000 00000 11100 11' => System(EBREAK)
@@ -2619,6 +2619,9 @@ string pItype(o::string, rd::reg, rs1::reg, i::bits(N)) =
 
 string pCSRtype(o::string, rd::reg, rs1::reg, csr::creg) =
     instr(o) : " " : reg(rd) : ", " : reg(rs1) : ", " : csrName(csr)
+
+string pCSRItype(o::string, rd::reg, i::bits(N), csr::creg) =
+    instr(o) : " " : reg(rd) : ", " : imm(i) : ", " : csrName(csr)
 
 string pStype(o::string, rs1::reg, rs2::reg, i::bits(N)) =
     instr(o) : " " : reg(rs1) : ", " : reg(rs2) : ", " : imm(i)
@@ -2748,9 +2751,9 @@ string instructionToString(i::instruction) =
      case System( CSRRW(rd, rs1, csr))      => pCSRtype("CSRRW",  rd, rs1, csr)
      case System( CSRRS(rd, rs1, csr))      => pCSRtype("CSRRS",  rd, rs1, csr)
      case System( CSRRC(rd, rs1, csr))      => pCSRtype("CSRRC",  rd, rs1, csr)
-     case System(CSRRWI(rd, rs1, csr))      => pCSRtype("CSRRWI", rd, rs1, csr)
-     case System(CSRRSI(rd, rs1, csr))      => pCSRtype("CSRRSI", rd, rs1, csr)
-     case System(CSRRCI(rd, rs1, csr))      => pCSRtype("CSRRCI", rd, rs1, csr)
+     case System(CSRRWI(rd, imm, csr))      => pCSRItype("CSRRWI", rd, imm, csr)
+     case System(CSRRSI(rd, imm, csr))      => pCSRItype("CSRRSI", rd, imm, csr)
+     case System(CSRRCI(rd, imm, csr))      => pCSRItype("CSRRCI", rd, imm, csr)
 
      case UnknownInstruction                => pN0type("UNKNOWN")
    }
@@ -2889,9 +2892,9 @@ word Encode(i::instruction) =
      case System( CSRRW(rd, rs1, csr))      =>  Itype(opc(0x1C), 1, rd, rs1, csr)
      case System( CSRRS(rd, rs1, csr))      =>  Itype(opc(0x1C), 2, rd, rs1, csr)
      case System( CSRRC(rd, rs1, csr))      =>  Itype(opc(0x1C), 3, rd, rs1, csr)
-     case System(CSRRWI(rd, rs1, csr))      =>  Itype(opc(0x1C), 5, rd, rs1, csr)
-     case System(CSRRSI(rd, rs1, csr))      =>  Itype(opc(0x1C), 6, rd, rs1, csr)
-     case System(CSRRCI(rd, rs1, csr))      =>  Itype(opc(0x1C), 7, rd, rs1, csr)
+     case System(CSRRWI(rd, imm, csr))      =>  Itype(opc(0x1C), 5, rd, imm, csr)
+     case System(CSRRSI(rd, imm, csr))      =>  Itype(opc(0x1C), 6, rd, imm, csr)
+     case System(CSRRCI(rd, imm, csr))      =>  Itype(opc(0x1C), 7, rd, imm, csr)
 
      case UnknownInstruction                => 0
    }
