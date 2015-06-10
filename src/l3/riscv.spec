@@ -1389,16 +1389,17 @@ define ArithI > ADDIW(rd::reg, rs1::reg, imm::imm12) =
 -- SLTI  rd, rs1, imm
 -----------------------------------
 define ArithI > SLTI(rd::reg, rs1::reg, imm::imm12) =
-    writeRD(rd, [GPR(rs1) < SignExtend(imm)])
+{ v1 = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else GPR(rs1)
+; writeRD(rd, [v1 < SignExtend(imm)])
+}
 
 -----------------------------------
 -- SLTIU rd, rs1, imm
 -----------------------------------
 define ArithI > SLTIU(rd::reg, rs1::reg, imm::imm12) =
-    writeRD(rd, [GPR(rs1) <+ SignExtend(imm)])
-
--- NOTE: RISCV ANDI/ORI/XORI use sign-extended 12-bit immediates,
--- unlike zero-extended 16-bit immediates in MIPS.
+{ v1 = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else GPR(rs1)
+; writeRD(rd, [v1 <+ SignExtend(imm)])
+}
 
 -----------------------------------
 -- ANDI  rd, rs1, imm
@@ -1419,9 +1420,6 @@ define ArithI > XORI(rd::reg, rs1::reg, imm::imm12) =
     writeRD(rd, GPR(rs1) ?? SignExtend(imm))
 
 
--- NOTE: RISCV SSLI/SRLI/SRAI use zero-extended 32-bit results, unlike
--- sign-extended results in MIPS.
-
 -----------------------------------
 -- SLLI  rd, rs1, imm
 -----------------------------------
@@ -1437,8 +1435,9 @@ define Shift > SLLI(rd::reg, rs1::reg, imm::bits(6)) =
 define Shift > SRLI(rd::reg, rs1::reg, imm::bits(6)) =
     if in32BitMode() and imm<5> then
         signalException(Illegal_Instr)
-    else
-        writeRD(rd, GPR(rs1) >>+ [imm])
+    else { v1 = if in32BitMode() then ZeroExtend(GPR(rs1)<31:0>) else GPR(rs1)
+         ; writeRD(rd, v1 >>+ [imm])
+         }
 
 -----------------------------------
 -- SRAI  rd, rs1, imm
@@ -1446,8 +1445,9 @@ define Shift > SRLI(rd::reg, rs1::reg, imm::bits(6)) =
 define Shift > SRAI(rd::reg, rs1::reg, imm::bits(6)) =
     if in32BitMode() and imm<5> then
         signalException(Illegal_Instr)
-    else
-        writeRD(rd, GPR(rs1) >> [imm])
+    else { v1 = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else GPR(rs1)
+         ; writeRD(rd, v1 >> [imm])
+         }
 
 -----------------------------------
 -- SLLIW rd, rs1, imm   (RV64I)
@@ -1529,13 +1529,19 @@ define ArithR > SUBW(rd::reg, rs1::reg, rs2::reg) =
 -- SLT   rd, rs1, rs2
 -----------------------------------
 define ArithR > SLT(rd::reg, rs1::reg, rs2::reg) =
-    writeRD(rd, [GPR(rs1) < GPR(rs2)])
+{ v1  = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else GPR(rs1)
+; v2  = if in32BitMode() then SignExtend(GPR(rs2)<31:0>) else GPR(rs2)
+; writeRD(rd, [v1 < v2])
+}
 
 -----------------------------------
 -- SLTU  rd, rs1, rs2
 -----------------------------------
 define ArithR > SLTU(rd::reg, rs1::reg, rs2::reg) =
-    writeRD(rd, [GPR(rs1) <+ GPR(rs2)])
+{ v1  = if in32BitMode() then ZeroExtend(GPR(rs1)<31:0>) else GPR(rs1)
+; v2  = if in32BitMode() then ZeroExtend(GPR(rs2)<31:0>) else GPR(rs2)
+; writeRD(rd, [v1 <+ v2])
+}
 
 -----------------------------------
 -- AND   rd, rs1, rs2
@@ -1578,7 +1584,7 @@ define Shift > SLLW(rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define Shift > SRL(rd::reg, rs1::reg, rs2::reg) =
     if in32BitMode() then
-        writeRD(rd, GPR(rs1) >>+ ZeroExtend(GPR(rs2)<4:0>))
+        writeRD(rd, ZeroExtend(GPR(rs1)<31:0> >>+ ZeroExtend(GPR(rs2)<4:0>)))
     else
         writeRD(rd, GPR(rs1) >>+ ZeroExtend(GPR(rs2)<5:0>))
 
@@ -1596,7 +1602,7 @@ define Shift > SRLW(rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define Shift > SRA(rd::reg, rs1::reg, rs2::reg) =
     if in32BitMode() then
-        writeRD(rd, GPR(rs1) >> ZeroExtend(GPR(rs2)<4:0>))
+        writeRD(rd, SignExtend(GPR(rs1)<31:0> >> ZeroExtend(GPR(rs2)<4:0>)))
     else
         writeRD(rd, GPR(rs1) >> ZeroExtend(GPR(rs2)<5:0>))
 
@@ -1613,8 +1619,6 @@ define Shift > SRAW(rd::reg, rs1::reg, rs2::reg) =
 -- Multiply and Divide
 ---------------------------------------------------------------------------
 
--- Most of the MulDiv implemention assumes we are RV64.
-
 -----------------------------------
 -- MUL   rd, rs1, rs2
 -----------------------------------
@@ -1625,24 +1629,33 @@ define MulDiv > MUL(rd::reg, rs1::reg, rs2::reg) =
 -- MULH  rd, rs1, rs2
 -----------------------------------
 define MulDiv > MULH(rd::reg, rs1::reg, rs2::reg) =
-{ prod`128 = SignExtend(GPR(rs1)) * SignExtend(GPR(rs2))
-; writeRD(rd, prod<127:64>)
+{ v1  = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else GPR(rs1)
+; v2  = if in32BitMode() then SignExtend(GPR(rs2)<31:0>) else GPR(rs2)
+; prod`128 = SignExtend(v1) * SignExtend(v2)
+; res = if in32BitMode() then SignExtend(prod<63:32>) else SignExtend(prod<127:64>)
+; writeRD(rd, res)
 }
 
 -----------------------------------
 -- MULHU rd, rs1, rs2
 -----------------------------------
 define MulDiv > MULHU(rd::reg, rs1::reg, rs2::reg) =
-{ prod`128 = ZeroExtend(GPR(rs1)) * ZeroExtend(GPR(rs2))
-; writeRD(rd, prod<127:64>)
+{ v1  = if in32BitMode() then ZeroExtend(GPR(rs1)<31:0>) else ZeroExtend(GPR(rs1))
+; v2  = if in32BitMode() then ZeroExtend(GPR(rs2)<31:0>) else ZeroExtend(GPR(rs2))
+; prod`128 = v1 * v2
+; res = if in32BitMode() then ZeroExtend(prod<63:32>) else prod<127:64>
+; writeRD(rd, res)
 }
 
 -----------------------------------
 -- MULHSU rd, rs1, rs2
 -----------------------------------
 define MulDiv > MULHSU(rd::reg, rs1::reg, rs2::reg) =
-{ prod`128 = SignExtend(GPR(rs1)) * ZeroExtend(GPR(rs2))
-; writeRD(rd, prod<127:64>)
+{ v1  = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else SignExtend(GPR(rs1))
+; v2  = if in32BitMode() then ZeroExtend(GPR(rs2)<31:0>) else ZeroExtend(GPR(rs2))
+; prod`128 = v1 * v2
+; res = if in32BitMode() then SignExtend(prod<63:32>) else prod<127:64>
+; writeRD(rd, res)
 }
 
 -----------------------------------
@@ -1687,10 +1700,13 @@ define MulDiv > REM(rd::reg, rs1::reg, rs2::reg) =
 -- DIVU  rd, rs1, rs2
 -----------------------------------
 define MulDiv > DIVU(rd::reg, rs1::reg, rs2::reg) =
-    if GPR(rs2) == 0x0 then
-        writeRD(rd, SignExtend(1`1))
-    else
-        writeRD(rd, GPR(rs1) div GPR(rs2))
+{ v1 = if in32BitMode() then ZeroExtend(GPR(rs1)<31:0>) else GPR(rs1)
+; v2 = if in32BitMode() then ZeroExtend(GPR(rs2)<31:0>) else GPR(rs2)
+; if v2 == 0x0 then
+      writeRD(rd, SignExtend(1`1))
+  else
+      writeRD(rd, v1 div v2)
+}
 
 -----------------------------------
 -- REMU  rd, rs1, rs2
@@ -1791,55 +1807,73 @@ define Branch > JALR(rd::reg, rs1::reg, imm::imm12) =
 -- BEQ   rs1, rs2, offs
 -----------------------------------
 define Branch > BEQ(rs1::reg, rs2::reg, offs::imm12) =
-    if GPR(rs1) == GPR(rs2) then
-        branchTo(PC + (SignExtend(offs) << 1))
-    else
-        noBranch(PC + 4)
+{ v1 = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else GPR(rs1)
+; v2 = if in32BitMode() then SignExtend(GPR(rs2)<31:0>) else GPR(rs2)
+; if v1 == v2 then
+      branchTo(PC + (SignExtend(offs) << 1))
+  else
+      noBranch(PC + 4)
+}
 
 -----------------------------------
 -- BNE   rs1, rs2, offs
 -----------------------------------
 define Branch > BNE(rs1::reg, rs2::reg, offs::imm12) =
-    if GPR(rs1) <> GPR(rs2) then
-        branchTo(PC + (SignExtend(offs) << 1))
-    else
-        noBranch(PC + 4)
+{ v1 = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else GPR(rs1)
+; v2 = if in32BitMode() then SignExtend(GPR(rs2)<31:0>) else GPR(rs2)
+; if v1 <> v2 then
+      branchTo(PC + (SignExtend(offs) << 1))
+  else
+      noBranch(PC + 4)
+}
 
 -----------------------------------
 -- BLT   rs1, rs2, offs
 -----------------------------------
 define Branch > BLT(rs1::reg, rs2::reg, offs::imm12) =
-    if GPR(rs1) < GPR(rs2) then
-        branchTo(PC + (SignExtend(offs) << 1))
-    else
-        noBranch(PC + 4)
+{ v1 = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else GPR(rs1)
+; v2 = if in32BitMode() then SignExtend(GPR(rs2)<31:0>) else GPR(rs2)
+; if v1 < v2 then
+      branchTo(PC + (SignExtend(offs) << 1))
+  else
+      noBranch(PC + 4)
+}
 
 -----------------------------------
 -- BLTU  rs1, rs2, offs
 -----------------------------------
 define Branch > BLTU(rs1::reg, rs2::reg, offs::imm12) =
-    if GPR(rs1) <+ GPR(rs2) then
-        branchTo(PC + (SignExtend(offs) << 1))
-    else
-        noBranch(PC + 4)
+{ v1 = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else GPR(rs1)
+; v2 = if in32BitMode() then SignExtend(GPR(rs2)<31:0>) else GPR(rs2)
+; if v1 <+ v2 then
+      branchTo(PC + (SignExtend(offs) << 1))
+  else
+      noBranch(PC + 4)
+}
 
 -----------------------------------
 -- BGE   rs1, rs2, offs
 -----------------------------------
 define Branch > BGE(rs1::reg, rs2::reg, offs::imm12) =
-    if GPR(rs1) >= GPR(rs2) then
-        branchTo(PC + (SignExtend(offs) << 1))
-    else
-        noBranch(PC + 4)
+{ v1 = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else GPR(rs1)
+; v2 = if in32BitMode() then SignExtend(GPR(rs2)<31:0>) else GPR(rs2)
+; if v1 >= v2 then
+      branchTo(PC + (SignExtend(offs) << 1))
+  else
+      noBranch(PC + 4)
+}
 
 -----------------------------------
 -- BGEU  rs1, rs2, offs
 -----------------------------------
 define Branch > BGEU(rs1::reg, rs2::reg, offs::imm12) =
-    if GPR(rs1) >=+ GPR(rs2) then
-        branchTo(PC + (SignExtend(offs) << 1))
-    else
-        noBranch(PC + 4)
+{ v1 = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else GPR(rs1)
+; v2 = if in32BitMode() then SignExtend(GPR(rs2)<31:0>) else GPR(rs2)
+; if v1 >=+ v2 then
+      branchTo(PC + (SignExtend(offs) << 1))
+  else
+      noBranch(PC + 4)
+}
 
 ---------------------------------------------------------------------------
 -- Load and Store Instructions
