@@ -2945,11 +2945,16 @@ unit incrCounts() =
 unit Next =
 { clear_logs()
 
+-- XXX: Definition of instret count / cycles is not clear in the case
+-- of exceptions and traps.  For now, we don't increment them in case
+-- Fetch fails (and hence no instruction is executed).
+
 ; match Fetch()
   { case Some(w) =>
     { inst = Decode(w)
     ; mark_log(1, log_instruction(w, inst))
     ; Run(inst)
+    ; incrCounts ()
     }
     case None => nothing
   }
@@ -2967,18 +2972,13 @@ unit Next =
          else MCSR.mtohost <- 0x0   -- TODO: rest of relevant HTIF protocol
        }
 
--- XXX: Definition of instret count is not clear in the case of
--- exceptions and traps.
-
 ; match NextFetch
   { case None =>
              { PC <- PC + 4
-             ; incrCounts ()
              }
     case Some(BranchTo(addr)) =>
              { NextFetch <- None
              ; PC <- addr
-             ; incrCounts ()
              }
     case Some(Ereturn) =>
              { NextFetch <- None
