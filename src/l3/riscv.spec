@@ -367,6 +367,10 @@ register mcause :: regType
     3-0 : EC    -- Exception Code
 }
 
+-- Timers and counters are stored as deltas from their system-values
+-- at each privilege level; the hardware motivation is explained in
+-- the specification.
+
 record MachineCSR
 { mcpuid        :: mcpuid       -- information registers
   mimpid        :: mimpid
@@ -378,7 +382,7 @@ record MachineCSR
   mie           :: mie
   mtimecmp      :: regType
 
-  mtime         :: regType      -- timers and counters
+  mtime_delta   :: regType      -- time wrt global clock
 
   mscratch      :: regType      -- trap handling
   mepc          :: regType
@@ -406,7 +410,7 @@ record HypervisorCSR
   htdeleg       :: mtdeleg
   htimecmp      :: regType
 
-  htime         :: regType      -- timer
+  htime_delta   :: regType      -- time wrt to global clock
 
   hscratch      :: regType      -- trap handling
   hepc          :: regType
@@ -442,7 +446,7 @@ record SupervisorCSR
   -- sie :: sie is a projection of mie :: mie
   stimecmp      :: regType
 
-  stime         :: regType      -- timers and counters
+  stime_delta   :: regType      -- time wrt global clock
 
   sscratch      :: regType      -- trap handling
   sepc          :: regType
@@ -457,9 +461,9 @@ record SupervisorCSR
 -- User-Level CSRs
 
 record UserCSR
-{ cycle         :: regType
-  time          :: regType
-  instret       :: regType
+{ cycle_delta   :: regType      -- timers and counters wrt base values
+  time_delta    :: regType
+  instret_delta :: regType
 }
 
 -- Machine state projections
@@ -585,7 +589,12 @@ construct TransferControl
 type RegFile    = reg  -> regType
 
 declare
-{ c_gpr         :: id -> RegFile                -- general purpose registers
+{ clock         :: regType                      -- global clock and counters
+
+  c_instret     :: id -> regType                -- per-core counters
+  c_cycles      :: id -> regType
+
+  c_gpr         :: id -> RegFile                -- general purpose registers
   c_PC          :: id -> regType                -- program counter
 
   c_UCSR        :: id -> UserCSR                -- user-level CSRs
@@ -733,12 +742,12 @@ component CSRMap(csr::creg) :: regType
   value =
       match csr
       { -- user counter/timers
-        case 0xC00  => c_UCSR(procID).cycle
-        case 0xC01  => c_UCSR(procID).time
-        case 0xC02  => c_UCSR(procID).instret
-        case 0xC80  => SignExtend(c_UCSR(procID).cycle<63:32>)
-        case 0xC81  => SignExtend(c_UCSR(procID).time<63:32>)
-        case 0xC82  => SignExtend(c_UCSR(procID).instret<63:32>)
+        case 0xC00  => c_cycles(procID)  + c_UCSR(procID).cycle_delta
+        case 0xC01  => clock             + c_UCSR(procID).time_delta
+        case 0xC02  => c_instret(procID) + c_UCSR(procID).instret_delta
+        case 0xC80  => SignExtend((c_cycles(procID)  + c_UCSR(procID).cycle_delta)<63:32>)
+        case 0xC81  => SignExtend((clock             + c_UCSR(procID).time_delta)<63:32>)
+        case 0xC82  => SignExtend((c_instret(procID) + c_UCSR(procID).instret_delta)<63:32>)
 
         -- supervisor trap setup
         case 0x100  => &lift_mstatus_sstatus(c_MCSR(procID).mstatus,
@@ -748,8 +757,8 @@ component CSRMap(csr::creg) :: regType
         case 0x121  => c_SCSR(procID).stimecmp
 
         -- supervisor timer
-        case 0xD01  => c_SCSR(procID).stime
-        case 0xD81  => SignExtend(c_SCSR(procID).stime<63:32>)
+        case 0xD01  => clock + c_SCSR(procID).stime_delta
+        case 0xD81  => SignExtend((clock + c_SCSR(procID).stime_delta)<63:32>)
 
         -- supervisor trap handling
         case 0x140  => c_SCSR(procID).sscratch
@@ -763,12 +772,12 @@ component CSRMap(csr::creg) :: regType
         case 0x181  => c_SCSR(procID).sasid
 
         -- supervisor read/write shadow of user read-only registers
-        case 0x900  => c_UCSR(procID).cycle
-        case 0x901  => c_UCSR(procID).time
-        case 0x902  => c_UCSR(procID).instret
-        case 0x980  => SignExtend(c_UCSR(procID).cycle<63:32>)
-        case 0x981  => SignExtend(c_UCSR(procID).time<63:32>)
-        case 0x982  => SignExtend(c_UCSR(procID).instret<63:32>)
+        case 0x900  => c_cycles(procID)  + c_UCSR(procID).cycle_delta
+        case 0x901  => clock             + c_UCSR(procID).time_delta
+        case 0x902  => c_instret(procID) + c_UCSR(procID).instret_delta
+        case 0x980  => SignExtend((c_cycles(procID)  + c_UCSR(procID).cycle_delta)<63:32>)
+        case 0x981  => SignExtend((clock             + c_UCSR(procID).time_delta)<63:32>)
+        case 0x982  => SignExtend((c_instret(procID) + c_UCSR(procID).instret_delta)<63:32>)
 
         -- hypervisor trap setup
         case 0x200  => c_HCSR(procID).&hstatus
@@ -777,8 +786,8 @@ component CSRMap(csr::creg) :: regType
         case 0x221  => c_HCSR(procID).htimecmp
 
         -- hypervisor timer
-        case 0xE01  => c_HCSR(procID).htime
-        case 0xE81  => SignExtend(c_HCSR(procID).htime<63:32>)
+        case 0xE01  => clock + c_HCSR(procID).htime_delta
+        case 0xE81  => SignExtend((clock + c_HCSR(procID).htime_delta)<63:32>)
 
         -- hypervisor trap handling
         case 0x240  => c_HCSR(procID).hscratch
@@ -787,8 +796,8 @@ component CSRMap(csr::creg) :: regType
         case 0x243  => c_HCSR(procID).hbadaddr
 
         -- hypervisor read/write shadow of supervisor read-only registers
-        case 0xA01  => c_SCSR(procID).stime
-        case 0xA81  => SignExtend(c_SCSR(procID).stime<63:32>)
+        case 0xA01  => clock + c_SCSR(procID).stime_delta
+        case 0xA81  => SignExtend((clock + c_SCSR(procID).stime_delta)<63:32>)
 
         -- machine information registers
         case 0xF00  => c_MCSR(procID).&mcpuid
@@ -803,8 +812,8 @@ component CSRMap(csr::creg) :: regType
         case 0x321  => c_MCSR(procID).mtimecmp
 
         -- machine timers and counters
-        case 0x701  => c_MCSR(procID).mtime
-        case 0x741  => SignExtend(c_MCSR(procID).mtime<63:32>)
+        case 0x701  => clock + c_MCSR(procID).mtime_delta
+        case 0x741  => SignExtend((clock + c_MCSR(procID).mtime_delta)<63:32>)
 
         -- machine trap handling
         case 0x340  => c_MCSR(procID).mscratch
@@ -822,8 +831,8 @@ component CSRMap(csr::creg) :: regType
         case 0x385  => c_MCSR(procID).mdbound
 
         -- machine read-write shadow of hypervisor read-only registers
-        case 0xB01  => c_HCSR(procID).htime
-        case 0xB81  => SignExtend(c_HCSR(procID).htime<63:32>)
+        case 0xB01  => clock + c_HCSR(procID).htime_delta
+        case 0xB81  => SignExtend((clock + c_HCSR(procID).htime_delta)<63:32>)
 
         -- machine host-target interface (berkeley extension)
         case 0x780  => c_MCSR(procID).mtohost
@@ -863,13 +872,13 @@ component CSRMap(csr::creg) :: regType
         case 0x181  => c_SCSR(procID).sasid             <- value
 
         -- supervisor read/write shadow of user read-only registers
-        case 0x900  => c_UCSR(procID).cycle             <- value
-        case 0x901  => c_UCSR(procID).time              <- value
-        case 0x902  => c_UCSR(procID).instret           <- value
-        case 0x980  => c_UCSR(procID).cycle<63:32>      <- value<31:0>
-        case 0x981  => c_UCSR(procID).time<63:32>       <- value<31:0>
-        case 0x982  => c_UCSR(procID).instret<63:32>    <- value<31:0>
+        case 0x900  => c_UCSR(procID).cycle_delta       <- value - c_cycles(procID)
+        case 0x901  => c_UCSR(procID).time_delta        <- value - clock
+        case 0x902  => c_UCSR(procID).instret_delta     <- value - c_instret(procID)
 
+        case 0x980  => c_UCSR(procID).cycle_delta<63:32>    <- (value<31:0> - c_cycles(procID)<63:32>)  << 32
+        case 0x981  => c_UCSR(procID).time_delta<63:32>     <- (value<31:0> - clock<63:32>)             << 32
+        case 0x982  => c_UCSR(procID).instret_delta<63:32>  <- (value<31:0> - c_instret(procID)<63:32>) << 32
 
         -- TODO: hypervisor register write support
 
@@ -886,8 +895,8 @@ component CSRMap(csr::creg) :: regType
         }
 
         -- machine timers and counters
-        case 0x701  => c_MCSR(procID).mtime             <- value
-        case 0x741  => c_MCSR(procID).mtime<63:32>      <- value<31:0>
+        case 0x701  => c_MCSR(procID).mtime_delta           <- value - clock
+        case 0x741  => c_MCSR(procID).mtime_delta<63:32>    <- (value<31:0> - clock<63:32>) << 32
 
         -- machine trap handling
         case 0x340  => c_MCSR(procID).mscratch          <- value
@@ -905,8 +914,8 @@ component CSRMap(csr::creg) :: regType
         case 0x385  => c_MCSR(procID).mdbound           <- value
 
         -- machine read-write shadow of hypervisor read-only registers
-        case 0xB01  => c_HCSR(procID).htime             <- value
-        case 0xB81  => c_HCSR(procID).htime<63:32>      <- value<31:0>
+        case 0xB01  => c_HCSR(procID).htime_delta           <- value - clock
+        case 0xB81  => c_HCSR(procID).htime_delta<63:32>    <- (value<31:0> - clock<63:32>) << 32
 
         -- machine host-target interface (berkeley extension)
         -- TODO: XXX: set I/O pending bit
@@ -1019,6 +1028,7 @@ string csrName(csr::creg) =
 
       case _      => "UNKNOWN"
     }
+
 ---------------------------------------------------------------------------
 -- Tandem verification
 ---------------------------------------------------------------------------
@@ -1191,15 +1201,6 @@ unit setupException(e::ExceptionType) =
        ; NextFetch      <- Some(SynchronousTrap(Machine))
        }
 }
-{- SCSR.cause.Int   <- false
-; SCSR.cause.EC     <- excCode(e)
-; SCSR.epc          <- PC
-; SCSR.status.PS    <- SCSR.status.S
-; SCSR.status.S     <- true
-; SCSR.status.PEI   <- SCSR.status.EI
-; SCSR.status.EI    <- false
-; Exception         <- Some(e)
--}
 
 unit signalAddressException(e::ExceptionType, vAddr::vAddr) =
 { MCSR.mbadaddr     <- vAddr
@@ -2937,9 +2938,9 @@ nat exitCode() =
     [ExitCode]::nat
 
 unit incrCounts() =
-{ UCSR.cycle    <- UCSR.cycle + 1
-; UCSR.time     <- UCSR.time + 1
-; UCSR.instret  <- UCSR.instret + 1
+{ clock             <- clock + 1
+; c_cycles(procID)  <- c_cycles(procID)  + 1
+; c_instret(procID) <- c_instret(procID) + 1
 }
 
 unit Next =
@@ -2972,6 +2973,9 @@ unit Next =
          else MCSR.mtohost <- 0x0   -- TODO: rest of relevant HTIF protocol
        }
 
+-- We only check for interrupts and timers only when there are no
+-- synchronous traps or privilege changes.
+
 ; match NextFetch
   { case None =>
              { PC <- PC + 4
@@ -2981,7 +2985,7 @@ unit Next =
              ; PC <- addr
              }
     case Some(Ereturn) =>
-             { NextFetch <- None
+             { NextFetch    <- None
              ; from = curPrivilege()
              ; PC           <- curEPC()
              ; MCSR.mstatus <- popPrivilegeStack(MCSR.mstatus)
