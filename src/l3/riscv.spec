@@ -299,6 +299,18 @@ bool isBadAddressException(e::ExceptionType) =
       case _           => false
     }
 
+-- On Env-Calls, we resume by ERET to the next instruction.  On all
+-- other exceptions, we resume the exception-raising instruction
+-- itself.
+regType next_PC_Offset(e::ExceptionType) =
+    match e
+    { case UMode_Env_Call
+      or   SMode_Env_Call
+      or   HMode_Env_Call
+      or   MMode_Env_Call   => 4
+      case _                => 0
+    }
+
 ---------------------------------------------------------------------------
 -- Control and Status Registers (CSRs)
 ---------------------------------------------------------------------------
@@ -573,8 +585,13 @@ mstatus pushPrivilegeStack (mst::mstatus, p::Privilege) =
 -- Instruction fetch control
 ---------------------------------------------------------------------------
 
+record SynchronousTrap
+{ trap            :: ExceptionType
+  badaddr         :: vAddr option
+}
+
 construct TransferControl
-{ SynchronousTrap :: Privilege
+{ Trap            :: SynchronousTrap
 , BranchTo        :: regType
 , Ereturn
 , Mrts
@@ -1177,40 +1194,23 @@ string hex32(x::word)  = PadLeft(#"0", 8, [x])
 string hex64(x::dword) = PadLeft(#"0", 16, [x])
 
 ---------------------------------------------------------------------------
--- Exceptions
+-- Exception and Interrupt processing
 ---------------------------------------------------------------------------
 
-unit setupException(e::ExceptionType) =
-{ mark_log(2, log_exc(e))
-; ReserveLoad        <- None        -- cancel any load reservation
-; MCSR.mstatus.MMPRV <- false       -- unset MPRV in each privilege level
-; SCSR.sstatus.SMPRV <- false
+-- Signalled exceptions are recorded as traps.
 
-; exc                 = excCode(e)
-; if MCSR.mtdeleg.Exc_deleg<[exc]::nat>
-  then { SCSR.scause.EC     <- exc
-       ; SCSR.scause.Int    <- false
-       ; SCSR.sepc          <- PC
-         -- TODO: set SCSR.sbadaddr
-       ; NextFetch          <- Some(SynchronousTrap(Supervisor))
-       }
-  else { MCSR.mcause.EC     <- exc
-       ; MCSR.mcause.Int    <- false
-       ; MCSR.mepc          <- PC
-       -- TODO: set MCSR.mbadaddr
-       ; NextFetch      <- Some(SynchronousTrap(Machine))
-       }
-}
-
-unit signalAddressException(e::ExceptionType, vAddr::vAddr) =
-{ MCSR.mbadaddr     <- vAddr
-; setupException(e)
+unit setTrap(e::ExceptionType, badaddr::vAddr option) =
+{ var t
+; t.trap        <- e
+; t.badaddr     <- badaddr
+; NextFetch     <- Some(Trap(t))
 }
 
 unit signalException(e::ExceptionType) =
-{ MCSR.mbadaddr     <- 0
-; setupException(e)
-}
+    setTrap(e, None)
+
+unit signalAddressException(e::ExceptionType, vAddr::vAddr) =
+    setTrap(e, Some(vAddr))
 
 unit signalEnvCall() =
 { e = match privilege(MCSR.mstatus.MPRV)
@@ -1219,7 +1219,116 @@ unit signalEnvCall() =
         case Hypervisor => HMode_Env_Call
         case Machine    => MMode_Env_Call
       }
-; setupException(e)
+; signalException(e)
+}
+
+-- Delegation logic.
+
+Privilege checkDelegation(p::Privilege, intr::bool, ec::exc_code) =
+{ e = [ec]::nat
+; match p
+  { case User       => #INTERNAL_ERROR("No user-level delegation!")
+    case Supervisor => #INTERNAL_ERROR("No supervisor-level delegation!")
+    case Hypervisor =>
+         if ((intr and HCSR.htdeleg.Intr_deleg<e>)
+             or (!intr and HCSR.htdeleg.Exc_deleg<e>))
+         then Supervisor else p
+    case Machine    =>
+         if ((intr and MCSR.mtdeleg.Intr_deleg<e>)
+             or (!intr and MCSR.mtdeleg.Exc_deleg<e>))
+         then checkDelegation(Hypervisor, intr, ec) else p
+  }
+}
+
+-- The spec doesn't define a priority between a timer interrupt and a
+-- software interrupt.  We treat timer interrupts at higher priority.
+
+(Interrupt * Privilege) option checkPrivInterrupt(p::Privilege) =
+{ ip = MCSR.mip
+; ie = MCSR.mie
+; match p
+  { case User       => #INTERNAL_ERROR("No user-level interrupts!")
+    case Supervisor => if ip.STIP and ie.STIE then Some(Timer, p)
+                       else if ip.SSIP and ie.SSIE then Some(Software, p)
+                       else None
+    case Hypervisor => if ip.HTIP and ie.HTIE then Some(Timer, p)
+                       else if ip.HSIP and ie.HSIE then Some(Software, p)
+                       else None
+    case Machine    => if ip.MTIP and ie.MTIE then Some(Timer, p)
+                       else if ip.MSIP and ie.MTIE then Some(Software, p)
+                       else None
+  }
+}
+
+-- The spec says:
+--
+--    When a hart is running in a given privileged mode, interrupts
+--    for higher privileged modes are always enabled while interrupts
+--    for lower privileged modes are always disabled.
+--    Higher-privilege-level code can use separate per-interrupt
+--    enable bits to disable selected interrupts before ceding control
+--    to a lower privilege level.
+--
+-- This is critical to ensuring the monotonically non-decreasing
+-- privilege levels in the privilege stack.
+
+(Interrupt * Privilege) option checkInterrupts() =
+{ curIE = MCSR.mstatus.MIE  -- if interrupts are enabled at curPrivilege
+; p     = curPrivilege()
+; match p
+  { case User or Supervisor =>
+         match checkPrivInterrupt(Machine)
+         { case None =>
+           { match checkPrivInterrupt(Hypervisor)
+             { case None => -- Always check S-mode interrupts in U-mode
+                            if p == User or curIE
+                            then checkPrivInterrupt(Supervisor) else None
+               case i    => i
+             }
+           }
+           case i    => i
+         }
+    case Hypervisor =>
+         match checkPrivInterrupt(Machine)
+         { case None => if curIE then checkPrivInterrupt(Hypervisor) else None
+           case i    => i
+         }
+    case Machine =>
+         if curIE then checkPrivInterrupt(Machine) else None
+  }
+}
+
+unit takeTrap(intr::bool, ec::exc_code, epc::regType, toPriv::Privilege) =
+{ fromP = curPrivilege()
+; mark_log(0, ["trapping from " : privName(fromP)
+               : " to " : privName(toPriv)])
+
+; ReserveLoad        <- None        -- cancel any load reservation
+; MCSR.mstatus.MMPRV <- false       -- unset MPRV in each privilege level
+; SCSR.sstatus.SMPRV <- false
+
+; MCSR.mstatus <- pushPrivilegeStack(MCSR.mstatus, toPriv)
+
+; match toPriv
+  { case User       => #INTERNAL_ERROR("Illegal trap to U-mode")
+    case Supervisor =>
+    { SCSR.scause.Int   <- intr
+    ; SCSR.scause.EC    <- ec
+    ; SCSR.sepc         <- epc
+    -- TODO: set SCSR.sbadaddr
+
+    ; PC    <- SCSR.stvec
+    }
+    case Hypervisor => #INTERNAL_ERROR("Unsupported trap to H-mode")
+    case Machine    =>
+    { MCSR.mcause.Int   <- intr
+    ; MCSR.mcause.EC    <- ec
+    ; MCSR.mepc         <- epc
+    -- TODO: set MCSR.mbadaddr
+
+    ; PC    <- MCSR.mtvec + ([privLevel(fromP)]::regType) * 0x40
+    }
+  }
 }
 
 ---------------------------------------------------------------------------
@@ -2387,6 +2496,11 @@ define System > MRTS   =
 ; NextFetch         <- Some(Mrts)
 }
 
+-----------------------------------
+-- WFI
+-----------------------------------
+define System > WFI    = nothing
+
 -- Control and Status Registers
 
 bool checkCSROp(csr::imm12, rs1::reg, a::accessType) =
@@ -2603,6 +2717,9 @@ instruction Decode(w::word) =
      case '000100000000  00000 000 00000 11100 11' => System(  ERET)
 
      case '001100000101  00000 000 00000 11100 11' => System( MRTS)
+
+     case '000100000010  00000 000 00000 11100 11' => System(  WFI)
+
      -- unsupported instructions
      case _                                        => UnknownInstruction
    }
@@ -2765,6 +2882,8 @@ string instructionToString(i::instruction) =
 
      case System(  MRTS)                    => pN0type("MRTS")
 
+     case System(   WFI)                    => pN0type("WFI")
+
      case System( CSRRW(rd, rs1, csr))      => pCSRtype("CSRRW",  rd, rs1, csr)
      case System( CSRRS(rd, rs1, csr))      => pCSRtype("CSRRS",  rd, rs1, csr)
      case System( CSRRC(rd, rs1, csr))      => pCSRtype("CSRRC",  rd, rs1, csr)
@@ -2906,6 +3025,7 @@ word Encode(i::instruction) =
      case System(EBREAK)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x001)
      case System(  ERET)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x100)
      case System(  MRTS)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x305)
+     case System(   WFI)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x102)
 
      case System( CSRRW(rd, rs1, csr))      =>  Itype(opc(0x1C), 1, rd, rs1, csr)
      case System( CSRRS(rd, rs1, csr))      =>  Itype(opc(0x1C), 2, rd, rs1, csr)
@@ -2943,22 +3063,19 @@ unit incrCounts() =
 ; c_instret(procID) <- c_instret(procID) + 1
 }
 
+unit checkTimers () =
+{ when clock > MCSR.mtimecmp + MCSR.mtime_delta
+  do MCSR.mip.MTIP <- true
+; when clock > SCSR.stimecmp + SCSR.stime_delta
+  do MCSR.mip.STIP <- true
+}
+
 unit Next =
 { clear_logs()
 
 -- XXX: Definition of instret count / cycles is not clear in the case
 -- of exceptions and traps.  For now, we don't increment them in case
 -- Fetch fails (and hence no instruction is executed).
-
-; match Fetch()
-  { case Some(w) =>
-    { inst = Decode(w)
-    ; mark_log(1, log_instruction(w, inst))
-    ; Run(inst)
-    ; incrCounts ()
-    }
-    case None => nothing
-  }
 
 -- Handle the char i/o section of the Berkeley HTIF protocol
 -- following cissrStandalone.c.
@@ -2973,18 +3090,29 @@ unit Next =
          else MCSR.mtohost <- 0x0   -- TODO: rest of relevant HTIF protocol
        }
 
--- We only check for interrupts and timers only when there are no
--- synchronous traps or privilege changes.
+; match Fetch()
+  { case Some(w) =>
+    { inst = Decode(w)
+    ; mark_log(1, log_instruction(w, inst))
+    ; Run(inst)
+    ; incrCounts ()
+    ; checkTimers ()
+    }
+    case None => nothing
+  }
 
-; match NextFetch
-  { case None =>
+; match NextFetch, checkInterrupts()
+  { case None, None =>
              { PC <- PC + 4
              }
-    case Some(BranchTo(addr)) =>
+    case None, Some (i, p) =>
+             { takeTrap(true, interruptIndex(i), PC + 4, p)
+             }
+    case Some(BranchTo(addr)), _ =>
              { NextFetch <- None
              ; PC <- addr
              }
-    case Some(Ereturn) =>
+    case Some(Ereturn), _ =>
              { NextFetch    <- None
              ; from = curPrivilege()
              ; PC           <- curEPC()
@@ -2993,21 +3121,12 @@ unit Next =
              ; mark_log(0, ["exception return from " : privName(from)
                             : " to " : privName(to)])
              }
-    case Some(SynchronousTrap(toP)) =>
+    case Some(Trap(t)), _ =>
              { NextFetch    <- None
-             ; fromP        = curPrivilege()
-             ; mark_log(0, ["trapping from " : privName(fromP)
-                            : " to " : privName(toP)])
-             ; MCSR.mstatus <- pushPrivilegeStack(MCSR.mstatus, toP)
-             ; PC           <- match toP
-                               { case User       => #INTERNAL_ERROR("Illegal trap to U-mode")
-                                 case Supervisor => SCSR.stvec
-                                 case Machine    => (MCSR.mtvec
-                                                     + ([privLevel(fromP)]::regType) * 0x40)
-                                 case Hypervisor => #INTERNAL_ERROR("H-mode not implemented")
-                               }
+             -- We currently don't implement delegation, so always trap to M-mode.
+             ; takeTrap(false, excCode(t.trap), PC, Machine)
              }
-    case Some(Mrts) =>
+    case Some(Mrts), _ =>
              { NextFetch    <- None
              ; PC           <- SCSR.stvec
              }
