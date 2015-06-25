@@ -648,7 +648,7 @@ component gpr(n::reg) :: regType
 
 component PC :: regType
 { value        = c_PC(procID)
-  assign value = c_PC(procID) <- value
+  assign value = c_PC(procID) <- value && SignExtend('100')
 }
 
 component UCSR :: UserCSR
