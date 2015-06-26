@@ -1214,7 +1214,7 @@ unit signalException(e::ExceptionType) =
 }
 
 unit signalAddressException(e::ExceptionType, vAddr::vAddr) =
-{ mark_log(2, "signalling address exception " : excName(e))
+{ mark_log(2, "signalling address exception " : excName(e) : " at " : [vAddr])
 ; setTrap(e, Some(vAddr))
 }
 
@@ -1470,17 +1470,6 @@ unit branchTo(newPC::regType) =
 
 unit noBranch(nextPC::regType) =
     Delta.addr <- nextPC
-
---------------------------------------------------
--- Instruction fetch
---------------------------------------------------
-
-word option Fetch() =
-{ pc    = PC
-; inst  = readInst(pc)
-; setupDelta(pc, inst)
-; Some(inst)
-}
 
 ---------------------------------------------------------------------------
 -- Integer Computational Instructions
@@ -2593,7 +2582,35 @@ define System > CSRRCI(rd::reg, zimm::reg, csr::imm12) =
 define UnknownInstruction =
    signalException(Illegal_Instr)
 
+-----------------------------------
+-- Internal pseudo-instructions
+-----------------------------------
+
+-- The argument is the value from the PC.
+
+define Internal > FETCH_MISALIGNED(addr::regType) =
+   signalAddressException(Fetch_Misaligned, [addr])
+
+define Internal > FETCH_FAULT(addr::regType) =
+   signalAddressException(Fetch_Fault, [addr])
+
 define Run
+
+--------------------------------------------------
+-- Instruction fetch
+--------------------------------------------------
+
+construct FetchResult
+{ F_Error   :: instruction
+, F_Result  :: word
+}
+
+FetchResult Fetch() =
+{ pc    = PC
+; instw = readInst(pc)
+; setupDelta(pc, instw)
+; F_Result(instw)
+}
 
 ---------------------------------------------------------------------------
 -- Instruction decoding
@@ -2898,6 +2915,9 @@ string instructionToString(i::instruction) =
      case System(CSRRCI(rd, imm, csr))      => pCSRItype("CSRRCI", rd, imm, csr)
 
      case UnknownInstruction                => pN0type("UNKNOWN")
+
+     case Internal(FETCH_MISALIGNED(_))     => pN0type("FETCH_MISALIGNED")
+     case Internal(FETCH_FAULT(_))          => pN0type("FETCH_FAULT")
    }
 
 
@@ -3041,6 +3061,9 @@ word Encode(i::instruction) =
      case System(CSRRCI(rd, imm, csr))      =>  Itype(opc(0x1C), 7, rd, imm, csr)
 
      case UnknownInstruction                => 0
+
+     case Internal(FETCH_MISALIGNED(_))     => 0
+     case Internal(FETCH_FAULT(_))          => 0
    }
 
 ---------------------------------------------------------------------------
@@ -3095,14 +3118,19 @@ unit Next =
        }
 
 ; match Fetch()
-  { case Some(w) =>
+  { case F_Result(w) =>
     { inst = Decode(w)
     ; mark_log(1, log_instruction(w, inst))
     ; Run(inst)
     ; incrCounts ()
     ; checkTimers ()
     }
-    case None => nothing
+    case F_Error(inst)  =>
+    { mark_log(1, log_instruction([0::word], inst))
+    ; Run(inst)
+    -- XXX: see above.  It's not clear if counters are incremented for
+    -- fetch faults.
+    }
   }
 
 ; match NextFetch, checkInterrupts()
