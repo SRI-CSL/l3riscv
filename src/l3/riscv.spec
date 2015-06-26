@@ -1200,17 +1200,21 @@ string hex64(x::dword) = PadLeft(#"0", 16, [x])
 -- Signalled exceptions are recorded as traps.
 
 unit setTrap(e::ExceptionType, badaddr::vAddr option) =
-{ var t
-; t.trap        <- e
-; t.badaddr     <- badaddr
-; NextFetch     <- Some(Trap(t))
+{ var trap
+; trap.trap        <- e
+; trap.badaddr     <- badaddr
+; NextFetch        <- Some(Trap(trap))
 }
 
 unit signalException(e::ExceptionType) =
-    setTrap(e, None)
+{ mark_log(2, "signalling exception " : excName(e))
+; setTrap(e, None)
+}
 
 unit signalAddressException(e::ExceptionType, vAddr::vAddr) =
-    setTrap(e, Some(vAddr))
+{ mark_log(2, "signalling address exception " : excName(e))
+; setTrap(e, Some(vAddr))
+}
 
 unit signalEnvCall() =
 { e = match privilege(MCSR.mstatus.MPRV)
@@ -1301,7 +1305,9 @@ Privilege checkDelegation(p::Privilege, intr::bool, ec::exc_code) =
 unit takeTrap(intr::bool, ec::exc_code, epc::regType, toPriv::Privilege) =
 { fromP = curPrivilege()
 ; mark_log(0, ["trapping from " : privName(fromP)
-               : " to " : privName(toPriv)])
+               : " to " : privName(toPriv)
+               : (if intr then " [intr] " else " [exc] ")
+               : [[ec]::nat] ])
 
 ; ReserveLoad        <- None        -- cancel any load reservation
 ; MCSR.mstatus.MMPRV <- false       -- unset MPRV in each privilege level
@@ -3058,15 +3064,20 @@ nat exitCode() =
     [ExitCode]::nat
 
 unit incrCounts() =
-{ clock             <- clock + 1
-; c_cycles(procID)  <- c_cycles(procID)  + 1
+{ c_cycles(procID)  <- c_cycles(procID)  + 1
 ; c_instret(procID) <- c_instret(procID) + 1
+; clock             <- clock + 1
 }
 
 unit checkTimers () =
-{ when clock > MCSR.mtimecmp + MCSR.mtime_delta
+{ -- The timer implementation here is arbitrary. The factor for the
+  -- wall-clock below was only chosen to get most of the rv*-pt-*
+  -- tests to pass.  However, this factor causes the rv64ui-p-timer
+  -- test to take a very long time.
+  wall_clock = c_instret(procID) div 20
+; when (wall_clock > MCSR.mtimecmp + MCSR.mtime_delta)
   do MCSR.mip.MTIP <- true
-; when clock > SCSR.stimecmp + SCSR.stime_delta
+; when wall_clock > SCSR.stimecmp + SCSR.stime_delta
   do MCSR.mip.STIP <- true
 }
 
