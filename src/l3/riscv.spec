@@ -2524,9 +2524,6 @@ define System > CSRRW(rd::reg, rs1::reg, csr::imm12) =
          }
     else signalException(Illegal_Instr)
 
--- TODO: use a more general write function that can mask unwritable bits
--- TODO: handle special case of no side-effects when GPR(rs1) == 0
-
 -----------------------------------
 -- CSRRS  rd, rs1, imm
 -----------------------------------
