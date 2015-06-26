@@ -45,6 +45,7 @@ construct fetchType  { Instruction, Data }
 
 type regType  = dword
 type vAddr    = dword
+type pAddr    = dword
 
 type pAddrIdx = bits(61)        -- raw index into physical memory
                                 -- arranged in 8-byte blocks
@@ -1390,17 +1391,17 @@ unit dumpRegs() =
 ---------------------------------------------------------------------------
 
 declare MEM :: pAddrIdx -> regType -- raw memory, laid out in blocks
-                                   -- of (|vAddr|-|pAddrIdx|) bits
+                                   -- of (|pAddr|-|pAddrIdx|) bits
 
 unit initMem(val::regType) =
     MEM <- InitMap(val)
 
-regType readData(vAddr::vAddr) =
-{ pAddrIdx = vAddr<63:3>
-; align    = [vAddr<2:0>]::nat
+regType readData(pAddr::pAddr) =
+{ pAddrIdx = pAddr<63:3>
+; align    = [pAddr<2:0>]::nat
 ; if align == 0   -- aligned read
   then { data = MEM(pAddrIdx)
-       ; mark_log(2, log_r_mem(pAddrIdx,   vAddr, data))
+       ; mark_log(2, log_r_mem(pAddrIdx,   pAddr, data))
        ; data
        }
   -- TODO: optimize this to avoid the second read when possible
@@ -1408,36 +1409,36 @@ regType readData(vAddr::vAddr) =
        ; dw1   = MEM(pAddrIdx+1)
        ; ddw   = (dw1 : dw0) >> (align * 8)
        ; data  = ddw<63:0>
-       ; mark_log(2, log_r_mem(pAddrIdx,   vAddr, dw0))
-       ; mark_log(2, log_r_mem(pAddrIdx+1, vAddr, dw1))
-       ; mark_log(2, log_r_mem(pAddrIdx,   vAddr, data))
+       ; mark_log(2, log_r_mem(pAddrIdx,   pAddr, dw0))
+       ; mark_log(2, log_r_mem(pAddrIdx+1, pAddr, dw1))
+       ; mark_log(2, log_r_mem(pAddrIdx,   pAddr, data))
        ; data
        }
 }
 
-unit writeData(vAddr::vAddr, data::regType, mask::regType, nbytes::nat) =
+unit writeData(pAddr::pAddr, data::regType, mask::regType, nbytes::nat) =
 { val      = data && mask
-; pAddrIdx = vAddr<63:3>
-; align    = [vAddr<2:0>] :: nat
+; pAddrIdx = pAddr<63:3>
+; align    = [pAddr<2:0>] :: nat
 ; old      = MEM(pAddrIdx)
 
-; mark_log(2, log_r_mem(pAddrIdx, vAddr, old))
+; mark_log(2, log_r_mem(pAddrIdx, pAddr, old))
 
 -- The cissr verifier expects to see the full register width, as
 -- opposed to the masked value for non-full-width stores.  It should
 -- accept either, ideally.
 ; Delta.data2 <- data
-; Delta.addr  <- vAddr
+; Delta.addr  <- pAddr
 
 ; if align == 0     -- aligned write
   then { new = old && ~mask || val
        ; MEM(pAddrIdx) <- new
-       ; mark_log(2, log_w_mem_mask(pAddrIdx, vAddr, mask, data, old, new))
+       ; mark_log(2, log_w_mem_mask(pAddrIdx, pAddr, mask, data, old, new))
        }
   else { if align + nbytes <= Size(mask) div 8 -- write to single regType-sized block
          then { new = old && ~(mask << (align * 8)) || val << (align * 8)
               ; MEM(pAddrIdx) <- new
-              ; mark_log(2, log_w_mem_mask_misaligned(pAddrIdx, vAddr, mask, data, align, old, new))
+              ; mark_log(2, log_w_mem_mask_misaligned(pAddrIdx, pAddr, mask, data, align, old, new))
               }
          else { mark_log(0, "XXX write of size " : [nbytes] : " with align " : [align] : " and size " : [nbytes])
               ; #INTERNAL_ERROR("unimplemented cross-block write")
@@ -1445,18 +1446,18 @@ unit writeData(vAddr::vAddr, data::regType, mask::regType, nbytes::nat) =
        }
 }
 
-word readInst(vAddr::vAddr) =
-{ pAddrIdx = vAddr<63:3>
+word readInst(pAddr::pAddr) =
+{ pAddrIdx = pAddr<63:3>
 ; data     = MEM(pAddrIdx)
-; mark_log(2, log_r_mem(pAddrIdx, vAddr, data))
-; if vAddr<2> then data<63:32> else data<31:0>
+; mark_log(2, log_r_mem(pAddrIdx, pAddr, data))
+; if pAddr<2> then data<63:32> else data<31:0>
 }
 
 -- helper used to preload memory contents
-unit writeMem(vAddr::vAddr, data::regType) =
-{ pAddrIdx = vAddr<63:3>
+unit writeMem(pAddr::pAddr, data::regType) =
+{ pAddrIdx = pAddr<63:3>
 ; MEM(pAddrIdx) <- data
-; mark_log(2, log_w_mem(pAddrIdx, vAddr, data))
+; mark_log(2, log_w_mem(pAddrIdx, pAddr, data))
 }
 
 ---------------------------------------------------------------------------
