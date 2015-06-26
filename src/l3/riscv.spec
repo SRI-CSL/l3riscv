@@ -45,7 +45,9 @@ construct fetchType  { Instruction, Data }
 
 type regType  = dword
 type vAddr    = dword
-type pAddr    = bits(61)        -- internal accesses are 8-byte aligned
+
+type pAddrIdx = bits(61)        -- raw index into physical memory
+                                -- arranged in 8-byte blocks
 
 -- Miscellaneous
 exception UNDEFINED         :: string
@@ -1147,9 +1149,9 @@ string reg(r::reg) =
 string log_w_gpr(r::reg, data::regType) =
     "Reg " : reg(r) : " (" : [[r]::nat] : ") <- 0x" : PadLeft(#"0", 16, [data])
 
-string log_w_mem_mask(pAddr::pAddr, vAddr::vAddr, mask::regType, data::regType,
+string log_w_mem_mask(pAddrIdx::pAddrIdx, vAddr::vAddr, mask::regType, data::regType,
                       old::regType, new::regType) =
-    "MEM[0x" : PadLeft(#"0", 10, [pAddr]) :
+    "MEM[0x" : PadLeft(#"0", 10, [pAddrIdx]) :
     "/" : PadLeft(#"0", 10, [vAddr]) :
     "] <- (data: 0x" : PadLeft(#"0", 16, [data]) :
     ", mask: 0x" : PadLeft(#"0", 16, [mask]) :
@@ -1157,9 +1159,9 @@ string log_w_mem_mask(pAddr::pAddr, vAddr::vAddr, mask::regType, data::regType,
     ", new: 0x"  : PadLeft(#"0", 16, [new]) :
     ")"
 
-string log_w_mem_mask_misaligned(pAddr::pAddr, vAddr::vAddr, mask::regType, data::regType,
+string log_w_mem_mask_misaligned(pAddrIdx::pAddrIdx, vAddr::vAddr, mask::regType, data::regType,
                                  align::nat, old::regType, new::regType) =
-    "MEM[0x" : PadLeft(#"0", 10, [pAddr]) :
+    "MEM[0x" : PadLeft(#"0", 10, [pAddrIdx]) :
     "/" : PadLeft(#"0", 10, [vAddr]) :
     "/ misaligned@" : [align] :
     "] <- (data: 0x" : PadLeft(#"0", 16, [data]) :
@@ -1168,13 +1170,13 @@ string log_w_mem_mask_misaligned(pAddr::pAddr, vAddr::vAddr, mask::regType, data
     ", new: 0x"  : PadLeft(#"0", 16, [new]) :
     ")"
 
-string log_w_mem(pAddr::pAddr, vAddr::vAddr, data::regType) =
-    "MEM[0x" : PadLeft(#"0", 10, [pAddr]) :
+string log_w_mem(pAddrIdx::pAddrIdx, vAddr::vAddr, data::regType) =
+    "MEM[0x" : PadLeft(#"0", 10, [pAddrIdx]) :
     "/" : PadLeft(#"0", 10, [vAddr]) :
     "] <- (data: 0x" : PadLeft(#"0", 16, [data]) : ")"
 
-string log_r_mem(pAddr::pAddr, vAddr::vAddr, data::regType) =
-    "data <- MEM[0x" : PadLeft(#"0", 10, [pAddr]) :
+string log_r_mem(pAddrIdx::pAddrIdx, vAddr::vAddr, data::regType) =
+    "data <- MEM[0x" : PadLeft(#"0", 10, [pAddrIdx]) :
     "/" : PadLeft(#"0", 10, [vAddr]) :
     "]: 0x" : PadLeft(#"0", 16, [data])
 
@@ -1387,38 +1389,39 @@ unit dumpRegs() =
 -- Memory access
 ---------------------------------------------------------------------------
 
-declare VMEM :: pAddr -> regType -- user-space virtual memory,
-                                 -- aligned at 2^(|vAddr| - |pAddr|)
+declare MEM :: pAddrIdx -> regType -- raw memory, laid out in blocks
+                                   -- of (|vAddr|-|pAddrIdx|) bits
 
-unit initVMEM = VMEM <- InitMap(0x0)
+unit initMem(val::regType) =
+    MEM <- InitMap(val)
 
 regType readData(vAddr::vAddr) =
-{ pAddr = vAddr<63:3>
-; align = [vAddr<2:0>]::nat
+{ pAddrIdx = vAddr<63:3>
+; align    = [vAddr<2:0>]::nat
 ; if align == 0   -- aligned read
-  then { data = VMEM(pAddr)
-       ; mark_log(2, log_r_mem(pAddr,   vAddr, data))
+  then { data = MEM(pAddrIdx)
+       ; mark_log(2, log_r_mem(pAddrIdx,   vAddr, data))
        ; data
        }
   -- TODO: optimize this to avoid the second read when possible
-  else { dw0   = VMEM(pAddr)
-       ; dw1   = VMEM(pAddr+1)
+  else { dw0   = MEM(pAddrIdx)
+       ; dw1   = MEM(pAddrIdx+1)
        ; ddw   = (dw1 : dw0) >> (align * 8)
        ; data  = ddw<63:0>
-       ; mark_log(2, log_r_mem(pAddr,   vAddr, dw0))
-       ; mark_log(2, log_r_mem(pAddr+1, vAddr, dw1))
-       ; mark_log(2, log_r_mem(pAddr,   vAddr, data))
+       ; mark_log(2, log_r_mem(pAddrIdx,   vAddr, dw0))
+       ; mark_log(2, log_r_mem(pAddrIdx+1, vAddr, dw1))
+       ; mark_log(2, log_r_mem(pAddrIdx,   vAddr, data))
        ; data
        }
 }
 
 unit writeData(vAddr::vAddr, data::regType, mask::regType, nbytes::nat) =
-{ val   = data && mask
-; pAddr = vAddr<63:3>
-; align = [vAddr<2:0>] :: nat
-; old   = VMEM(pAddr)
+{ val      = data && mask
+; pAddrIdx = vAddr<63:3>
+; align    = [vAddr<2:0>] :: nat
+; old      = MEM(pAddrIdx)
 
-; mark_log(2, log_r_mem(pAddr, vAddr, old))
+; mark_log(2, log_r_mem(pAddrIdx, vAddr, old))
 
 -- The cissr verifier expects to see the full register width, as
 -- opposed to the masked value for non-full-width stores.  It should
@@ -1428,13 +1431,13 @@ unit writeData(vAddr::vAddr, data::regType, mask::regType, nbytes::nat) =
 
 ; if align == 0     -- aligned write
   then { new = old && ~mask || val
-       ; VMEM(pAddr) <- new
-       ; mark_log(2, log_w_mem_mask(pAddr, vAddr, mask, data, old, new))
+       ; MEM(pAddrIdx) <- new
+       ; mark_log(2, log_w_mem_mask(pAddrIdx, vAddr, mask, data, old, new))
        }
   else { if align + nbytes <= Size(mask) div 8 -- write to single regType-sized block
          then { new = old && ~(mask << (align * 8)) || val << (align * 8)
-              ; VMEM(pAddr) <- new
-              ; mark_log(2, log_w_mem_mask_misaligned(pAddr, vAddr, mask, data, align, old, new))
+              ; MEM(pAddrIdx) <- new
+              ; mark_log(2, log_w_mem_mask_misaligned(pAddrIdx, vAddr, mask, data, align, old, new))
               }
          else { mark_log(0, "XXX write of size " : [nbytes] : " with align " : [align] : " and size " : [nbytes])
               ; #INTERNAL_ERROR("unimplemented cross-block write")
@@ -1443,17 +1446,17 @@ unit writeData(vAddr::vAddr, data::regType, mask::regType, nbytes::nat) =
 }
 
 word readInst(vAddr::vAddr) =
-{ pAddr = vAddr<63:3>
-; data  = VMEM(pAddr)
-; mark_log(2, log_r_mem(pAddr, vAddr, data))
+{ pAddrIdx = vAddr<63:3>
+; data     = MEM(pAddrIdx)
+; mark_log(2, log_r_mem(pAddrIdx, vAddr, data))
 ; if vAddr<2> then data<63:32> else data<31:0>
 }
 
 -- helper used to preload memory contents
 unit writeMem(vAddr::vAddr, data::regType) =
-{ pAddr = vAddr<63:3>
-; VMEM(pAddr) <- data
-; mark_log(2, log_w_mem(pAddr, vAddr, data))
+{ pAddrIdx = vAddr<63:3>
+; MEM(pAddrIdx) <- data
+; mark_log(2, log_w_mem(pAddrIdx, vAddr, data))
 }
 
 ---------------------------------------------------------------------------
@@ -3039,13 +3042,6 @@ word Encode(i::instruction) =
 
      case UnknownInstruction                => 0
    }
-
-
----------------------------------------------------------------------------
--- RISCV memory
----------------------------------------------------------------------------
-
-unit initMem(val::regType) = VMEM <- InitMap(val)
 
 ---------------------------------------------------------------------------
 -- The next state function
