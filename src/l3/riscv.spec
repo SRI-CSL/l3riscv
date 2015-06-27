@@ -1305,7 +1305,7 @@ Privilege checkDelegation(p::Privilege, intr::bool, ec::exc_code) =
   }
 }
 
-unit takeTrap(intr::bool, ec::exc_code, epc::regType, toPriv::Privilege) =
+unit takeTrap(intr::bool, ec::exc_code, epc::regType, badaddr::vAddr option, toPriv::Privilege) =
 { fromP = curPrivilege()
 ; mark_log(0, ["trapping from " : privName(fromP)
                : " to " : privName(toPriv)
@@ -1324,7 +1324,8 @@ unit takeTrap(intr::bool, ec::exc_code, epc::regType, toPriv::Privilege) =
     { SCSR.scause.Int   <- intr
     ; SCSR.scause.EC    <- ec
     ; SCSR.sepc         <- epc
-    -- TODO: set SCSR.sbadaddr
+    ; when IsSome(badaddr) do
+        SCSR.sbadaddr   <- ValOf(badaddr)
 
     ; PC    <- SCSR.stvec
     }
@@ -1333,7 +1334,8 @@ unit takeTrap(intr::bool, ec::exc_code, epc::regType, toPriv::Privilege) =
     { MCSR.mcause.Int   <- intr
     ; MCSR.mcause.EC    <- ec
     ; MCSR.mepc         <- epc
-    -- TODO: set MCSR.mbadaddr
+    ; when IsSome(badaddr) do
+        MCSR.mbadaddr   <- ValOf(badaddr)
 
     ; PC    <- MCSR.mtvec + ([privLevel(fromP)]::regType) * 0x40
     }
@@ -3250,7 +3252,7 @@ unit Next =
              { PC <- PC + 4
              }
     case None, Some (i, p) =>
-             { takeTrap(true, interruptIndex(i), PC + 4, p)
+             { takeTrap(true, interruptIndex(i), PC + 4, None, p)
              }
     case Some(BranchTo(addr)), _ =>
              { NextFetch <- None
@@ -3268,7 +3270,7 @@ unit Next =
     case Some(Trap(t)), _ =>
              { NextFetch    <- None
              -- We currently don't implement delegation, so always trap to M-mode.
-             ; takeTrap(false, excCode(t.trap), PC, Machine)
+             ; takeTrap(false, excCode(t.trap), PC, t.badaddr, Machine)
              }
     case Some(Mrts), _ =>
              { NextFetch    <- None
