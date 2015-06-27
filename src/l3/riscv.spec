@@ -1387,7 +1387,7 @@ unit dumpRegs() =
 }
 
 ---------------------------------------------------------------------------
--- Memory access
+-- Raw memory access
 ---------------------------------------------------------------------------
 
 declare MEM :: pAddrIdx -> regType -- raw memory, laid out in blocks
@@ -1396,7 +1396,7 @@ declare MEM :: pAddrIdx -> regType -- raw memory, laid out in blocks
 unit initMem(val::regType) =
     MEM <- InitMap(val)
 
-regType readData(pAddr::pAddr) =
+regType rawReadData(pAddr::pAddr) =
 { pAddrIdx = pAddr<63:3>
 ; align    = [pAddr<2:0>]::nat
 ; if align == 0   -- aligned read
@@ -1416,7 +1416,7 @@ regType readData(pAddr::pAddr) =
        }
 }
 
-unit writeData(pAddr::pAddr, data::regType, mask::regType, nbytes::nat) =
+unit rawWriteData(pAddr::pAddr, data::regType, mask::regType, nbytes::nat) =
 { val      = data && mask
 ; pAddrIdx = pAddr<63:3>
 ; align    = [pAddr<2:0>] :: nat
@@ -1446,7 +1446,7 @@ unit writeData(pAddr::pAddr, data::regType, mask::regType, nbytes::nat) =
        }
 }
 
-word readInst(pAddr::pAddr) =
+word rawReadInst(pAddr::pAddr) =
 { pAddrIdx = pAddr<63:3>
 ; data     = MEM(pAddrIdx)
 ; mark_log(2, log_r_mem(pAddrIdx, pAddr, data))
@@ -1454,11 +1454,18 @@ word readInst(pAddr::pAddr) =
 }
 
 -- helper used to preload memory contents
-unit writeMem(pAddr::pAddr, data::regType) =
+unit rawWriteMem(pAddr::pAddr, data::regType) =
 { pAddrIdx = pAddr<63:3>
 ; MEM(pAddrIdx) <- data
 ; mark_log(2, log_w_mem(pAddrIdx, pAddr, data))
 }
+
+---------------------------------------------------------------------------
+-- Address Translation
+---------------------------------------------------------------------------
+
+pAddr option translateAddr(vAddr::regType) =
+    Some(vAddr)
 
 ---------------------------------------------------------------------------
 -- Control Flow
@@ -1992,10 +1999,14 @@ define Branch > BGEU(rs1::reg, rs2::reg, offs::imm12) =
 -- LW    rd, rs1, offs
 -----------------------------------
 define Load > LW(rd::reg, rs1::reg, offs::imm12) =
-{ addr = GPR(rs1) + SignExtend(offs)
-; val  = SignExtend(readData(addr)<31:0>)
-; GPR(rd) <- val
-; recordLoad(addr, val)
+{ vAddr = GPR(rs1) + SignExtend(offs)
+; match translateAddr(vAddr)
+  { case Some(pAddr) => { val       = SignExtend(rawReadData(pAddr)<31:0>)
+                        ; GPR(rd)  <- val
+                        ; recordLoad(vAddr, val)
+                        }
+    case None        => signalAddressException(Load_Fault, vAddr)
+  }
 }
 
 -----------------------------------
@@ -2004,10 +2015,14 @@ define Load > LW(rd::reg, rs1::reg, offs::imm12) =
 define Load > LWU(rd::reg, rs1::reg, offs::imm12) =
 { if in32BitMode() then
       signalException(Illegal_Instr)
-  else { addr = GPR(rs1) + SignExtend(offs)
-       ; val  = ZeroExtend(readData(addr)<31:0>)
-       ; GPR(rd) <- val
-       ; recordLoad(addr, val)
+  else { vAddr = GPR(rs1) + SignExtend(offs)
+       ; match translateAddr(vAddr)
+         { case Some(pAddr) => { val        = ZeroExtend(rawReadData(pAddr)<31:0>)
+                               ; GPR(rd)   <- val
+                               ; recordLoad(vAddr, val)
+                               }
+           case None        => signalAddressException(Load_Fault, vAddr)
+         }
        }
 }
 
@@ -2015,40 +2030,56 @@ define Load > LWU(rd::reg, rs1::reg, offs::imm12) =
 -- LH    rd, rs1, offs
 -----------------------------------
 define Load > LH(rd::reg, rs1::reg, offs::imm12) =
-{ addr = GPR(rs1) + SignExtend(offs)
-; val  = SignExtend(readData(addr)<15:0>)
-; GPR(rd) <- val
-; recordLoad(addr, val)
+{ vAddr = GPR(rs1) + SignExtend(offs)
+; match translateAddr(vAddr)
+  { case Some(pAddr) => { val       = SignExtend(rawReadData(pAddr)<15:0>)
+                        ; GPR(rd)  <- val
+                        ; recordLoad(vAddr, val)
+                        }
+    case None        => signalAddressException(Load_Fault, vAddr)
+  }
 }
 
 -----------------------------------
 -- LHU   rd, rs1, offs
 -----------------------------------
 define Load > LHU(rd::reg, rs1::reg, offs::imm12) =
-{ addr = GPR(rs1) + SignExtend(offs)
-; val  = ZeroExtend(readData(addr)<15:0>)
-; GPR(rd) <- val
-; recordLoad(addr, val)
+{ vAddr = GPR(rs1) + SignExtend(offs)
+; match translateAddr(vAddr)
+  { case Some(pAddr) => { val       = ZeroExtend(rawReadData(pAddr)<15:0>)
+                        ; GPR(rd)  <- val
+                        ; recordLoad(vAddr, val)
+                        }
+    case None        => signalAddressException(Load_Fault, vAddr)
+  }
 }
 
 -----------------------------------
 -- LB    rd, rs1, offs
 -----------------------------------
 define Load > LB(rd::reg, rs1::reg, offs::imm12) =
-{ addr = GPR(rs1) + SignExtend(offs)
-; val  = SignExtend(readData(addr)<7:0>)
-; GPR(rd) <- val
-; recordLoad(addr, val)
+{ vAddr = GPR(rs1) + SignExtend(offs)
+; match translateAddr(vAddr)
+  { case Some(pAddr) => { val       = SignExtend(rawReadData(pAddr)<7:0>)
+                        ; GPR(rd)  <- val
+                        ; recordLoad(vAddr, val)
+                        }
+    case None        => signalAddressException(Load_Fault, vAddr)
+  }
 }
 
 -----------------------------------
 -- LBU   rd, rs1, offs
 -----------------------------------
 define Load > LBU(rd::reg, rs1::reg, offs::imm12) =
-{ addr = GPR(rs1) + SignExtend(offs)
-; val  = ZeroExtend(readData(addr)<7:0>)
-; GPR(rd) <- val
-; recordLoad(addr, val)
+{ vAddr = GPR(rs1) + SignExtend(offs)
+; match translateAddr(vAddr)
+  { case Some(pAddr) => { val       = ZeroExtend(rawReadData(pAddr)<7:0>)
+                        ; GPR(rd)  <- val
+                        ; recordLoad(vAddr, val)
+                        }
+    case None        => signalAddressException(Load_Fault, vAddr)
+  }
 }
 
 -----------------------------------
@@ -2057,40 +2088,56 @@ define Load > LBU(rd::reg, rs1::reg, offs::imm12) =
 define Load > LD(rd::reg, rs1::reg, offs::imm12) =
     if in32BitMode() then
         signalException(Illegal_Instr)
-    else { addr = GPR(rs1) + SignExtend(offs)
-         ; val  = readData(addr)
-         ; GPR(rd) <- val
-         ; recordLoad(addr, val)
+    else { vAddr = GPR(rs1) + SignExtend(offs)
+         ; match translateAddr(vAddr)
+           { case Some(pAddr) => { val      = rawReadData(pAddr)
+                                 ; GPR(rd) <- val
+                                 ; recordLoad(vAddr, val)
+                                 }
+             case None        => signalAddressException(Load_Fault, vAddr)
+           }
          }
 
 -----------------------------------
 -- SW    rs1, rs2, offs
 -----------------------------------
 define Store > SW(rs1::reg, rs2::reg, offs::imm12) =
-{ addr = GPR(rs1) + SignExtend(offs)
-; mask = 0xFFFF_FFFF
-; data = GPR(rs2)
-; writeData(addr, data, mask, 4)
+{ vAddr = GPR(rs1) + SignExtend(offs)
+; match translateAddr(vAddr)
+  { case Some(pAddr) => { mask = 0xFFFF_FFFF
+                        ; data = GPR(rs2)
+                        ; rawWriteData(pAddr, data, mask, 4)
+                        }
+    case None        => signalAddressException(Store_Fault, vAddr)
+  }
 }
 
 -----------------------------------
 -- SH    rs1, rs2, offs
 -----------------------------------
 define Store > SH(rs1::reg, rs2::reg, offs::imm12) =
-{ addr = GPR(rs1) + SignExtend(offs)
-; mask = 0xFFFF
-; data = GPR(rs2)
-; writeData(addr, data, mask, 2)
+{ vAddr = GPR(rs1) + SignExtend(offs)
+; match translateAddr(vAddr)
+  { case Some(pAddr) => { mask = 0xFFFF
+                        ; data = GPR(rs2)
+                        ; rawWriteData(pAddr, data, mask, 2)
+                        }
+    case None        => signalAddressException(Store_Fault, vAddr)
+  }
 }
 
 -----------------------------------
 -- SB    rs1, rs2, offs
 -----------------------------------
 define Store > SB(rs1::reg, rs2::reg, offs::imm12) =
-{ addr = GPR(rs1) + SignExtend(offs)
-; mask = 0xFF
-; data = GPR(rs2)
-; writeData(addr, data, mask, 1)
+{ vAddr = GPR(rs1) + SignExtend(offs)
+; match translateAddr(vAddr)
+  { case Some(pAddr) => { mask = 0xFF
+                        ; data = GPR(rs2)
+                        ; rawWriteData(pAddr, data, mask, 1)
+                        }
+    case None        => signalAddressException(Store_Fault, vAddr)
+  }
 }
 
 -----------------------------------
@@ -2099,9 +2146,13 @@ define Store > SB(rs1::reg, rs2::reg, offs::imm12) =
 define Store > SD(rs1::reg, rs2::reg, offs::imm12) =
     if in32BitMode() then
         signalException(Illegal_Instr)
-    else { addr = GPR(rs1) + SignExtend(offs)
-         ; data = GPR(rs2)
-         ; writeData(addr, data, SignExtend('1'), 8)
+    else { vAddr = GPR(rs1) + SignExtend(offs)
+         ; match translateAddr(vAddr)
+           { case Some(pAddr) => { data = GPR(rs2)
+                                 ; rawWriteData(pAddr, data, SignExtend('1'), 8)
+                                 }
+             case None        => signalAddressException(Store_Fault, vAddr)
+           }
          }
 
 ---------------------------------------------------------------------------
@@ -2153,15 +2204,18 @@ define AMO > SC_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 
 define AMO > AMOSWAP_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ addr = GPR(rs1)
-; if addr<1:0> != 0 then
-      signalException(Store_Misaligned)             -- XXX: fix exc name
-  else { memv = SignExtend(readData(addr)<31:0>)
-       ; data = GPR(rs2)
-       ; GPR(rd) <- memv
-       ; mask = 0xFFFF_FFFF
-       ; writeData(addr, data, mask, 4)
-       ; recordLoad(addr, memv)
+{ vAddr = GPR(rs1)
+; if vAddr<1:0> != 0 then
+      signalAddressException(Store_Misaligned, vAddr)
+  else match translateAddr(vAddr)
+       { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
+                             ; data = GPR(rs2)
+                             ; GPR(rd) <- memv
+                             ; mask = 0xFFFF_FFFF
+                             ; rawWriteData(pAddr, data, mask, 4)
+                             ; recordLoad(vAddr, memv)
+                             }
+         case None        => signalAddressException(Store_Fault, vAddr)
        }
 }
 
@@ -2170,14 +2224,17 @@ define AMO > AMOSWAP_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 
 define AMO > AMOSWAP_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ addr = GPR(rs1)
-; if addr<2:0> != 0 then
-      signalException(Store_Misaligned)             -- XXX: fix exc name
-  else { memv = readData(addr)
-       ; data = GPR(rs2)
-       ; GPR(rd) <- memv
-       ; writeData(addr, data, SignExtend('1'), 8)
-       ; recordLoad(addr, memv)
+{ vAddr = GPR(rs1)
+; if vAddr<2:0> != 0 then
+      signalAddressException(Store_Misaligned, vAddr)
+  else match translateAddr(vAddr)
+       { case Some(pAddr) => { memv = rawReadData(pAddr)
+                             ; data = GPR(rs2)
+                             ; GPR(rd) <- memv
+                             ; rawWriteData(pAddr, data, SignExtend('1'), 8)
+                             ; recordLoad(vAddr, memv)
+                             }
+         case None        => signalAddressException(Store_Fault, vAddr)
        }
 }
 
@@ -2186,16 +2243,19 @@ define AMO > AMOSWAP_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 
 define AMO > AMOADD_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ addr = GPR(rs1)
-; if addr<1:0> != 0 then
-      signalException(Store_Misaligned)             -- XXX: fix exc name
-  else { memv = SignExtend(readData(addr)<31:0>)
-       ; data = GPR(rs2)
-       ; GPR(rd) <- memv
-       ; val  = data + memv
-       ; mask = 0xFFFF_FFFF
-       ; writeData(addr, val, mask, 4)
-       ; recordLoad(addr, memv)
+{ vAddr = GPR(rs1)
+; if vAddr<1:0> != 0 then
+      signalAddressException(Store_Misaligned, vAddr)
+  else match translateAddr(vAddr)
+       { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
+                             ; data = GPR(rs2)
+                             ; GPR(rd) <- memv
+                             ; val  = data + memv
+                             ; mask = 0xFFFF_FFFF
+                             ; rawWriteData(pAddr, val, mask, 4)
+                             ; recordLoad(vAddr, memv)
+                             }
+         case None        => signalAddressException(Store_Fault, vAddr)
        }
 }
 
@@ -2204,15 +2264,18 @@ define AMO > AMOADD_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 
 define AMO > AMOADD_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ addr = GPR(rs1)
-; if addr<2:0> != 0 then
-      signalException(Store_Misaligned)             -- XXX: fix exc name
-  else { memv = readData(addr)
-       ; data = GPR(rs2)
-       ; GPR(rd) <- memv
-       ; val  = data + memv
-       ; writeData(addr, val, SignExtend('1'), 8)
-       ; recordLoad(addr, memv)
+{ vAddr = GPR(rs1)
+; if vAddr<2:0> != 0 then
+      signalAddressException(Store_Misaligned, vAddr)
+  else match translateAddr(vAddr)
+       { case Some(pAddr) => { memv = rawReadData(pAddr)
+                             ; data = GPR(rs2)
+                             ; GPR(rd) <- memv
+                             ; val  = data + memv
+                             ; rawWriteData(pAddr, val, SignExtend('1'), 8)
+                             ; recordLoad(vAddr, memv)
+                             }
+         case None        => signalAddressException(Store_Fault, vAddr)
        }
 }
 
@@ -2221,16 +2284,19 @@ define AMO > AMOADD_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 
 define AMO > AMOXOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ addr = GPR(rs1)
-; if addr<1:0> != 0 then
-      signalException(Store_Misaligned)             -- XXX: fix exc name
-  else { memv = SignExtend(readData(addr)<31:0>)
-       ; data = GPR(rs2)
-       ; GPR(rd) <- memv
-       ; val  = data ?? memv
-       ; mask = 0xFFFF_FFFF
-       ; writeData(addr, val, mask, 4)
-       ; recordLoad(addr, memv)
+{ vAddr = GPR(rs1)
+; if vAddr<1:0> != 0 then
+      signalAddressException(Store_Misaligned, vAddr)
+  else match translateAddr(vAddr)
+       { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
+                             ; data = GPR(rs2)
+                             ; GPR(rd) <- memv
+                             ; val  = data ?? memv
+                             ; mask = 0xFFFF_FFFF
+                             ; rawWriteData(pAddr, val, mask, 4)
+                             ; recordLoad(vAddr, memv)
+                             }
+         case None        => signalAddressException(Store_Fault, vAddr)
        }
 }
 
@@ -2239,15 +2305,18 @@ define AMO > AMOXOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 
 define AMO > AMOXOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ addr = GPR(rs1)
-; if addr<2:0> != 0 then
-      signalException(Store_Misaligned)             -- XXX: fix exc name
-  else { memv = readData(addr)
-       ; data = GPR(rs2)
-       ; GPR(rd) <- memv
-       ; val  = data ?? memv
-       ; writeData(addr, val, SignExtend('1'), 8)
-       ; recordLoad(addr, memv)
+{ vAddr = GPR(rs1)
+; if vAddr<2:0> != 0 then
+      signalAddressException(Store_Misaligned, vAddr)
+  else match translateAddr(vAddr)
+       { case Some(pAddr) => { memv = rawReadData(pAddr)
+                             ; data = GPR(rs2)
+                             ; GPR(rd) <- memv
+                             ; val  = data ?? memv
+                             ; rawWriteData(pAddr, val, SignExtend('1'), 8)
+                             ; recordLoad(vAddr, memv)
+                             }
+         case None        => signalAddressException(Store_Fault, vAddr)
        }
 }
 
@@ -2256,16 +2325,19 @@ define AMO > AMOXOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 
 define AMO > AMOAND_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    { addr = GPR(rs1)
-; if addr<1:0> != 0 then
-      signalException(Store_Misaligned)             -- XXX: fix exc name
-  else { memv = SignExtend(readData(addr)<31:0>)
-       ; data = GPR(rs2)
-       ; GPR(rd) <- memv
-       ; val  = data && memv
-       ; mask = 0xFFFF_FFFF
-       ; writeData(addr, val, mask, 4)
-       ; recordLoad(addr, memv)
+{ vAddr = GPR(rs1)
+; if vAddr<1:0> != 0 then
+      signalAddressException(Store_Misaligned, vAddr)
+  else match translateAddr(vAddr)
+       { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
+                             ; data = GPR(rs2)
+                             ; GPR(rd) <- memv
+                             ; val  = data && memv
+                             ; mask = 0xFFFF_FFFF
+                             ; rawWriteData(pAddr, val, mask, 4)
+                             ; recordLoad(vAddr, memv)
+                             }
+         case None        => signalAddressException(Store_Fault, vAddr)
        }
 }
 
@@ -2274,15 +2346,18 @@ define AMO > AMOAND_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 
 define AMO > AMOAND_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ addr = GPR(rs1)
-; if addr<2:0> != 0 then
-      signalException(Store_Misaligned)             -- XXX: fix exc name
-  else { memv = readData(addr)
-       ; data = GPR(rs2)
-       ; GPR(rd) <- memv
-       ; val  = data && memv
-       ; writeData(addr, val, SignExtend('1'), 8)
-       ; recordLoad(addr, memv)
+{ vAddr = GPR(rs1)
+; if vAddr<2:0> != 0 then
+      signalAddressException(Store_Misaligned, vAddr)
+  else match translateAddr(vAddr)
+       { case Some(pAddr) => { memv = rawReadData(pAddr)
+                             ; data = GPR(rs2)
+                             ; GPR(rd) <- memv
+                             ; val  = data && memv
+                             ; rawWriteData(pAddr, val, SignExtend('1'), 8)
+                             ; recordLoad(vAddr, memv)
+                             }
+         case None        => signalAddressException(Store_Fault, vAddr)
        }
 }
 
@@ -2291,16 +2366,19 @@ define AMO > AMOAND_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 
 define AMO > AMOOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    { addr = GPR(rs1)
-; if addr<1:0> != 0 then
-      signalException(Store_Misaligned)             -- XXX: fix exc name
-  else { memv = SignExtend(readData(addr)<31:0>)
-       ; data = GPR(rs2)
-       ; GPR(rd) <- memv
-       ; val  = data || memv
-       ; mask = 0xFFFF_FFFF
-       ; writeData(addr, val, mask, 4)
-       ; recordLoad(addr, memv)
+{ vAddr = GPR(rs1)
+; if vAddr<1:0> != 0 then
+      signalAddressException(Store_Misaligned, vAddr)
+  else match translateAddr(vAddr)
+       { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
+                             ; data = GPR(rs2)
+                             ; GPR(rd) <- memv
+                             ; val  = data || memv
+                             ; mask = 0xFFFF_FFFF
+                             ; rawWriteData(pAddr, val, mask, 4)
+                             ; recordLoad(vAddr, memv)
+                             }
+         case None        => signalAddressException(Store_Fault, vAddr)
        }
 }
 
@@ -2309,15 +2387,18 @@ define AMO > AMOOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 
 define AMO > AMOOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ addr = GPR(rs1)
-; if addr<2:0> != 0 then
-      signalException(Store_Misaligned)             -- XXX: fix exc name
-  else { memv = readData(addr)
-       ; data = GPR(rs2)
-       ; GPR(rd) <- memv
-       ; val  = data || memv
-       ; writeData(addr, val, SignExtend('1'), 8)
-       ; recordLoad(addr, memv)
+{ vAddr = GPR(rs1)
+; if vAddr<2:0> != 0 then
+      signalAddressException(Store_Misaligned, vAddr)
+  else match translateAddr(vAddr)
+       { case Some(pAddr) => { memv = rawReadData(pAddr)
+                             ; data = GPR(rs2)
+                             ; GPR(rd) <- memv
+                             ; val  = data || memv
+                             ; rawWriteData(pAddr, val, SignExtend('1'), 8)
+                             ; recordLoad(vAddr, memv)
+                             }
+         case None        => signalAddressException(Store_Fault, vAddr)
        }
 }
 
@@ -2326,16 +2407,19 @@ define AMO > AMOOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 
 define AMO > AMOMIN_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    { addr = GPR(rs1)
-; if addr<1:0> != 0 then
-      signalException(Store_Misaligned)             -- XXX: fix exc name
-  else { memv = SignExtend(readData(addr)<31:0>)
-       ; data = GPR(rs2)
-       ; GPR(rd) <- memv
-       ; val  = SignedMin(data, memv)
-       ; mask = 0xFFFF_FFFF
-       ; writeData(addr, val, mask, 4)
-       ; recordLoad(addr, memv)
+{ vAddr = GPR(rs1)
+; if vAddr<1:0> != 0 then
+      signalAddressException(Store_Misaligned, vAddr)
+  else match translateAddr(vAddr)
+       { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
+                             ; data = GPR(rs2)
+                             ; GPR(rd) <- memv
+                             ; val  = SignedMin(data, memv)
+                             ; mask = 0xFFFF_FFFF
+                             ; rawWriteData(pAddr, val, mask, 4)
+                             ; recordLoad(vAddr, memv)
+                             }
+         case None        => signalAddressException(Store_Fault, vAddr)
        }
 }
 
@@ -2344,15 +2428,18 @@ define AMO > AMOMIN_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 
 define AMO > AMOMIN_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ addr = GPR(rs1)
-; if addr<2:0> != 0 then
-      signalException(Store_Misaligned)             -- XXX: fix exc name
-  else { memv = readData(addr)
-       ; data = GPR(rs2)
-       ; GPR(rd) <- memv
-       ; val  = SignedMin(data, memv)
-       ; writeData(addr, val, SignExtend('1'), 8)
-       ; recordLoad(addr, memv)
+{ vAddr = GPR(rs1)
+; if vAddr<2:0> != 0 then
+      signalAddressException(Store_Misaligned, vAddr)
+  else match translateAddr(vAddr)
+       { case Some(pAddr) => { memv = rawReadData(pAddr)
+                             ; data = GPR(rs2)
+                             ; GPR(rd) <- memv
+                             ; val  = SignedMin(data, memv)
+                             ; rawWriteData(pAddr, val, SignExtend('1'), 8)
+                             ; recordLoad(vAddr, memv)
+                             }
+         case None        => signalAddressException(Store_Fault, vAddr)
        }
 }
 
@@ -2361,16 +2448,19 @@ define AMO > AMOMIN_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 
 define AMO > AMOMAX_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    { addr = GPR(rs1)
-; if addr<1:0> != 0 then
-      signalException(Store_Misaligned)             -- XXX: fix exc name
-  else { memv = SignExtend(readData(addr)<31:0>)
-       ; data = GPR(rs2)
-       ; GPR(rd) <- memv
-       ; val  = SignedMax(data, memv)
-       ; mask = 0xFFFF_FFFF
-       ; writeData(addr, val, mask, 4)
-       ; recordLoad(addr, memv)
+{ vAddr = GPR(rs1)
+; if vAddr<1:0> != 0 then
+      signalAddressException(Store_Misaligned, vAddr)
+  else match translateAddr(vAddr)
+       { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
+                             ; data = GPR(rs2)
+                             ; GPR(rd) <- memv
+                             ; val  = SignedMax(data, memv)
+                             ; mask = 0xFFFF_FFFF
+                             ; rawWriteData(pAddr, val, mask, 4)
+                             ; recordLoad(vAddr, memv)
+                             }
+         case None        => signalAddressException(Store_Fault, vAddr)
        }
 }
 
@@ -2379,15 +2469,18 @@ define AMO > AMOMAX_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 
 define AMO > AMOMAX_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ addr = GPR(rs1)
-; if addr<2:0> != 0 then
-      signalException(Store_Misaligned)             -- XXX: fix exc name
-  else { memv = readData(addr)
-       ; data = GPR(rs2)
-       ; GPR(rd) <- memv
-       ; val  = SignedMax(data, memv)
-       ; writeData(addr, val, SignExtend('1'), 8)
-       ; recordLoad(addr, memv)
+{ vAddr = GPR(rs1)
+; if vAddr<2:0> != 0 then
+      signalAddressException(Store_Misaligned, vAddr)
+  else match translateAddr(vAddr)
+       { case Some(pAddr) => { memv = rawReadData(pAddr)
+                             ; data = GPR(rs2)
+                             ; GPR(rd) <- memv
+                             ; val  = SignedMax(data, memv)
+                             ; rawWriteData(pAddr, val, SignExtend('1'), 8)
+                             ; recordLoad(vAddr, memv)
+                             }
+         case None        => signalAddressException(Store_Fault, vAddr)
        }
 }
 
@@ -2396,16 +2489,19 @@ define AMO > AMOMAX_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 
 define AMO > AMOMINU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    { addr = GPR(rs1)
-; if addr<1:0> != 0 then
-      signalException(Store_Misaligned)             -- XXX: fix exc name
-  else { memv = SignExtend(readData(addr)<31:0>)
-       ; data = GPR(rs2)
-       ; GPR(rd) <- memv
-       ; val  = Min(data, memv)
-       ; mask = 0xFFFF_FFFF
-       ; writeData(addr, val, mask, 4)
-       ; recordLoad(addr, memv)
+{ vAddr = GPR(rs1)
+; if vAddr<1:0> != 0 then
+      signalAddressException(Store_Misaligned, vAddr)
+  else match translateAddr(vAddr)
+       { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
+                             ; data = GPR(rs2)
+                             ; GPR(rd) <- memv
+                             ; val  = Min(data, memv)
+                             ; mask = 0xFFFF_FFFF
+                             ; rawWriteData(pAddr, val, mask, 4)
+                             ; recordLoad(vAddr, memv)
+                             }
+         case None        => signalAddressException(Store_Fault, vAddr)
        }
 }
 
@@ -2414,15 +2510,18 @@ define AMO > AMOMINU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 
 define AMO > AMOMINU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ addr = GPR(rs1)
-; if addr<2:0> != 0 then
-      signalException(Store_Misaligned)             -- XXX: fix exc name
-  else { memv = readData(addr)
-       ; data = GPR(rs2)
-       ; GPR(rd) <- memv
-       ; val  = Min(data, memv)
-       ; writeData(addr, val, SignExtend('1'), 8)
-       ; recordLoad(addr, memv)
+{ vAddr = GPR(rs1)
+; if vAddr<2:0> != 0 then
+      signalAddressException(Store_Misaligned, vAddr)
+  else match translateAddr(vAddr)
+       { case Some(pAddr) => { memv = rawReadData(pAddr)
+                             ; data = GPR(rs2)
+                             ; GPR(rd) <- memv
+                             ; val  = Min(data, memv)
+                             ; rawWriteData(pAddr, val, SignExtend('1'), 8)
+                             ; recordLoad(vAddr, memv)
+                             }
+         case None        => signalAddressException(Store_Fault, vAddr)
        }
 }
 
@@ -2431,16 +2530,19 @@ define AMO > AMOMINU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 
 define AMO > AMOMAXU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    { addr = GPR(rs1)
-; if addr<1:0> != 0 then
-      signalException(Store_Misaligned)             -- XXX: fix exc name
-  else { memv = SignExtend(readData(addr)<31:0>)
-       ; data = GPR(rs2)
-       ; GPR(rd) <- memv
-       ; val  = Max(data, memv)
-       ; mask = 0xFFFF_FFFF
-       ; writeData(addr, val, mask, 4)
-       ; recordLoad(addr, memv)
+{ vAddr = GPR(rs1)
+; if vAddr<1:0> != 0 then
+      signalAddressException(Store_Misaligned, vAddr)
+  else match translateAddr(vAddr)
+       { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
+                             ; data = GPR(rs2)
+                             ; GPR(rd) <- memv
+                             ; val  = Max(data, memv)
+                             ; mask = 0xFFFF_FFFF
+                             ; rawWriteData(pAddr, val, mask, 4)
+                             ; recordLoad(vAddr, memv)
+                             }
+         case None        => signalAddressException(Store_Fault, vAddr)
        }
 }
 
@@ -2449,15 +2551,18 @@ define AMO > AMOMAXU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 
 define AMO > AMOMAXU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ addr = GPR(rs1)
-; if addr<2:0> != 0 then
-      signalException(Store_Misaligned)             -- XXX: fix exc name
-  else { memv = readData(addr)
-       ; data = GPR(rs2)
-       ; GPR(rd) <- memv
-       ; val  = Max(data, memv)
-       ; writeData(addr, val, SignExtend('1'), 8)
-       ; recordLoad(addr, memv)
+{ vAddr = GPR(rs1)
+; if vAddr<2:0> != 0 then
+      signalAddressException(Store_Misaligned, vAddr)
+  else match translateAddr(vAddr)
+       { case Some(pAddr) => { memv = rawReadData(pAddr)
+                             ; data = GPR(rs2)
+                             ; GPR(rd) <- memv
+                             ; val  = Max(data, memv)
+                             ; rawWriteData(pAddr, val, SignExtend('1'), 8)
+                             ; recordLoad(vAddr, memv)
+                             }
+         case None        => signalAddressException(Store_Fault, vAddr)
        }
 }
 
@@ -2607,10 +2712,16 @@ construct FetchResult
 }
 
 FetchResult Fetch() =
-{ pc    = PC
-; instw = readInst(pc)
-; setupDelta(pc, instw)
-; F_Result(instw)
+{ vPC    = PC
+; if vPC<1:0> != 0 then
+      F_Error(Internal(FETCH_MISALIGNED(vPC)))
+  else match translateAddr(vPC)
+       { case Some(pPC) => { instw = rawReadInst(pPC)
+                           ; setupDelta(vPC, instw)
+                           ; F_Result(instw)
+                           }
+         case None      => F_Error(Internal(FETCH_FAULT(vPC)))
+       }
 }
 
 ---------------------------------------------------------------------------

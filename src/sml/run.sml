@@ -68,7 +68,7 @@ fun storeVecInMemHelper vec base i =
         val bytes1  = if !be then bytes0 else rev bytes0
         val bits64  = BitsN.concat bytes1
     in  if   j < Word8Vector.length vec
-        then ( riscv.writeMem (BitsN.fromInt ((base + j), 64), bits64)
+        then ( riscv.rawWriteMem (BitsN.fromInt ((base + j), 64), bits64)
              ; storeVecInMemHelper vec base (i+1)
              )
         else
@@ -122,7 +122,7 @@ end
 fun disassemble pc range =
     if range <= 0 then ()
     else let val addr = BitsN.fromInt (IntInf.toInt pc, 64)
-             val word = riscv.readInst (addr)
+             val word = riscv.rawReadInst (addr)
              val inst = riscv.Decode word
          in print ("0x" ^ (L3.padLeftString(#"0", (10, BitsN.toHexString addr)))
                    ^ ": 0x" ^ hex32 word
