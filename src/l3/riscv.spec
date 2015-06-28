@@ -88,6 +88,7 @@ Architecture architecture(ab::arch_base) =
     { case 0          => RV32I
       case 2          => RV64I
       case 3          => RV128I
+      case _          => #INTERNAL_ERROR("Unknown architecture")
     }
 
 string archName(a::Architecture) =
@@ -161,6 +162,7 @@ VM_Mode vmType(vm::vm_mode) =
       case 10     => Sv48
       case 11     => Sv57
       case 12     => Sv64
+      case  _     => #INTERNAL_ERROR("Unknown address translation mode")
     }
 
 vm_mode vmMode(vm::VM_Mode) =
