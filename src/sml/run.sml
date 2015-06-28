@@ -186,8 +186,8 @@ fun logLoop mx i =
         val pc = riscv.Map.lookup(!riscv.c_PC, !current_core_id)
     in  riscv.instCnt := i
       ; riscv.Next ()
-      ; printLog (0)
       ; print ("\n")
+      ; printLog (0)
       ; if 1 <= !trace_level then printLog(1) else ()
       ; if 2 <= !trace_level then printLog(2) else ()
       ; if !verify then doVerify() else ()

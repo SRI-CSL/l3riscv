@@ -1523,16 +1523,22 @@ pAddr option translate64(vAddr::vAddr, ft::fetchType, ac::accessType, priv::Priv
 ; pte_addr  = ptb + pt_ofs
 ; pte       = SV_PTE(rawReadData(pte_addr))
 ; if not pte.PTE_V
-  then None
+  then { mark_log(2, "addr_translate: invalid PTE")
+       ; None
+       }
   else { if pte.PTE_T == 0 or pte.PTE_T == 1
          then { -- ptr to next level table
                 if level == 0
-                then None
+                then { mark_log(2, "last-level pt contains a pointer PTE!")
+                     ; None
+                     }
                 else translate64(vAddr, ft, ac, priv, ZeroExtend(pte.PTE_PPNi << 12), level - 1)
               }
          else { -- leaf PTE
                 if not checkPagePermission(ft, ac, priv, pte.PTE_T)
-                then None
+                then { mark_log(2, "PTE permission check failure!")
+                     ; None
+                     }
                 else { var pte_w = pte
                      -- update referenced and dirty bits
                      ; pte_w.PTE_R <- true
