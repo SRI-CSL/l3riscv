@@ -94,6 +94,11 @@ fun storeVecInMem (base, memsz, vec) =
 fun printLog (n) = List.app (fn e => print(e ^ "\n"))
                             (List.rev(riscv.Map.lookup(!riscv.log, n)))
 
+fun logLevels l =
+    if l <= !trace_level
+    then ( printLog(l) ; logLevels(l+1) )
+    else ()
+
 local
     fun readReg i = hex64 (riscv.GPR (BitsN.fromNat (i, 5)))
 in
@@ -187,9 +192,7 @@ fun logLoop mx i =
     in  riscv.instCnt := i
       ; riscv.Next ()
       ; print ("\n")
-      ; printLog (0)
-      ; if 1 <= !trace_level then printLog(1) else ()
-      ; if 2 <= !trace_level then printLog(2) else ()
+      ; logLevels (0)
       ; if !verify then doVerify() else ()
       ; if !riscv.done orelse i = mx orelse isVerifyDone ()
         then ( print ("ExitCode: " ^ Nat.toString (riscv.exitCode ()) ^ "\n")
@@ -286,10 +289,7 @@ fun doElf cycles file dis =
         else ()
 
       ; if dis
-        then ( printLog (0)
-             ; if 1 <= !trace_level then printLog(1) else ()
-             ; if 2 <= !trace_level then printLog(2) else ()
-             )
+        then logLevels (0)
         else run cycles
     end
 
