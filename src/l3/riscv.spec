@@ -1546,10 +1546,13 @@ pAddr option translate64(vAddr::vAddr, ft::fetchType, ac::accessType, priv::Priv
                      }
                 else { var pte_w = pte
                      -- update referenced and dirty bits
+                     ; old_r = pte_w.PTE_R
+                     ; old_d = pte_w.PTE_D
                      ; pte_w.PTE_R <- true
                      ; when ac == Write
                        do pte_w.PTE_D <- true
-                     ; rawWriteData(pte_addr, &pte_w, SignExtend('1'), 8)
+                     ; when old_r !=  pte_w.PTE_R or old_d !=  pte_w.PTE_D
+                       do rawWriteData(pte_addr, &pte_w, SignExtend('1'), 8)
                      -- compute translated address
                      ; ppn = if level > 0
                              then ((ZeroExtend((pte.PTE_PPNi >>+ (level * 9)) << (level * 9)))
