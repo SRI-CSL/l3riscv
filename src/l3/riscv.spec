@@ -1519,7 +1519,7 @@ bool checkPagePermission(ft::fetchType, ac::accessType, priv::Privilege, perm_ty
 pAddr option translate64(vAddr::vAddr, ft::fetchType, ac::accessType, priv::Privilege,
                          ptb::regType, level::nat) =
 { va        = SV_Vaddr(vAddr)
-; pt_ofs    = ZeroExtend((va.Sv_VPNi >>+ (level * 9))<8:0> << 3)
+; pt_ofs    = ZeroExtend((va.Sv_VPNi >>+ (level * 9))<8:0>) << 3
 ; pte_addr  = ptb + pt_ofs
 ; pte       = SV_PTE(rawReadData(pte_addr))
 ; if not pte.PTE_V
