@@ -2774,11 +2774,19 @@ define System > CSRRCI(rd::reg, zimm::reg, csr::imm12) =
          }
     else signalException(Illegal_Instr)
 
+-- Address translation cache flush
+
+-----------------------------------
+-- SFENCE.VM
+-----------------------------------
+define System > SFENCE_VM(rs1::reg) =
+    nothing
+
 -----------------------------------
 -- Unsupported instructions
 -----------------------------------
 define UnknownInstruction =
-   signalException(Illegal_Instr)
+    signalException(Illegal_Instr)
 
 -----------------------------------
 -- Internal pseudo-instructions
@@ -2787,10 +2795,10 @@ define UnknownInstruction =
 -- The argument is the value from the PC.
 
 define Internal > FETCH_MISALIGNED(addr::regType) =
-   signalAddressException(Fetch_Misaligned, [addr])
+    signalAddressException(Fetch_Misaligned, [addr])
 
 define Internal > FETCH_FAULT(addr::regType) =
-   signalAddressException(Fetch_Fault, [addr])
+    signalAddressException(Fetch_Fault, [addr])
 
 define Run
 
@@ -2942,10 +2950,10 @@ instruction Decode(w::word) =
      case '000000000000  00000 000 00000 11100 11' => System( ECALL)
      case '000000000001  00000 000 00000 11100 11' => System(EBREAK)
      case '000100000000  00000 000 00000 11100 11' => System(  ERET)
-
      case '001100000101  00000 000 00000 11100 11' => System( MRTS)
-
      case '000100000010  00000 000 00000 11100 11' => System(  WFI)
+
+     case '000100000001    rs1 000 00000 11100 11' => System(SFENCE_VM(rs1))
 
      -- unsupported instructions
      case _                                        => UnknownInstruction
@@ -3106,9 +3114,7 @@ string instructionToString(i::instruction) =
      case System( ECALL)                    => pN0type("ECALL")
      case System(EBREAK)                    => pN0type("EBREAK")
      case System(  ERET)                    => pN0type("ERET")
-
      case System(  MRTS)                    => pN0type("MRTS")
-
      case System(   WFI)                    => pN0type("WFI")
 
      case System( CSRRW(rd, rs1, csr))      => pCSRtype("CSRRW",  rd, rs1, csr)
@@ -3117,6 +3123,8 @@ string instructionToString(i::instruction) =
      case System(CSRRWI(rd, imm, csr))      => pCSRItype("CSRRWI", rd, imm, csr)
      case System(CSRRSI(rd, imm, csr))      => pCSRItype("CSRRSI", rd, imm, csr)
      case System(CSRRCI(rd, imm, csr))      => pCSRItype("CSRRCI", rd, imm, csr)
+
+     case System(SFENCE_VM(rs1))            => pN1type("SFENCE.VM", rs1)
 
      case UnknownInstruction                => pN0type("UNKNOWN")
 
@@ -3256,6 +3264,8 @@ word Encode(i::instruction) =
      case System(  ERET)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x100)
      case System(  MRTS)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x305)
      case System(   WFI)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x102)
+
+     case System(SFENCE_VM(rs1))            =>  Itype(opc(0x1C), 0, 0, rs1, 0x101)
 
      case System( CSRRW(rd, rs1, csr))      =>  Itype(opc(0x1C), 1, rd, rs1, csr)
      case System( CSRRS(rd, rs1, csr))      =>  Itype(opc(0x1C), 2, rd, rs1, csr)
