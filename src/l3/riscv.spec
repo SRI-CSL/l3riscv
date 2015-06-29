@@ -165,6 +165,12 @@ VM_Mode vmType(vm::vm_mode) =
       case  _     => #INTERNAL_ERROR("Unknown address translation mode")
     }
 
+bool isValidVM(vm::vm_mode) =
+    match vm
+    { case 0 or 1 or 2 or 8 or 9 or 10 or 11 or 12 => true
+      case _                                       => false
+    }
+
 vm_mode vmMode(vm::VM_Mode) =
     match vm
     { case Mbare  => 0
@@ -202,12 +208,20 @@ construct ExtStatus
 , Dirty
 }
 
-ext_status extStatus(e::ExtStatus) =
+ext_status ext_status(e::ExtStatus) =
     match e
     { case Off      => 0
       case Initial  => 1
       case Clean    => 2
       case Dirty    => 3
+    }
+
+ExtStatus extStatus(e::ext_status) =
+    match e
+    { case 0        => Off
+      case 1        => Initial
+      case 2        => Clean
+      case 3        => Dirty
     }
 
 string extStatusName(e::ExtStatus) =
@@ -470,8 +484,8 @@ register sie :: regType
 }
 
 record SupervisorCSR
-{ sstatus       :: sstatus      -- trap setup
-  stvec         :: regType
+{ -- sstatus :: sstatus is a projection of mstatus :: mstatus
+  stvec         :: regType      -- trap setup
   -- sie :: sie is a projection of mie :: mie
   stimecmp      :: regType
 
@@ -525,12 +539,35 @@ mie lower_sie_mie(sie::sie, mie::mie) =
 ; m
 }
 
--- We need both status registers here since some bits of status are
--- local to S-mode, while others are projections.
-sstatus lift_mstatus_sstatus(mst::mstatus, sst::sstatus) =
+mstatus update_mstatus(orig::mstatus, v::mstatus) =
+{ var mt = orig
+-- update privilege stack
+; mt.MIE   <- v.MIE
+; mt.MPRV  <- v.MPRV
+; mt.MIE1  <- v.MIE1
+; mt.MPRV1 <- v.MPRV1
+; mt.MIE2  <- v.MIE2
+; mt.MPRV2 <- v.MPRV2
+; mt.MIE3  <- v.MIE3
+; mt.MPRV3 <- v.MPRV3
+
+-- ensure a valid address translation mode
+; when isValidVM(v.VM)
+  do mt.VM <- v.VM
+; mt.MMPRV <- v.MMPRV
+
+-- Pretend we support floating-point for now, to pass riscv-tests.
+-- But ignore writes to MXS since we don't have a state extension.
+; mt.MFS   <- v.MFS
+; when extStatus(mt.MXS) == Dirty or extStatus(mt.MFS) == Dirty
+  do mt.MSD <- true
+
+; mt
+}
+
+sstatus lift_mstatus_sstatus(mst::mstatus) =
 { var st = sstatus(0)
--- local state
-; st.SMPRV  <- sst.SMPRV
+; st.SMPRV  <- mst.MMPRV
 
 -- shared state
 ; st.SSD    <- mst.MSD
@@ -540,39 +577,23 @@ sstatus lift_mstatus_sstatus(mst::mstatus, sst::sstatus) =
 -- projected state
 ; st.SPS    <- not (privilege(mst.MPRV1) == User)
 ; st.SPIE   <- mst.MIE1
-
--- conditional projections
-; st.SIE    <- if privilege(mst.MPRV) == Supervisor
-               then mst.MIE else sst.SIE
+; st.SIE    <- mst.MIE
 
 ; st
 }
 
--- A write to sstatus results in updates to both sstatus as well as
--- mstatus, so this function returns the updated versions of both
--- registers.
-sstatus * mstatus lower_sstatus_mstatus(new_sst::sstatus, old_sst::sstatus,
-                                        mst::mstatus) =
+mstatus lower_sstatus_mstatus(sst::sstatus, mst::mstatus) =
 { var mt = mstatus(&mst)
-; var st = sstatus(&new_sst)
 
--- shared state
-; mt.MSD    <- st.SSD
-; mt.MXS    <- st.SXS
-; mt.MFS    <- st.SFS
+; mt.MMPRV  <- sst.SMPRV
+; mt.MXS    <- sst.SXS
+; mt.MFS    <- sst.SFS
 
--- back-projected state
-; chk = sstatus (&new_sst ?? &old_sst)
-; when chk.SPS
-  do mt.MPRV1 <- privLevel(if new_sst.SPS then Supervisor else User)
-; when chk.SPIE
-  do mt.MIE1  <- new_sst.SPIE
+; mt.MPRV1  <- privLevel(if sst.SPS then Supervisor else User)
+; mt.MIE1   <- sst.SPIE
+; mt.MIE    <- sst.SIE
 
--- conditional back-projections
-; when chk.SIE and privilege(mst.MPRV) == Supervisor
-  do mt.MIE <- new_sst.SIE
-
-; (st, mt)
+; update_mstatus(mst, mt)
 }
 
 -- pop the privilege stack for ERET
@@ -784,8 +805,7 @@ component CSRMap(csr::creg) :: regType
         case 0xC82  => SignExtend((c_instret(procID) + c_UCSR(procID).instret_delta)<63:32>)
 
         -- supervisor trap setup
-        case 0x100  => &lift_mstatus_sstatus(c_MCSR(procID).mstatus,
-                                             c_SCSR(procID).sstatus)
+        case 0x100  => &lift_mstatus_sstatus(c_MCSR(procID).mstatus)
         case 0x101  => c_SCSR(procID).stvec
         case 0x104  => &lift_mie_sie(c_MCSR(procID).mie)
         case 0x121  => c_SCSR(procID).stimecmp
@@ -880,12 +900,9 @@ component CSRMap(csr::creg) :: regType
       { -- user counters/timers are URO
 
         -- supervisor trap setup
-        case 0x100  =>
-        { st_mt = lower_sstatus_mstatus(sstatus(value), c_SCSR(procID).sstatus,
-                                        c_MCSR(procID).mstatus)
-        ; c_SCSR(procID).sstatus <- Fst(st_mt)
-        ; c_MCSR(procID).mstatus <- Snd(st_mt)
-        }
+        case 0x100  => c_MCSR(procID).mstatus           <- lower_sstatus_mstatus(sstatus(value),
+                                                                                 c_MCSR(procID).mstatus)
+
         case 0x101  => c_SCSR(procID).stvec             <- value
         -- sie back-projects to mie
         case 0x104  => c_MCSR(procID).mie               <- lower_sie_mie(sie(value), c_MCSR(procID).mie)
@@ -919,7 +936,7 @@ component CSRMap(csr::creg) :: regType
         -- machine information registers are MRO
 
         -- machine trap setup
-        case 0x300  => c_MCSR(procID).mstatus           <- mstatus(value)
+        case 0x300  => c_MCSR(procID).mstatus           <- update_mstatus(c_MCSR(procID).mstatus, mstatus(value))
         case 0x301  => c_MCSR(procID).mtvec             <- value
         case 0x302  => c_MCSR(procID).mtdeleg           <- mtdeleg(value)
         case 0x304  => c_MCSR(procID).mie               <- mie(value)
@@ -1328,9 +1345,8 @@ unit takeTrap(intr::bool, ec::exc_code, epc::regType, badaddr::vAddr option, toP
 
 ; ReserveLoad        <- None        -- cancel any load reservation
 ; MCSR.mstatus.MMPRV <- false       -- unset MPRV in each privilege level
-; SCSR.sstatus.SMPRV <- false
 
-; MCSR.mstatus <- pushPrivilegeStack(MCSR.mstatus, toPriv)
+; MCSR.mstatus       <- pushPrivilegeStack(MCSR.mstatus, toPriv)
 
 ; match toPriv
   { case User       => #INTERNAL_ERROR("Illegal trap to U-mode")
@@ -3395,6 +3411,9 @@ unit initMachine(hartid::id) =
   MCSR.mstatus.VM   <- vmMode(Mbare)
 ; MCSR.mstatus.MPRV <- privLevel(Machine)
 ; MCSR.mstatus.MIE  <- false
+
+  -- MPRV1/MIE1 and MPRV2/MIE2 are unspecified.
+
   -- Setup hartid
 ; MCSR.mhartid      <- ZeroExtend(hartid)
   -- Initialize mtvec to lower address (other option is 0xF...FFE00)
