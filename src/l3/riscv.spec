@@ -556,9 +556,8 @@ mstatus update_mstatus(orig::mstatus, v::mstatus) =
   do mt.VM <- v.VM
 ; mt.MMPRV <- v.MMPRV
 
--- Pretend we support floating-point for now, to pass riscv-tests.
--- But ignore writes to MXS since we don't have a state extension.
-; mt.MFS   <- v.MFS
+-- ignore MFS since we don't yet have floating-point.  ignore MXS
+-- since we don't have any state extension.
 ; when extStatus(mt.MXS) == Dirty or extStatus(mt.MFS) == Dirty
   do mt.MSD <- true
 
