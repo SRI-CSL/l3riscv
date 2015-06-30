@@ -2013,23 +2013,34 @@ define MulDiv > REMUW(rd::reg, rs1::reg, rs2::reg) =
 -- Control Transfer Instructions
 ---------------------------------------------------------------------------
 
+-- XXX: Perform the check for misaligned PC here, in order to pass the
+-- ma_fetch test.  The test requires the error to be detected before
+-- rd is modified; this is not mentioned in the spec.
+
 -- Unconditional jumps
 
 -----------------------------------
 -- JAL   rd, offs
 -----------------------------------
 define Branch > JAL(rd::reg, imm::imm20) =
-{ writeRD(rd, PC + 4)
-; branchTo(PC + SignExtend(imm << 1))
+{ addr = PC + SignExtend(imm << 1)
+; if addr<1:0> != 0
+  then signalAddressException(Fetch_Misaligned, addr)
+  else { writeRD(rd, PC + 4)
+       ; branchTo(addr)
+       }
 }
 
 -----------------------------------
 -- JALR  rd, rs1, imm
 -----------------------------------
 define Branch > JALR(rd::reg, rs1::reg, imm::imm12) =
-{ temp      = GPR(rs1) + SignExtend(imm)
-; writeRD(rd, PC + 4)
-; branchTo(temp && SignExtend('10'))
+{ addr = (GPR(rs1) + SignExtend(imm)) && SignExtend('10')
+; if addr<1:0> != 0
+  then signalAddressException(Fetch_Misaligned, addr)
+  else { writeRD(rd, PC + 4)
+       ; branchTo(addr)
+       }
 }
 
 -- conditional branches
