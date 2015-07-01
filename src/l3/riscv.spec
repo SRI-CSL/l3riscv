@@ -90,7 +90,7 @@ Architecture architecture(ab::arch_base) =
     { case 0          => RV32I
       case 2          => RV64I
       case 3          => RV128I
-      case _          => #INTERNAL_ERROR("Unknown architecture")
+      case _          => #UNDEFINED("Unknown architecture: " : [[ab] :: nat])
     }
 
 string archName(a::Architecture) =
@@ -164,7 +164,7 @@ VM_Mode vmType(vm::vm_mode) =
       case 10     => Sv48
       case 11     => Sv57
       case 12     => Sv64
-      case  _     => #INTERNAL_ERROR("Unknown address translation mode")
+      case  _     => #UNDEFINED("Unknown address translation mode: " : [[vm]::nat])
     }
 
 bool isValidVM(vm::vm_mode) =
@@ -299,7 +299,7 @@ ExceptionType excType(e::exc_code) =
       case 0xA => HMode_Env_Call
       case 0xB => MMode_Env_Call
 
-      case _   => #UNDEFINED("Unknown exception")
+      case _   => #UNDEFINED("Unknown exception: " : [[e]::nat])
     }
 
 string excName(e::ExceptionType) =
@@ -893,7 +893,7 @@ component CSRMap(csr::creg) :: regType
         case 0x780  => c_MCSR(procID).mtohost
         case 0x781  => c_MCSR(procID).mfromhost
 
-        case _      => #INTERNAL_ERROR("unexpected CSR access")
+        case _      => #INTERNAL_ERROR("unexpected CSR read at " : [csr])
       }
 
   assign value =
@@ -976,7 +976,7 @@ component CSRMap(csr::creg) :: regType
         case 0x781  =>
         { c_MCSR(procID).mfromhost  <- value }
 
-        case _      => #INTERNAL_ERROR("assignment to unexpected CSR address")
+        case _      => #INTERNAL_ERROR("unexpected CSR write to " : [csr])
       }
 }
 
@@ -1263,38 +1263,38 @@ unit signalEnvCall() =
 
 -- Delegation logic.
 
-Privilege checkDelegation(p::Privilege, intr::bool, ec::exc_code) =
+Privilege checkDelegation(curPriv::Privilege, intr::bool, ec::exc_code) =
 { e = [ec]::nat
-; match p
+; match curPriv
   { case User       => #INTERNAL_ERROR("No user-level delegation!")
     case Supervisor => #INTERNAL_ERROR("No supervisor-level delegation!")
     case Hypervisor =>
          if ((intr and HCSR.htdeleg.Intr_deleg<e>)
              or (!intr and HCSR.htdeleg.Exc_deleg<e>))
-         then Supervisor else p
+         then Supervisor else curPriv
     case Machine    =>
          if ((intr and MCSR.mtdeleg.Intr_deleg<e>)
              or (!intr and MCSR.mtdeleg.Exc_deleg<e>))
-         then checkDelegation(Hypervisor, intr, ec) else p
+         then checkDelegation(Hypervisor, intr, ec) else curPriv
   }
 }
 
 -- The spec doesn't define a priority between a timer interrupt and a
 -- software interrupt.  We treat timer interrupts at higher priority.
 
-(Interrupt * Privilege) option checkPrivInterrupt(p::Privilege) =
+(Interrupt * Privilege) option checkPrivInterrupt(curPriv::Privilege) =
 { ip = MCSR.mip
 ; ie = MCSR.mie
-; match p
+; match curPriv
   { case User       => #INTERNAL_ERROR("No user-level interrupts!")
-    case Supervisor => if ip.STIP and ie.STIE then Some(Timer, p)
-                       else if ip.SSIP and ie.SSIE then Some(Software, p)
+    case Supervisor => if ip.STIP and ie.STIE then Some(Timer, curPriv)
+                       else if ip.SSIP and ie.SSIE then Some(Software, curPriv)
                        else None
-    case Hypervisor => if ip.HTIP and ie.HTIE then Some(Timer, p)
-                       else if ip.HSIP and ie.HSIE then Some(Software, p)
+    case Hypervisor => if ip.HTIP and ie.HTIE then Some(Timer, curPriv)
+                       else if ip.HSIP and ie.HSIE then Some(Software, curPriv)
                        else None
-    case Machine    => if ip.MTIP and ie.MTIE then Some(Timer, p)
-                       else if ip.MSIP and ie.MTIE then Some(Software, p)
+    case Machine    => if ip.MTIP and ie.MTIE then Some(Timer, curPriv)
+                       else if ip.MSIP and ie.MTIE then Some(Software, curPriv)
                        else None
   }
 }
