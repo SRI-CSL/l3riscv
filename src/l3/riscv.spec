@@ -632,7 +632,7 @@ declare
 
   -- interpreter execution context
   c_NextFetch   :: id -> TransferControl option
-  c_ReserveLoad :: id -> regType option         -- load reservation for LL/SC
+  c_ReserveLoad :: id -> vAddr option           -- load reservation for LL/SC
   c_ExitCode    :: id -> regType                -- derived from Berkeley HTIF
 }
 
@@ -687,7 +687,7 @@ component NextFetch :: TransferControl option
   assign value = c_NextFetch(procID) <- value
 }
 
-component ReserveLoad :: regType option
+component ReserveLoad :: vAddr option
 { value        = c_ReserveLoad(procID)
   assign value = c_ReserveLoad(procID) <- value
 }
@@ -1575,6 +1575,13 @@ pAddr option translateAddr(vAddr::regType, ft::fetchType, ac::accessType) =
 }
 
 ---------------------------------------------------------------------------
+-- Load Reservation
+---------------------------------------------------------------------------
+
+bool matchLoadReservation(vAddr::vAddr) =
+    IsSome(ReserveLoad) and ValOf(ReserveLoad) == vAddr
+
+---------------------------------------------------------------------------
 -- Control Flow
 ---------------------------------------------------------------------------
 
@@ -2268,28 +2275,78 @@ define FENCE_I(rd::reg, rs1::reg, imm::imm12) = nothing
 -----------------------------------
 
 define AMO > LR_W(aq::amo, rl::amo, rd::reg, rs1::reg) =
-    #INTERNAL_ERROR("unimplemented")
+{ vAddr = GPR(rs1)
+; if vAddr<1:0> != 0
+  then signalAddressException(AMO_Misaligned, vAddr)
+  else match translateAddr(vAddr, Data, Read)
+       { case Some(pAddr) => { writeRD(rd, SignExtend(rawReadData(pAddr)<31:0>))
+                             ; ReserveLoad  <- Some(vAddr)
+                             }
+         case None        => signalAddressException(Load_Fault, vAddr)
+       }
+}
 
 -----------------------------------
 -- LR.D [aq,rl] rd, rs1
 -----------------------------------
 
 define AMO > LR_D(aq::amo, rl::amo, rd::reg, rs1::reg) =
-    #INTERNAL_ERROR("unimplemented")
+    if in32BitMode()
+    then signalException(Illegal_Instr)
+    else { vAddr = GPR(rs1)
+         ; if vAddr<2:0> != 0
+           then signalAddressException(AMO_Misaligned, vAddr)
+           else match translateAddr(vAddr, Data, Read)
+                { case Some(pAddr) => { writeRD(rd, rawReadData(pAddr))
+                                      ; ReserveLoad <- Some(vAddr)
+                                      }
+                  case None        => signalAddressException(Load_Fault, vAddr)
+                }
+         }
 
 -----------------------------------
 -- SC.W [aq,rl] rd, rs1, rs2
 -----------------------------------
 
 define AMO > SC_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    #INTERNAL_ERROR("unimplemented")
+{ vAddr = GPR(rs1)
+; if vAddr<1:0> != 0
+  then signalAddressException(AMO_Misaligned, vAddr)
+  else if not matchLoadReservation(vAddr)
+       then writeRD(rd, 1)
+       else match translateAddr(vAddr, Data, Read)
+            { case Some(pAddr) => { mask = 0xFFFF_FFFF
+                                  ; data = GPR(rs2)
+                                  ; rawWriteData(pAddr, data, mask, 4)
+                                  ; writeRD(rd, 0)
+                                  ; ReserveLoad  <- None
+                                  }
+              case None        => signalAddressException(Store_AMO_Fault, vAddr)
+            }
+}
 
 -----------------------------------
 -- SC.D [aq,rl] rd, rs1, rs2
 -----------------------------------
 
 define AMO > SC_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    #INTERNAL_ERROR("unimplemented")
+    if in32BitMode()
+    then signalException(Illegal_Instr)
+    else { vAddr = GPR(rs1)
+         ; if vAddr<2:0> != 0
+           then signalAddressException(AMO_Misaligned, vAddr)
+           else if not matchLoadReservation(vAddr)
+                then writeRD(rd, 1)
+                else match translateAddr(vAddr, Data, Read)
+                     { case Some(pAddr) => { mask = 0xFFFF_FFFF
+                                           ; data = GPR(rs2)
+                                           ; rawWriteData(pAddr, data, mask, 4)
+                                           ; writeRD(rd, 0)
+                                           ; ReserveLoad  <- None
+                                           }
+                       case None        => signalAddressException(Store_AMO_Fault, vAddr)
+                     }
+         }
 
 -----------------------------------
 -- AMOSWAP.W [aq,rl] rd, rs1, rs2
