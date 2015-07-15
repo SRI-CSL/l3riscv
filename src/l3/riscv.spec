@@ -1422,7 +1422,6 @@ regType rawReadData(pAddr::pAddr) =
 
 unit rawWriteData(pAddr::pAddr, data::regType, nbytes::nat) =
 { mask     = ([ZeroExtend(1`1)::regType] << (nbytes * 8)) - 1
-; val      = data && mask
 ; pAddrIdx = pAddr<63:3>
 ; align    = [pAddr<2:0>] :: nat
 ; old      = MEM(pAddrIdx)
@@ -1436,17 +1435,22 @@ unit rawWriteData(pAddr::pAddr, data::regType, nbytes::nat) =
 ; Delta.addr  <- pAddr
 
 ; if align == 0     -- aligned write
-  then { new = old && ~mask || val
+  then { new = old && ~mask || data && mask
        ; MEM(pAddrIdx) <- new
        ; mark_log(2, log_w_mem_mask(pAddrIdx, pAddr, mask, data, old, new))
        }
-  else { if align + nbytes <= Size(mask) div 8 -- write to single regType-sized block
-         then { new = old && ~(mask << (align * 8)) || val << (align * 8)
+  else { if align + nbytes <= Size(mask) div 8      -- write to a single regType-sized block
+         then { new = old && ~(mask << (align * 8)) || (data && mask) << (align * 8)
               ; MEM(pAddrIdx) <- new
               ; mark_log(2, log_w_mem_mask_misaligned(pAddrIdx, pAddr, mask, data, align, old, new))
               }
-         else { mark_log(0, "XXX write of size " : [nbytes] : " with align " : [align] : " and size " : [nbytes])
-              ; #INTERNAL_ERROR("unimplemented cross-block write")
+         -- write touching adjacent regType-sized blocks
+         else { dw_old  = MEM(pAddrIdx+1) : old
+              ; dw_data = ZeroExtend(data) << (align*8)
+              ; dw_mask = ZeroExtend(mask) << (align*8)
+              ; dw_new  = dw_old && ~dw_mask || dw_data && dw_mask
+              ; MEM(pAddrIdx+1) <- dw_new<2*Size(data)-1:Size(data)>
+              ; MEM(pAddrIdx)   <- dw_new<Size(data)-1:0>
               }
        }
 }
