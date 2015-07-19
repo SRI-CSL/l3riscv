@@ -190,8 +190,7 @@ fun logLoop mx i =
     let val () = riscv.procID := BitsN.B(!current_core_id,
                                          BitsN.size(!riscv.procID))
         val pc = riscv.Map.lookup(!riscv.c_PC, !current_core_id)
-    in  riscv.instCnt := i
-      ; riscv.Next ()
+    in  riscv.Next ()
       ; print ("\n")
       ; logLevels (0)
       ; if !verify then doVerify() else ()

@@ -640,9 +640,6 @@ declare
   c_ExitCode    :: id -> regType                -- derived from Berkeley HTIF
 }
 
--- Instruction counter
-declare instCnt :: nat
-
 -- Number of cores
 declare totalCore :: nat
 
@@ -3336,7 +3333,7 @@ word Encode(i::instruction) =
 ---------------------------------------------------------------------------
 
 string log_instruction(w::word, inst::instruction) =
-    "instr " : [procID] : " " : [instCnt] :
+    "instr " : [procID] : " " : [[c_instret(procID)]::nat] :
     " 0x" : hex64(PC) : " : " : hex32(w) : "   " : instructionToString(inst)
 
 declare done :: bool   -- Flag to request termination
@@ -3344,11 +3341,13 @@ declare done :: bool   -- Flag to request termination
 nat exitCode() =
     [ExitCode]::nat
 
-unit incrCounts() =
+unit tickClock() =
 { c_cycles(procID)  <- c_cycles(procID)  + 1
-; c_instret(procID) <- c_instret(procID) + 1
 ; clock             <- clock + 1
 }
+
+unit incrInstret() =
+    c_instret(procID) <- c_instret(procID) + 1
 
 unit checkTimers () =
 { -- The timer implementation here is arbitrary. The factor for the
@@ -3364,10 +3363,6 @@ unit checkTimers () =
 
 unit Next =
 { clear_logs()
-
--- XXX: Definition of instret count / cycles is not clear in the case
--- of exceptions and traps.  For now, we don't increment them in case
--- Fetch fails (and hence no instruction is executed).
 
 -- Handle the char i/o section of the Berkeley HTIF protocol
 -- following cissrStandalone.c.
@@ -3387,34 +3382,38 @@ unit Next =
     { inst = Decode(w)
     ; mark_log(1, log_instruction(w, inst))
     ; Run(inst)
-    ; incrCounts ()
-    ; checkTimers ()
     }
     case F_Error(inst)  =>
     { mark_log(1, log_instruction([0::word], inst))
     ; Run(inst)
-    -- XXX: see above.  It's not clear if counters are incremented for
-    -- fetch faults.
     }
   }
 
+; checkTimers ()    -- this can trigger timer interrupts
+
 ; match NextFetch, checkInterrupts()
   { case None, None =>
-             { PC <- PC + 4
+             { incrInstret()
+             ; PC <- PC + 4
              }
     case None, Some (i, p) =>
-             { takeTrap(true, interruptIndex(i), PC + 4, None, p)
+             { incrInstret()
+             ; takeTrap(true, interruptIndex(i), PC + 4, None, p)
              }
     case Some(BranchTo(addr)), _ =>
-             { NextFetch <- None
-             ; PC <- addr
+             { incrInstret()
+             ; NextFetch    <- None
+             ; PC           <- addr
              }
     case Some(Ereturn), _ =>
-             { NextFetch    <- None
-             ; from = curPrivilege()
+             { incrInstret()
+             ; NextFetch    <- None
              ; PC           <- curEPC()
+
+             ; from = curPrivilege()
              ; MCSR.mstatus <- popPrivilegeStack(MCSR.mstatus)
              ; to   = curPrivilege()
+
              ; mark_log(0, ["exception return from " : privName(from)
                             : " to " : privName(to)])
              }
@@ -3424,10 +3423,13 @@ unit Next =
              ; takeTrap(false, excCode(t.trap), PC, t.badaddr, Machine)
              }
     case Some(Mrts), _ =>
-             { NextFetch    <- None
+             { incrInstret()
+             ; NextFetch    <- None
              ; PC           <- SCSR.stvec
              }
   }
+
+; tickClock ()
 }
 
 unit initIdent(arch::Architecture) =
