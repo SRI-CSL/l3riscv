@@ -40,8 +40,12 @@ type imm12    = bits(12)
 type imm20    = bits(20)
 type amo      = bits(1)
 
+-- memory and caches
+
 construct accessType { Read, Write }
 construct fetchType  { Instruction, Data }
+
+type permType = bits(4)         -- memory permissions
 
 -- RV64* base.
 
@@ -1476,12 +1480,12 @@ unit rawWriteMem(pAddr::pAddr, data::regType) =
 -- 64-bit only
 
 register SV_PTE :: regType
-{ 47-10 : PTE_PPNi
-    9-7 : PTE_SW
-      6 : PTE_D
-      5 : PTE_R
-    4-1 : PTE_T
-      0 : PTE_V
+{ 47-10 : PTE_PPNi  -- PPN[2,1,0]
+    9-7 : PTE_SW    -- reserved for software
+      6 : PTE_D     -- dirty bit
+      5 : PTE_R     -- referenced bit
+    4-1 : PTE_T     -- PTE type
+      0 : PTE_V     -- valid bit
 }
 
 register SV_Vaddr :: regType
@@ -1489,8 +1493,8 @@ register SV_Vaddr :: regType
   11-0  : Sv_PgOfs
 }
 
-bool checkPagePermission(ft::fetchType, ac::accessType, priv::Privilege, perm_type::bits(4)) =
-    match perm_type
+bool checkPagePermission(ft::fetchType, ac::accessType, priv::Privilege, perm::permType) =
+    match perm
     { case  0   => #INTERNAL_ERROR("Checking perm on Page-Table pointer!")
       case  1   => #INTERNAL_ERROR("Checking perm on Page-Table pointer!")
       case  2   => if priv == User then ac != Write else (ac == Read and ft == Data)
