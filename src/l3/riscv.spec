@@ -1502,6 +1502,9 @@ bool checkMemPermission(ft::fetchType, ac::accessType, priv::Privilege, perm::pe
       case 15   => priv != User
     }
 
+bool isGlobal(perm::permType) =
+    perm<3:2> == 3
+
 -- page table walking (currently 64-bit only)
 
 register SV_PTE :: regType
@@ -1560,7 +1563,7 @@ register SV_Vaddr :: regType
                              then ((ZeroExtend((pte.PTE_PPNi >>+ (level * LEVEL_BITS)) << (level * LEVEL_BITS)))
                                    || ZeroExtend(va.Sv_VPNi && ((1 << (level * LEVEL_BITS)) - 1)))
                              else pte.PTE_PPNi
-                     ; Some(ZeroExtend(ppn : va.Sv_PgOfs), pte_w.PTE_T, level, pte.PTE_T == 1)
+                     ; Some(ZeroExtend(ppn : va.Sv_PgOfs), pte_w.PTE_T, level, isGlobal(pte.PTE_T))
                      }
               }
        }
@@ -1572,11 +1575,22 @@ register SV_Vaddr :: regType
 -- unspecified, but we would like to capture the semantics of SFENCE.
 -- The TLB also improves simulation speed.
 
+-- This implementation stores the global mapping bit from the PTE in
+-- the TLB.  This causes an asymmetry between TLB lookup and TLB
+-- flush, due to the spec's treatment of an ASID=0 in SFENCE.VM:
+--
+-- * in TLB lookup, the global bit is used to check for a global
+--   match, and this global bit when set overrides the input ASID.
+--
+-- * in TLB flush, an input ASID of 0 overrides the global bit when
+--   checking if a TLB entry needs to be flushed.
+
 asidType curASID() =
     SCSR.sasid<ASID_SIZE-1:0>
 
 record TLBEntry
-{ asid          :: asidType     -- global mappings are indicated by asid == 0
+{ asid          :: asidType
+  global        :: bool
   vAddr         :: vAddr        -- VPN
   vMatchMask    :: vAddr        -- matching mask for superpages
   perm          :: permType
@@ -1589,7 +1603,8 @@ record TLBEntry
 
 TLBEntry mkTLBEntry(asid::asidType, global::bool, vAddr::vAddr, pAddr::pAddr, perm::permType, i::nat) =
 { var ent :: TLBEntry
-; ent.asid          <- if global then 0 else asid
+; ent.asid          <- asid
+; ent.global        <- global
 ; ent.perm          <- perm
 ; ent.vAddrMask     <- ((1::vAddr) << ((LEVEL_BITS*i) + PAGESIZE_BITS)) - 1
 ; ent.vMatchMask    <- (SignExtend('1')::vAddr) ?? ent.vAddrMask
@@ -1607,7 +1622,7 @@ TLBEntry option lookupTLB(asid::asidType, vAddr::vAddr, tlb::TLBMap) =
 { var ent = None
 ; for i in 0 .. TLBEntries - 1 do
   { match tlb([i])
-    { case Some(e) => when ent == None and (e.asid == 0 or e.asid == asid)
+    { case Some(e) => when ent == None and (e.global or e.asid == asid)
                            and (e.vAddr == vAddr && e.vMatchMask)
                       do ent <- Some(e)
       case None    => ()
@@ -1644,10 +1659,10 @@ TLBMap flushTLB(asid::asidType, addr::vAddr option, curTLB::TLBMap) =
 { var tlb = curTLB
 ; for i in 0 .. TLBEntries - 1 do
   { match tlb([i]), addr
-    { case Some(e), Some(va)    => when asid == 0
-                                        or (e.asid == asid and e.vAddr == va && e.vMatchMask)
+    { case Some(e), Some(va)    => when (asid == 0 or (asid == e.asid and not e.global))
+                                        and (e.vAddr == va && e.vMatchMask)
                                    do tlb([i]) <- None
-      case Some(e), None        => when asid == 0 or e.asid == asid
+      case Some(e), None        => when asid == 0 or (asid == e.asid and not e.global)
                                    do tlb([i]) <- None
       case None,    _           => ()
     }
