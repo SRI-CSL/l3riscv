@@ -47,6 +47,12 @@ construct fetchType  { Instruction, Data }
 
 type permType = bits(4)         -- memory permissions
 
+nat ASID_SIZE       = 6
+nat PAGESIZE_BITS   = 12
+nat LEVEL_BITS      = 9
+
+type asidType       = bits(6)
+
 -- RV64* base.
 
 type regType  = dword
@@ -1474,23 +1480,9 @@ unit rawWriteMem(pAddr::pAddr, data::regType) =
 -- Address Translation
 ---------------------------------------------------------------------------
 
--- 64-bit only
+-- memory permissions
 
-register SV_PTE :: regType
-{ 47-10 : PTE_PPNi  -- PPN[2,1,0]
-    9-7 : PTE_SW    -- reserved for software
-      6 : PTE_D     -- dirty bit
-      5 : PTE_R     -- referenced bit
-    4-1 : PTE_T     -- PTE type
-      0 : PTE_V     -- valid bit
-}
-
-register SV_Vaddr :: regType
-{ 47-12 : Sv_VPNi
-  11-0  : Sv_PgOfs
-}
-
-bool checkPagePermission(ft::fetchType, ac::accessType, priv::Privilege, perm::permType) =
+bool checkMemPermission(ft::fetchType, ac::accessType, priv::Privilege, perm::permType) =
     match perm
     { case  0   => #INTERNAL_ERROR("Checking perm on Page-Table pointer!")
       case  1   => #INTERNAL_ERROR("Checking perm on Page-Table pointer!")
@@ -1510,10 +1502,26 @@ bool checkPagePermission(ft::fetchType, ac::accessType, priv::Privilege, perm::p
       case 15   => priv != User
     }
 
-pAddr option translate64(vAddr::vAddr, ft::fetchType, ac::accessType, priv::Privilege,
-                         ptb::regType, level::nat) =
+-- page table walking (currently 64-bit only)
+
+register SV_PTE :: regType
+{ 47-10 : PTE_PPNi  -- PPN[2,1,0]
+    9-7 : PTE_SW    -- reserved for software
+      6 : PTE_D     -- dirty bit
+      5 : PTE_R     -- referenced bit
+    4-1 : PTE_T     -- PTE type
+      0 : PTE_V     -- valid bit
+}
+
+register SV_Vaddr :: regType
+{ 47-12 : Sv_VPNi
+  11-0  : Sv_PgOfs
+}
+
+(pAddr * permType * nat * bool) option
+ walk64(vAddr::vAddr, ft::fetchType, ac::accessType, priv::Privilege, ptb::regType, level::nat) =
 { va        = SV_Vaddr(vAddr)
-; pt_ofs    = ZeroExtend((va.Sv_VPNi >>+ (level * 9))<8:0>) << 3
+; pt_ofs    = ZeroExtend((va.Sv_VPNi >>+ (level * LEVEL_BITS))<(LEVEL_BITS-1):0>) << 3
 ; pte_addr  = ptb + pt_ofs
 ; pte       = SV_PTE(rawReadData(pte_addr))
 ; mark_log(3, ["translate(vaddr=0x" : PadLeft(#"0", 16, [vAddr]) : "): level=" : [level]
@@ -1531,10 +1539,10 @@ pAddr option translate64(vAddr::vAddr, ft::fetchType, ac::accessType, priv::Priv
                 then { mark_log(3, "last-level pt contains a pointer PTE!")
                      ; None
                      }
-                else translate64(vAddr, ft, ac, priv, ZeroExtend(pte.PTE_PPNi << 12), level - 1)
+                else walk64(vAddr, ft, ac, priv, ZeroExtend(pte.PTE_PPNi << PAGESIZE_BITS), level - 1)
               }
          else { -- leaf PTE
-                if not checkPagePermission(ft, ac, priv, pte.PTE_T)
+                if not checkMemPermission(ft, ac, priv, pte.PTE_T)
                 then { mark_log(3, "PTE permission check failure!")
                      ; None
                      }
@@ -1549,13 +1557,134 @@ pAddr option translate64(vAddr::vAddr, ft::fetchType, ac::accessType, priv::Priv
                        do rawWriteData(pte_addr, &pte_w, 8)
                      -- compute translated address
                      ; ppn = if level > 0
-                             then ((ZeroExtend((pte.PTE_PPNi >>+ (level * 9)) << (level * 9)))
-                                   || ZeroExtend(va.Sv_VPNi && ((1 << (level * 9)) - 1)))
+                             then ((ZeroExtend((pte.PTE_PPNi >>+ (level * LEVEL_BITS)) << (level * LEVEL_BITS)))
+                                   || ZeroExtend(va.Sv_VPNi && ((1 << (level * LEVEL_BITS)) - 1)))
                              else pte.PTE_PPNi
-                     ; Some(ZeroExtend(ppn : va.Sv_PgOfs))
+                     ; Some(ZeroExtend(ppn : va.Sv_PgOfs), pte_w.PTE_T, level, pte.PTE_T == 1)
                      }
               }
        }
+}
+
+-- We maintain an internal model of a TLB.  The spec leaves the TLB
+-- unspecified, but we would like to capture the semantics of SFENCE.
+-- The TLB also improves simulation speed.
+
+asidType curASID() =
+    SCSR.sasid<ASID_SIZE-1:0>
+
+record TLBEntry
+{ asid          :: asidType     -- global mappings are indicated by asid == 0
+  vAddr         :: vAddr        -- VPN
+  vMatchMask    :: vAddr        -- matching mask for superpages
+  perm          :: permType
+
+  pAddr         :: pAddr        -- PPN
+  vAddrMask     :: vAddr        -- selection mask for superpages
+
+  age           :: regType      -- derived from instret
+}
+
+TLBEntry mkTLBEntry(asid::asidType, global::bool, vAddr::vAddr, pAddr::pAddr, perm::permType, i::nat) =
+{ var ent :: TLBEntry
+; ent.asid          <- if global then 0 else asid
+; ent.perm          <- perm
+; ent.vAddrMask     <- ((1::vAddr) << ((LEVEL_BITS*i) + PAGESIZE_BITS)) - 1
+; ent.vMatchMask    <- (SignExtend('1')::vAddr) ?? ent.vAddrMask
+; ent.vAddr         <- vAddr && ent.vMatchMask
+; ent.pAddr         <- (pAddr >> (PAGESIZE_BITS + (LEVEL_BITS*i))) << (PAGESIZE_BITS + (LEVEL_BITS*i))
+; ent.age           <- c_cycles(procID)
+; ent
+}
+
+nat  TLBEntries = 16
+type tlbIdx     = bits(4)
+type TLBMap     = tlbIdx -> TLBEntry option
+
+TLBEntry option lookupTLB(asid::asidType, vAddr::vAddr, tlb::TLBMap) =
+{ var ent = None
+; for i in 0 .. TLBEntries - 1 do
+  { match tlb([i])
+    { case Some(e) => when ent == None and (e.asid == 0 or e.asid == asid)
+                           and (e.vAddr == vAddr && e.vMatchMask)
+                      do ent <- Some(e)
+      case None    => ()
+    }
+  }
+; ent
+}
+
+TLBMap addToTLB(asid::asidType, vAddr::vAddr, pAddr::pAddr, perm::permType,
+                i::nat, global::bool, curTLB::TLBMap) =
+{ var ent       = mkTLBEntry(asid, global, vAddr, pAddr, perm, i)
+; var tlb       = curTLB
+; var oldest    = SignExtend('1')
+; var addIdx    = 0
+; var added     = false
+; for i in 0 .. TLBEntries - 1 do
+  { match tlb([i])
+    { case Some(e)  => when e.age <+ oldest
+                       do { oldest      <- e.age
+                          ; addIdx      <- i
+                          }
+      case None     => when not added
+                       do { tlb([i])    <- Some(ent)
+                          ; added       <- true
+                          }
+    }
+  }
+; when not added
+  do tlb([addIdx]) <- Some(ent)
+; tlb
+}
+
+TLBMap flushTLB(asid::asidType, addr::vAddr option, curTLB::TLBMap) =
+{ var tlb = curTLB
+; for i in 0 .. TLBEntries - 1 do
+  { match tlb([i]), addr
+    { case Some(e), Some(va)    => when asid == 0
+                                        or (e.asid == asid and e.vAddr == va && e.vMatchMask)
+                                   do tlb([i]) <- None
+      case Some(e), None        => when asid == 0 or e.asid == asid
+                                   do tlb([i]) <- None
+      case None,    _           => ()
+    }
+  }
+; tlb
+}
+
+declare  c_tlb  :: id -> TLBMap
+
+component TLB :: TLBMap
+{ value        = c_tlb(procID)
+  assign value = c_tlb(procID) <- value
+}
+
+-- address translation
+
+pAddr option translate64(vAddr::regType, ft::fetchType, ac::accessType, priv::Privilege, level::nat) =
+{ asid = curASID()
+; match lookupTLB(asid, vAddr, TLB)
+  { case Some(e) =>
+    { if checkMemPermission(ft, ac, priv, e.perm)
+      then { mark_log(3, "TLB hit!")
+           ; Some(e.pAddr || (vAddr && e.vAddrMask))
+           }
+      else { mark_log(3, "TLB permission check failure")
+           ; None
+           }
+    }
+    case None =>
+    { mark_log(3, "TLB miss!")
+    ; match walk64(vAddr, ft, ac, priv, SCSR.sptbr, level)
+      { case Some(pAddr, perm, i, global)  =>
+        { TLB <- addToTLB(asid, vAddr, pAddr, perm, i, global, TLB)
+        ; Some(pAddr)
+        }
+        case None   => None
+      }
+    }
+  }
 }
 
 pAddr option translateAddr(vAddr::regType, ft::fetchType, ac::accessType) =
@@ -1564,11 +1693,10 @@ pAddr option translateAddr(vAddr::regType, ft::fetchType, ac::accessType) =
 ; match vmType(MCSR.mstatus.VM), priv
   { case Mbare,          _
     or       _,    Machine  => Some(vAddr)  -- no translation
-    case Sv39,           _  => translate64(vAddr, ft, ac, priv, SCSR.sptbr, 2)
-    case Sv48,           _  => translate64(vAddr, ft, ac, priv, SCSR.sptbr, 3)
+    case Sv39,           _  => translate64(vAddr, ft, ac, priv, 2)
+    case Sv48,           _  => translate64(vAddr, ft, ac, priv, 3)
 
-    {- Comment out base/bound modes since there are no tests for them,
-       and this function is in the critical path.
+    {- Comment out base/bound modes since there are no tests for them.
 
     case Mbb,   Machine
     or   Mbbid, Machine     => Some(vAddr)
@@ -2828,7 +2956,9 @@ define System > CSRRCI(rd::reg, zimm::reg, csr::imm12) =
 -- SFENCE.VM
 -----------------------------------
 define System > SFENCE_VM(rs1::reg) =
-    nothing
+{ addr = if rs1 == 0 then None else Some(GPR(rs1))
+; TLB <- flushTLB(curASID(), addr, TLB)
+}
 
 -----------------------------------
 -- Unsupported instructions
