@@ -1566,6 +1566,8 @@ register SV_Vaddr :: regType
        }
 }
 
+-- TLB
+---------------------------------------------------------------------------
 -- We maintain an internal model of a TLB.  The spec leaves the TLB
 -- unspecified, but we would like to capture the semantics of SFENCE.
 -- The TLB also improves simulation speed.
@@ -2403,7 +2405,6 @@ define FENCE_I(rd::reg, rs1::reg, imm::imm12) = nothing
 -----------------------------------
 -- LR.W [aq,rl] rd, rs1
 -----------------------------------
-
 define AMO > LR_W(aq::amo, rl::amo, rd::reg, rs1::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<1:0> != 0
@@ -2419,7 +2420,6 @@ define AMO > LR_W(aq::amo, rl::amo, rd::reg, rs1::reg) =
 -----------------------------------
 -- LR.D [aq,rl] rd, rs1
 -----------------------------------
-
 define AMO > LR_D(aq::amo, rl::amo, rd::reg, rs1::reg) =
     if in32BitMode()
     then signalException(Illegal_Instr)
@@ -2437,7 +2437,6 @@ define AMO > LR_D(aq::amo, rl::amo, rd::reg, rs1::reg) =
 -----------------------------------
 -- SC.W [aq,rl] rd, rs1, rs2
 -----------------------------------
-
 define AMO > SC_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<1:0> != 0
@@ -2457,7 +2456,6 @@ define AMO > SC_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 -- SC.D [aq,rl] rd, rs1, rs2
 -----------------------------------
-
 define AMO > SC_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
     if in32BitMode()
     then signalException(Illegal_Instr)
@@ -2479,7 +2477,6 @@ define AMO > SC_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 -- AMOSWAP.W [aq,rl] rd, rs1, rs2
 -----------------------------------
-
 define AMO > AMOSWAP_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<1:0> != 0
@@ -2498,7 +2495,6 @@ define AMO > AMOSWAP_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 -- AMOSWAP.D [aq,rl] rd, rs1, rs2
 -----------------------------------
-
 define AMO > AMOSWAP_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<2:0> != 0
@@ -2517,7 +2513,6 @@ define AMO > AMOSWAP_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 -- AMOADD.W [aq,rl] rd, rs1, rs2
 -----------------------------------
-
 define AMO > AMOADD_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<1:0> != 0
@@ -2537,7 +2532,6 @@ define AMO > AMOADD_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 -- AMOADD.D [aq,rl] rd, rs1, rs2
 -----------------------------------
-
 define AMO > AMOADD_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<2:0> != 0
@@ -2557,7 +2551,6 @@ define AMO > AMOADD_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 -- AMOXOR.W [aq,rl] rd, rs1, rs2
 -----------------------------------
-
 define AMO > AMOXOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<1:0> != 0
@@ -2577,7 +2570,6 @@ define AMO > AMOXOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 -- AMOXOR.D [aq,rl] rd, rs1, rs2
 -----------------------------------
-
 define AMO > AMOXOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<2:0> != 0
@@ -2597,7 +2589,6 @@ define AMO > AMOXOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 -- AMOAND.W [aq,rl] rd, rs1, rs2
 -----------------------------------
-
 define AMO > AMOAND_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<1:0> != 0
@@ -2617,7 +2608,6 @@ define AMO > AMOAND_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 -- AMOAND.D [aq,rl] rd, rs1, rs2
 -----------------------------------
-
 define AMO > AMOAND_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<2:0> != 0
@@ -2637,7 +2627,6 @@ define AMO > AMOAND_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 -- AMOOR.W [aq,rl] rd, rs1, rs2
 -----------------------------------
-
 define AMO > AMOOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<1:0> != 0
@@ -2657,7 +2646,6 @@ define AMO > AMOOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 -- AMOOR.D [aq,rl] rd, rs1, rs2
 -----------------------------------
-
 define AMO > AMOOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<2:0> != 0
@@ -2677,7 +2665,6 @@ define AMO > AMOOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 -- AMOMIN.W [aq,rl] rd, rs1, rs2
 -----------------------------------
-
 define AMO > AMOMIN_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<1:0> != 0
@@ -2697,7 +2684,6 @@ define AMO > AMOMIN_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 -- AMOMIN.D [aq,rl] rd, rs1, rs2
 -----------------------------------
-
 define AMO > AMOMIN_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<2:0> != 0
@@ -2717,7 +2703,6 @@ define AMO > AMOMIN_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 -- AMOMAX.W [aq,rl] rd, rs1, rs2
 -----------------------------------
-
 define AMO > AMOMAX_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<1:0> != 0
@@ -2737,7 +2722,6 @@ define AMO > AMOMAX_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 -- AMOMAX.D [aq,rl] rd, rs1, rs2
 -----------------------------------
-
 define AMO > AMOMAX_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<2:0> != 0
@@ -2757,7 +2741,6 @@ define AMO > AMOMAX_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 -- AMOMINU.W [aq,rl] rd, rs1, rs2
 -----------------------------------
-
 define AMO > AMOMINU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<1:0> != 0
@@ -2777,7 +2760,6 @@ define AMO > AMOMINU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 -- AMOMINU.D [aq,rl] rd, rs1, rs2
 -----------------------------------
-
 define AMO > AMOMINU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<2:0> != 0
@@ -2797,7 +2779,6 @@ define AMO > AMOMINU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 -- AMOMAXU.W [aq,rl] rd, rs1, rs2
 -----------------------------------
-
 define AMO > AMOMAXU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<1:0> != 0
@@ -2817,7 +2798,6 @@ define AMO > AMOMAXU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 -- AMOMAXU.D [aq,rl] rd, rs1, rs2
 -----------------------------------
-
 define AMO > AMOMAXU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<2:0> != 0
@@ -2881,7 +2861,6 @@ bool checkCSROp(csr::imm12, rs1::reg, a::accessType) =
 -----------------------------------
 -- CSRRW  rd, rs1, imm
 -----------------------------------
-
 define System > CSRRW(rd::reg, rs1::reg, csr::imm12) =
     if checkCSROp(csr, rs1, Write)
     then { val = CSR(csr)
