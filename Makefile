@@ -6,20 +6,13 @@ L3SRCDIR=src/l3
 L3SRCBASE+=riscv-print.spec
 L3SRCBASE+=riscv.spec
 L3SRC=$(patsubst %, $(L3SRCDIR)/%, $(L3SRCBASE))
+L3LIBDIR?=$(shell l3 --lib-path)
 
 # sml lib sources
 #######################################
 SMLSRCDIR=src/sml
 SMLLIBDIR=src/sml/lib
-SMLLIBSRC=Runtime.sig Runtime.sml\
-          IntExtra.sig IntExtra.sml\
-          Nat.sig Nat.sml\
-          L3.sig L3.sml\
-          Bitstring.sig Bitstring.sml\
-          BitsN.sig BitsN.sml\
-          FP64.sig FP64.sml\
-          Ptree.sig Ptree.sml\
-          MutableMap.sig MutableMap.sml
+SMLLIBSRC=Elf.sig Elf.sml
 SMLLIB=$(patsubst %, $(SMLLIBDIR)/%, $(SMLLIBSRC))
 
 # generating the sml source list
@@ -36,7 +29,7 @@ SMLSRC=$(patsubst %, $(SMLSRCDIR)/%, $(SMLSRCBASE))
 #######################################
 MLTON_OPTS     = -inline 1000 -default-type intinf -verbose 1
 MLTON_OPTS    += -default-ann 'allowFFI true' -export-header ${SMLSRCDIR}/riscv_oracle.h
-MLTON_LIB_OPTS =
+MLTON_LIB_OPTS = -mlb-path-var 'L3LIBDIR '$(L3LIBDIR)
 
 # use Cissr as a verifier
 #######################################
