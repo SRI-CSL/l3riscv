@@ -1861,9 +1861,6 @@ define ArithI > LUI(rd::reg, imm::imm20) =
 -----------------------------------
 -- AUIPC rd, imm
 -----------------------------------
--- XXX: the description for RV64I is ambiguous: it doesn't specify the
--- intermediate 32-bit value with zero-filled lowest 12 bits before
--- sign-extension.
 
 define ArithI > AUIPC(rd::reg, imm::imm20) =
     writeRD(rd, PC + SignExtend(imm : 0`12))
