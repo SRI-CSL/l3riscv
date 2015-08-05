@@ -652,6 +652,10 @@ declare totalCore :: nat
 -- ID of the core executing current instruction
 declare procID :: id
 
+unit scheduleCore(id :: nat) =
+    when id < totalCore
+    do procID <- [id]
+
 -- The following components provide read/write access to state of the
 -- core whose id equals procID.  For example, writing "gpr(r)" refers
 -- general purpose register "r" in the core whose id equals procID.

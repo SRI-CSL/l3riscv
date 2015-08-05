@@ -17,7 +17,6 @@
 
 (* Default Configuration *)
 
-val current_core_id = ref 0
 val mem_base_addr   = ref 0
 val mem_size        = ref 4000000
 
@@ -171,7 +170,7 @@ fun doVerify () =
         if oracle_verify (exc_taken, pc, addr, data1, data2, data3, fp_data, verbosity)
         then ()
         else ( print "Verification error:\n"
-             ; dumpRegisters (!current_core_id)
+             ; dumpRegisters (BitsN.toInt (!riscv.procID))
              ; failExit "Verification FAILED!\n"
              )
     end
@@ -186,26 +185,32 @@ fun isVerifyDone () =
 
 (* Code execution *)
 
+fun currentCore () =
+    BitsN.toInt (!riscv.procID)
+
+fun nextCoreToSchedule () =
+    (1 + currentCore ()) mod !riscv.totalCore
+
+fun isLastCore () =
+    BitsN.toInt (!riscv.procID) + 1 = !riscv.totalCore
+
 fun logLoop mx i =
-    let val () = riscv.procID := BitsN.B(!current_core_id,
-                                         BitsN.size(!riscv.procID))
-        val pc = riscv.Map.lookup(!riscv.c_PC, !current_core_id)
-    in  riscv.Next ()
-      ; print ("\n")
-      ; logLevels (0)
-      ; if !verify then doVerify() else ()
-      ; if !riscv.done orelse i = mx orelse isVerifyDone ()
-        then ( print ("ExitCode: " ^ Nat.toString (riscv.exitCode ()) ^ "\n")
-             ; print ("Completed " ^ Int.toString (i + 1) ^ " instructions.\n")
-             )
-        else logLoop mx (i + 1)
-    end
+    ( riscv.scheduleCore (nextCoreToSchedule ())
+    ; riscv.Next ()
+    ; print ("\n")
+    ; logLevels (0)
+    ; if !verify then doVerify() else ()
+    ; if !riscv.done orelse i = mx orelse isVerifyDone ()
+      then ( print ("ExitCode: " ^ Nat.toString (riscv.exitCode ()) ^ "\n")
+           ; print ("Completed " ^ Int.toString (i + 1) ^ " instructions.\n")
+           )
+      else logLoop mx (if isLastCore () then (i + 1) else i)
+    )
 
 fun decr i = if i <= 0 then i else i - 1
 
 fun silentLoop mx =
-    ( riscv.procID := BitsN.B(!current_core_id,
-                              BitsN.size(!riscv.procID))
+    ( riscv.scheduleCore (nextCoreToSchedule ())
     ; riscv.Next ()
     ; if !verify then doVerify() else ()
     ; if !riscv.done orelse (mx = 1) orelse isVerifyDone ()
@@ -215,25 +220,25 @@ fun silentLoop mx =
                                then OS.Process.success
                                else OS.Process.failure)
            end
-      else silentLoop (decr mx)
+      else silentLoop (if isLastCore () then (decr mx) else mx)
     )
 
 local
     fun t f x = if !time_run then Runtime.time f x else f x
 in
-fun runMem mx =
+fun run mx =
     if   1 <= !trace_level
     then t (logLoop mx) 0
     else t silentLoop mx
 
-fun run mx =
-    runMem mx
+fun runWrapped mx =
+    run mx
     handle riscv.UNDEFINED s =>
-           ( dumpRegisters (!current_core_id)
+           ( dumpRegisters (currentCore ())
            ; failExit ("UNDEFINED \"" ^ s ^ "\"\n")
            )
          | riscv.INTERNAL_ERROR s =>
-           ( dumpRegisters (!current_core_id)
+           ( dumpRegisters (currentCore ())
            ; failExit ("INTERNAL_ERROR \"" ^ s ^ "\"\n")
            )
 end
@@ -256,11 +261,11 @@ fun loadElf segs dis =
                       )
              ) segs
 
-fun doInit () =
+fun initPlatform (cores) =
     ( riscv.print     := debugPrint
     ; riscv.println   := debugPrintln
-    ; riscv.procID    := BitsN.B(!current_core_id, BitsN.size(!riscv.procID))
-    ; riscv.totalCore := 1
+    ; riscv.procID    := BitsN.B(0, BitsN.size(!riscv.procID))
+    ; riscv.totalCore := cores
     ; riscv.initMem (BitsN.fromInt
                          ((if !verify then 0xaaaaaaaaAAAAAAAA else 0x0)
                          , 64))
@@ -269,13 +274,26 @@ fun doInit () =
       else ()
     )
 
+(* assumes riscv.procID is 0 *)
+fun initCores (arch, pc) =
+    ( riscv.initIdent arch
+    ; riscv.initMachine (!riscv.procID)
+    ; riscv.initRegs pc
+    ; if isLastCore ()
+      then ()  (* core scheduler will wrap back to first core *)
+      else ( riscv.scheduleCore (nextCoreToSchedule ())
+           ; initCores (arch, pc)
+           )
+    )
+
 fun doElf cycles file dis =
     let val elf   = Elf.openElf file
         val hdr   = Elf.getElfHeader elf
         val psegs = Elf.getElfProgSegments elf hdr
-    in  riscv.initIdent(if (#class hdr) = Elf.BIT_32
-                        then riscv.RV32I else riscv.RV64I)
-      ; riscv.initMachine(BitsN.B(!current_core_id, BitsN.size(!riscv.procID)))
+    in  initCores (if (#class hdr) = Elf.BIT_32
+                   then riscv.RV32I else riscv.RV64I
+                  , if !boot then 0x200 else (#entry hdr)
+                  )
       ; if !trace_elf
         then ( print "Loading elf file ...\n"
              ; Elf.printElfHeader hdr
@@ -283,14 +301,13 @@ fun doElf cycles file dis =
         else ()
       ; be := (if (#endian hdr = Elf.BIG) then true else false)
       ; loadElf psegs dis
-      ; riscv.initRegs (if !boot then 0x200 else (#entry hdr))
       ; if !verify
         then loadVerify file
         else ()
 
       ; if dis
         then logLevels (0)
-        else run cycles
+        else runWrapped cycles
     end
 
 (* Command line interface *)
@@ -324,6 +341,7 @@ local
             | "-d"   => "--dis"
             | "-h"   => "--help"
             | "-v"   => "--verify"
+            | "-m"   => "--multi"
             | s      => s
             ) (CommandLine.arguments ())
 
@@ -345,16 +363,18 @@ val () =
             val (t, l) = processOption "--trace"  l
             val (d, l) = processOption "--dis"    l
             val (v, l) = processOption "--verify" l
+            val (m, l) = processOption "--multi"  l
 
             val c = Option.getOpt (Option.map getNumber c, ~1)
             val d = Option.getOpt (Option.map getBool d, false)
             val t = Option.getOpt (Option.map getNumber t, !trace_level)
+            val m = Option.getOpt (Option.map getNumber m, 1)
             val () = trace_level := Int.max (0, t)
             val v = Option.getOpt (Option.map getBool v, !verify)
             val () = verify := v
         in
             if List.null l then printUsage ()
-            else ( doInit ()
+            else ( initPlatform (m)
                  ; doElf c (List.hd l) d
                  )
         end
