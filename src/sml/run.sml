@@ -89,6 +89,17 @@ fun storeVecInMem (base, memsz, vec) =
     in  storeVecInMemHelper padded base 0
     end
 
+(* Multi-core utilities *)
+
+fun currentCore () =
+    BitsN.toInt (!riscv.procID)
+
+fun nextCoreToSchedule () =
+    (1 + currentCore ()) mod !riscv.totalCore
+
+fun isLastCore () =
+    BitsN.toInt (!riscv.procID) + 1 = !riscv.totalCore
+
 (* Printing utilities *)
 
 fun printLog (n) = List.app (fn e => print(e ^ "\n"))
@@ -103,10 +114,10 @@ local
     fun readReg i = hex64 (riscv.GPR (BitsN.fromNat (i, 5)))
 in
 fun dumpRegisters core =
-    let val savedProcID = !riscv.procID
-        val pc = riscv.Map.lookup(!riscv.c_PC, 0)
-        val () = riscv.procID := BitsN.B(core, BitsN.size (!riscv.procID))
-    in  print "======   Registers   ======\n"
+    let val savedCore   = currentCore ()
+        val pc          = riscv.Map.lookup(!riscv.c_PC, core)
+    in  riscv.scheduleCore core
+      ; print "======   Registers   ======\n"
       ; print ("Core = " ^ Int.toString(core) ^ "\n")
       ; let val w = #pc_instr (riscv.Delta ())
             val i = riscv.Decode w
@@ -120,7 +131,7 @@ fun dumpRegisters core =
              fn i =>
                 print ("Reg " ^ (if i < 10 then " " else "") ^
                        Int.toString i ^ " " ^ readReg i ^ "\n"))
-      ; riscv.procID := savedProcID
+      ; riscv.scheduleCore savedCore
     end
 end
 
@@ -170,7 +181,7 @@ fun doVerify () =
         if oracle_verify (exc_taken, pc, addr, data1, data2, data3, fp_data, verbosity)
         then ()
         else ( print "Verification error:\n"
-             ; dumpRegisters (BitsN.toInt (!riscv.procID))
+             ; dumpRegisters (currentCore ())
              ; failExit "Verification FAILED!\n"
              )
     end
@@ -184,15 +195,6 @@ fun isVerifyDone () =
     else false
 
 (* Code execution *)
-
-fun currentCore () =
-    BitsN.toInt (!riscv.procID)
-
-fun nextCoreToSchedule () =
-    (1 + currentCore ()) mod !riscv.totalCore
-
-fun isLastCore () =
-    BitsN.toInt (!riscv.procID) + 1 = !riscv.totalCore
 
 fun logLoop mx i =
     ( riscv.scheduleCore (nextCoreToSchedule ())
