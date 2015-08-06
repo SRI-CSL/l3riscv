@@ -727,6 +727,12 @@ regType curEPC() =
       case Machine      => MCSR.mepc
     }
 
+unit sendIPI(core::regType) =
+{ id = [core]::id
+; when [id]::nat < totalCore
+  do c_MCSR(id).mip.MSIP <- true
+}
+
 ---------------------------------------------------------------------------
 -- CSR Register address map
 ---------------------------------------------------------------------------
@@ -774,7 +780,7 @@ bool is_CSR_defined(csr::creg) =
  or (csr >= 0x340 and csr <= 0x344)
  or (csr >= 0x380 and csr <= 0x385)
  or  csr >= 0xB01 or (csr == 0xB81 and in32BitMode())
- or (csr >= 0x780 and csr <= 0x781)
+ or (csr >= 0x780 and csr <= 0x783 and csr != 0x782)
 
 component CSRMap(csr::creg) :: regType
 {
@@ -875,6 +881,7 @@ component CSRMap(csr::creg) :: regType
         -- machine host-target interface (berkeley extension)
         case 0x780  => c_MCSR(procID).mtohost
         case 0x781  => c_MCSR(procID).mfromhost
+        case 0x783  => 0
 
         case _      => #INTERNAL_ERROR("unexpected CSR read at " : [csr])
       }
@@ -958,6 +965,8 @@ component CSRMap(csr::creg) :: regType
         { c_MCSR(procID).mtohost    <- value }
         case 0x781  =>
         { c_MCSR(procID).mfromhost  <- value }
+        case 0x783  =>
+        { sendIPI(value) }
 
         case _      => #INTERNAL_ERROR("unexpected CSR write to " : [csr])
       }
@@ -1060,6 +1069,8 @@ string csrName(csr::creg) =
       -- machine host-target interface (berkeley extension)
       case 0x780  => "mtohost"
       case 0x781  => "mfromhost"
+
+      case 0x783  => "send_ipi"
 
       case _      => "UNKNOWN"
     }
@@ -1277,7 +1288,7 @@ Privilege checkDelegation(curPriv::Privilege, intr::bool, ec::exc_code) =
                        else if ip.HSIP and ie.HSIE then Some(Software, curPriv)
                        else None
     case Machine    => if ip.MTIP and ie.MTIE then Some(Timer, curPriv)
-                       else if ip.MSIP and ie.MTIE then Some(Software, curPriv)
+                       else if ip.MSIP and ie.MSIE then Some(Software, curPriv)
                        else None
   }
 }
