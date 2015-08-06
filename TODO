@@ -1,0 +1,13 @@
+- mcpuid needs to be checked (and set appropriately on initialization) as
+  appropriate for each affected instruction
+
+- floating-point
+
+- RVC
+
+- exporting a server-side C interface for tandem-verification, to make it usable
+  from Flute/BluRoCs.
+
+- Caches and store buffers.
+
+- SBI (once spec is released)
