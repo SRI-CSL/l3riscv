@@ -15,6 +15,7 @@
 --
 -- See the LICENSE file for details.
 --
+-- For syntax highlighting, treat this file as Haskell source.
 ---------------------------------------------------------------------------
 
 
@@ -1583,6 +1584,9 @@ register SV_Vaddr :: regType
 --
 -- * in TLB flush, an input ASID of 0 overrides the global bit when
 --   checking if a TLB entry needs to be flushed.
+
+-- Each TLBEntry also stores the full PTE and its pAddr, so that it
+-- can write back the PTE when its dirty bit needs to be updated.
 
 asidType curASID() =
     SCSR.sasid<ASID_SIZE-1:0>
