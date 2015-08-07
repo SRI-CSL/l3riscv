@@ -1136,9 +1136,11 @@ unit recordLoad(addr::vAddr, val::regType) =
 ---------------------------------------------------------------------------
 -- Logging
 ---------------------------------------------------------------------------
+string hex32(x::word)  = PadLeft(#"0", 8, [x])
+string hex64(x::dword) = PadLeft(#"0", 16, [x])
 
 string log_w_csr(csr::creg, data::regType) =
-    "CSR (" : csrName(csr) : ") <- 0x" : PadLeft(#"0", 16, [data])
+    "CSR (" : csrName(csr) : ") <- 0x" : hex64(data)
 
 string reg(r::reg) =
 { if      r ==  0 then "$0"
@@ -1176,38 +1178,27 @@ string reg(r::reg) =
 }
 
 string log_w_gpr(r::reg, data::regType) =
-    "Reg " : reg(r) : " (" : [[r]::nat] : ") <- 0x" : PadLeft(#"0", 16, [data])
+    "Reg " : reg(r) : " (" : [[r]::nat] : ") <- 0x" : hex64(data)
 
-string log_w_mem_mask(pAddrIdx::pAddrIdx, vAddr::vAddr, mask::regType, data::regType,
-                      old::regType, new::regType) =
-    "MEM[0x" : PadLeft(#"0", 10, [pAddrIdx]) :
-    "/" : PadLeft(#"0", 10, [vAddr]) :
-    "] <- (data: 0x" : PadLeft(#"0", 16, [data]) :
-    ", mask: 0x" : PadLeft(#"0", 16, [mask]) :
-    ", old: 0x"  : PadLeft(#"0", 16, [old]) :
-    ", new: 0x"  : PadLeft(#"0", 16, [new]) :
-    ")"
+string log_w_mem_mask(pAddrIdx::pAddrIdx, vAddr::vAddr, mask::regType,
+                      data::regType, old::regType, new::regType) =
+    "MEM[0x" : hex64([pAddrIdx]) : "/" : hex64(vAddr) :
+    "] <- (data: 0x" : hex64(data) : ", mask: 0x" : hex64(mask) :
+    ", old: 0x"  : hex64(old) : ", new: 0x"  : hex64(new) : ")"
 
-string log_w_mem_mask_misaligned(pAddrIdx::pAddrIdx, vAddr::vAddr, mask::regType, data::regType,
-                                 align::nat, old::regType, new::regType) =
-    "MEM[0x" : PadLeft(#"0", 10, [pAddrIdx]) :
-    "/" : PadLeft(#"0", 10, [vAddr]) :
-    "/ misaligned@" : [align] :
-    "] <- (data: 0x" : PadLeft(#"0", 16, [data]) :
-    ", mask: 0x" : PadLeft(#"0", 16, [mask]) :
-    ", old: 0x"  : PadLeft(#"0", 16, [old]) :
-    ", new: 0x"  : PadLeft(#"0", 16, [new]) :
-    ")"
+string log_w_mem_mask_misaligned(pAddrIdx::pAddrIdx, vAddr::vAddr, mask::regType,
+                                 data::regType, align::nat, old::regType, new::regType) =
+    "MEM[0x" : hex64([pAddrIdx]) : "/" : hex64(vAddr) : "/ misaligned@" : [align] :
+    "] <- (data: 0x" : hex64(data) : ", mask: 0x" : hex64(mask) :
+    ", old: 0x"  : hex64(old) : ", new: 0x"  : hex64(new) : ")"
 
 string log_w_mem(pAddrIdx::pAddrIdx, vAddr::vAddr, data::regType) =
-    "MEM[0x" : PadLeft(#"0", 10, [pAddrIdx]) :
-    "/" : PadLeft(#"0", 10, [vAddr]) :
-    "] <- (data: 0x" : PadLeft(#"0", 16, [data]) : ")"
+    "MEM[0x" : hex64([pAddrIdx]) : "/" : hex64(vAddr) :
+    "] <- (data: 0x" : hex64(data) : ")"
 
 string log_r_mem(pAddrIdx::pAddrIdx, vAddr::vAddr, data::regType) =
-    "data <- MEM[0x" : PadLeft(#"0", 10, [pAddrIdx]) :
-    "/" : PadLeft(#"0", 10, [vAddr]) :
-    "]: 0x" : PadLeft(#"0", 16, [data])
+    "data <- MEM[0x" : PadLeft(#"0", 10, [pAddrIdx]) : "/" : hex64(vAddr) :
+    "]: 0x" : hex64(data)
 
 string log_exc(e::ExceptionType) =
     " Exception " : excName(e) : " raised!"
@@ -1215,13 +1206,16 @@ string log_exc(e::ExceptionType) =
 string log_tohost(tohost::regType) =
     "-> host: " : [[tohost<7:0>]::char]
 
+nat LOG_IO      = 0
+nat LOG_INSN    = 1
+nat LOG_REG     = 2
+nat LOG_MEM     = 3
+nat LOG_ADDRTR  = 4
+
 declare log :: (nat * string) list
 
-unit mark_log(lvl::nat, s::string) = log <- (lvl, s) @ log
-unit clear_logs() = log <- Nil
-
-string hex32(x::word)  = PadLeft(#"0", 8, [x])
-string hex64(x::dword) = PadLeft(#"0", 16, [x])
+unit mark_log(lvl::nat, s::string)  = log <- (lvl, s) @ log
+unit clear_logs()                   = log <- Nil
 
 ---------------------------------------------------------------------------
 -- Exception and Interrupt processing
@@ -1237,12 +1231,12 @@ unit setTrap(e::ExceptionType, badaddr::vAddr option) =
 }
 
 unit signalException(e::ExceptionType) =
-{ mark_log(2, "signalling exception " : excName(e))
+{ mark_log(LOG_INSN, "signalling exception " : excName(e))
 ; setTrap(e, None)
 }
 
 unit signalAddressException(e::ExceptionType, vAddr::vAddr) =
-{ mark_log(2, "signalling address exception " : excName(e) : " at " : [vAddr])
+{ mark_log(LOG_INSN, "signalling address exception " : excName(e) : " at " : [vAddr])
 ; setTrap(e, Some(vAddr))
 }
 
@@ -1334,11 +1328,8 @@ Privilege checkDelegation(curPriv::Privilege, intr::bool, ec::exc_code) =
 
 unit takeTrap(intr::bool, ec::exc_code, epc::regType, badaddr::vAddr option, toPriv::Privilege) =
 { fromP = curPrivilege()
-; mark_log(0, ["trapping from " : privName(fromP)
-               : " to " : privName(toPriv)
-               : " at pc " : [epc]
-               : (if intr then " [intr] " else " [exc] ")
-               : [[ec]::nat] ])
+; mark_log(LOG_INSN, ["trapping from " : privName(fromP) : " to " : privName(toPriv) :
+                      " at pc " : [epc] : (if intr then " [intr] " else " [exc] ") : [[ec]::nat]])
 
 ; ReserveLoad        <- None        -- cancel any load reservation
 ; MCSR.mstatus.MMPRV <- false       -- unset MPRV in each privilege level
@@ -1376,7 +1367,7 @@ unit takeTrap(intr::bool, ec::exc_code, epc::regType, badaddr::vAddr option, toP
 component CSR(n::creg) :: regType
 { value = CSRMap(n)
   assign value =  { CSRMap(n) <- value
-                  ; mark_log(2, log_w_csr(n, value))
+                  ; mark_log(LOG_REG, log_w_csr(n, value))
                   }
 }
 
@@ -1397,22 +1388,13 @@ component GPR(n::reg) :: regType
 { value = if n == 0 then 0 else gpr(n)
   assign value = when n <> 0
                  do { gpr(n) <- value
-                    ; mark_log(2, log_w_gpr(n, value))
+                    ; mark_log(LOG_REG, log_w_gpr(n, value))
                     }
 }
 
 unit writeRD(rd::reg, val::regType) =
 { GPR(rd)       <- val
 ; Delta.data1   <- val
-}
-
-unit dumpRegs() =
-{ mark_log(0, "======   Registers   ======")
-; mark_log(0, "Core = " : [[procID]::nat])
-; mark_log(0, "PC   0x" : hex64(PC))
-; for i in 0 .. 31 do
-      mark_log(0, "Reg " : (if i < 10 then " " else "") : [i] : " 0x" :
-               hex64(GPR([i])))
 }
 
 ---------------------------------------------------------------------------
@@ -1430,16 +1412,16 @@ regType rawReadData(pAddr::pAddr) =
 ; align    = [pAddr<2:0>]::nat
 ; if align == 0   -- aligned read
   then { data = MEM(pAddrIdx)
-       ; mark_log(2, log_r_mem(pAddrIdx,   pAddr, data))
+       ; mark_log(LOG_MEM, log_r_mem(pAddrIdx,   pAddr, data))
        ; data
        }
   else { dw0   = MEM(pAddrIdx)
        ; dw1   = MEM(pAddrIdx+1)
        ; ddw   = (dw1 : dw0) >> (align * 8)
        ; data  = ddw<63:0>
-       ; mark_log(2, log_r_mem(pAddrIdx,   pAddr, dw0))
-       ; mark_log(2, log_r_mem(pAddrIdx+1, pAddr, dw1))
-       ; mark_log(2, log_r_mem(pAddrIdx,   pAddr, data))
+       ; mark_log(LOG_MEM, log_r_mem(pAddrIdx,   pAddr, dw0))
+       ; mark_log(LOG_MEM, log_r_mem(pAddrIdx+1, pAddr, dw1))
+       ; mark_log(LOG_MEM, log_r_mem(pAddrIdx,   pAddr, data))
        ; data
        }
 }
@@ -1450,7 +1432,7 @@ unit rawWriteData(pAddr::pAddr, data::regType, nbytes::nat) =
 ; align    = [pAddr<2:0>] :: nat
 ; old      = MEM(pAddrIdx)
 
-; mark_log(2, log_r_mem(pAddrIdx, pAddr, old))
+; mark_log(LOG_MEM, log_r_mem(pAddrIdx, pAddr, old))
 
 -- The cissr verifier expects to see the full register width, as
 -- opposed to the masked value for non-full-width stores.  It should
@@ -1461,12 +1443,12 @@ unit rawWriteData(pAddr::pAddr, data::regType, nbytes::nat) =
 ; if align == 0     -- aligned write
   then { new = old && ~mask || data && mask
        ; MEM(pAddrIdx) <- new
-       ; mark_log(2, log_w_mem_mask(pAddrIdx, pAddr, mask, data, old, new))
+       ; mark_log(LOG_MEM, log_w_mem_mask(pAddrIdx, pAddr, mask, data, old, new))
        }
   else { if align + nbytes <= Size(mask) div 8      -- write to a single regType-sized block
          then { new = old && ~(mask << (align * 8)) || (data && mask) << (align * 8)
               ; MEM(pAddrIdx) <- new
-              ; mark_log(2, log_w_mem_mask_misaligned(pAddrIdx, pAddr, mask, data, align, old, new))
+              ; mark_log(LOG_MEM, log_w_mem_mask_misaligned(pAddrIdx, pAddr, mask, data, align, old, new))
               }
          -- write touching adjacent regType-sized blocks
          else { dw_old  = MEM(pAddrIdx+1) : old
@@ -1482,7 +1464,7 @@ unit rawWriteData(pAddr::pAddr, data::regType, nbytes::nat) =
 word rawReadInst(pAddr::pAddr) =
 { pAddrIdx = pAddr<63:3>
 ; data     = MEM(pAddrIdx)
-; mark_log(2, log_r_mem(pAddrIdx, pAddr, data))
+; mark_log(LOG_MEM, log_r_mem(pAddrIdx, pAddr, data))
 ; if pAddr<2> then data<63:32> else data<31:0>
 }
 
@@ -1490,7 +1472,7 @@ word rawReadInst(pAddr::pAddr) =
 unit rawWriteMem(pAddr::pAddr, data::regType) =
 { pAddrIdx = pAddr<63:3>
 ; MEM(pAddrIdx) <- data
-; mark_log(2, log_w_mem(pAddrIdx, pAddr, data))
+; mark_log(LOG_MEM, log_w_mem(pAddrIdx, pAddr, data))
 }
 
 ---------------------------------------------------------------------------
@@ -1544,26 +1526,26 @@ register SV_Vaddr :: regType
 ; pt_ofs    = ZeroExtend((va.Sv_VPNi >>+ (level * LEVEL_BITS))<(LEVEL_BITS-1):0>) << 3
 ; pte_addr  = ptb + pt_ofs
 ; pte       = SV_PTE(rawReadData(pte_addr))
-; mark_log(3, ["translate(vaddr=0x" : PadLeft(#"0", 16, [vAddr]) : "): level=" : [level]
-               : " pt_base=0x" : PadLeft(#"0", 16, [ptb])
-               : " pt_ofs=" : [[pt_ofs]::nat]
-               : " pte_addr=0x" : PadLeft(#"0", 16, [pte_addr])
-               : " pte=0x" : PadLeft(#"0", 16, [&pte])])
+; mark_log(LOG_ADDRTR, ["translate(vaddr=0x" : PadLeft(#"0", 16, [vAddr]) : "): level=" : [level]
+                        : " pt_base=0x" : PadLeft(#"0", 16, [ptb])
+                        : " pt_ofs=" : [[pt_ofs]::nat]
+                        : " pte_addr=0x" : PadLeft(#"0", 16, [pte_addr])
+                        : " pte=0x" : PadLeft(#"0", 16, [&pte])])
 ; if not pte.PTE_V
-  then { mark_log(3, "addr_translate: invalid PTE")
+  then { mark_log(LOG_ADDRTR, "addr_translate: invalid PTE")
        ; None
        }
   else { if pte.PTE_T == 0 or pte.PTE_T == 1
          then { -- ptr to next level table
                 if level == 0
-                then { mark_log(3, "last-level pt contains a pointer PTE!")
+                then { mark_log(LOG_ADDRTR, "last-level pt contains a pointer PTE!")
                      ; None
                      }
                 else walk64(vAddr, ft, ac, priv, ZeroExtend(pte.PTE_PPNi << PAGESIZE_BITS), level - 1)
               }
          else { -- leaf PTE
                 if not checkMemPermission(ft, ac, priv, pte.PTE_T)
-                then { mark_log(3, "PTE permission check failure!")
+                then { mark_log(LOG_ADDRTR, "PTE permission check failure!")
                      ; None
                      }
                 else { var pte_w = pte
@@ -1705,7 +1687,7 @@ pAddr option translate64(vAddr::regType, ft::fetchType, ac::accessType, priv::Pr
 ; match lookupTLB(asid, vAddr, TLB)
   { case Some(e, idx) =>
     { if checkMemPermission(ft, ac, priv, e.pte.PTE_T)
-      then { mark_log(3, "TLB hit!")
+      then { mark_log(LOG_ADDRTR, "TLB hit!")
            -- update dirty bit in page table and TLB if needed
            ; when ac == Write and not e.pte.PTE_D
              do { var ent = e
@@ -1717,12 +1699,12 @@ pAddr option translate64(vAddr::regType, ft::fetchType, ac::accessType, priv::Pr
                 }
            ; Some(e.pAddr || (vAddr && e.vAddrMask))
            }
-      else { mark_log(3, "TLB permission check failure")
+      else { mark_log(LOG_ADDRTR, "TLB permission check failure")
            ; None
            }
     }
     case None =>
-    { mark_log(3, "TLB miss!")
+    { mark_log(LOG_ADDRTR, "TLB miss!")
     ; match walk64(vAddr, ft, ac, priv, SCSR.sptbr, level)
       { case Some(pAddr, pte, i, global, pteAddr)  =>
         { TLB <- addToTLB(asid, vAddr, pAddr, pte, pteAddr, i, global, TLB)
@@ -3522,7 +3504,7 @@ unit Next =
 -- Handle the char i/o section of the Berkeley HTIF protocol
 -- following cissrStandalone.c.
 ; when MCSR.mtohost <> 0x0
-  do   { mark_log(0, log_tohost(MCSR.mtohost))
+  do   { mark_log(LOG_IO, log_tohost(MCSR.mtohost))
        -- The HTIF protocol sets bit 0 to indicate exit, with actual
        -- exit code left-shifted by 1 bit.
        ; if MCSR.mtohost<0>
@@ -3535,11 +3517,11 @@ unit Next =
 ; match Fetch()
   { case F_Result(w) =>
     { inst = Decode(w)
-    ; mark_log(1, log_instruction(w, inst))
+    ; mark_log(LOG_INSN, log_instruction(w, inst))
     ; Run(inst)
     }
     case F_Error(inst)  =>
-    { mark_log(1, log_instruction([0::word], inst))
+    { mark_log(LOG_INSN, log_instruction([0::word], inst))
     ; Run(inst)
     }
   }
@@ -3569,8 +3551,8 @@ unit Next =
              ; MCSR.mstatus <- popPrivilegeStack(MCSR.mstatus)
              ; to   = curPrivilege()
 
-             ; mark_log(0, ["exception return from " : privName(from)
-                            : " to " : privName(to)])
+             ; mark_log(LOG_INSN, ["exception return from " : privName(from)
+                                   : " to " : privName(to)])
              }
     case Some(Trap(t)), _ =>
              { NextFetch    <- None
