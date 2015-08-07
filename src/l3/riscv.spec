@@ -782,6 +782,8 @@ bool is_CSR_defined(csr::creg) =
  or  csr >= 0xB01 or (csr == 0xB81 and in32BitMode())
  or (csr >= 0x780 and csr <= 0x783 and csr != 0x782)
 
+--- XXX: the CSRMap below is broken in 32-bit mode, since we need to
+--- convert from 64-bit regType to 32-bit XLEN.
 component CSRMap(csr::creg) :: regType
 {
   value =
@@ -1335,6 +1337,7 @@ unit takeTrap(intr::bool, ec::exc_code, epc::regType, badaddr::vAddr option, toP
 { fromP = curPrivilege()
 ; mark_log(0, ["trapping from " : privName(fromP)
                : " to " : privName(toPriv)
+               : " at pc " : [epc]
                : (if intr then " [intr] " else " [exc] ")
                : [[ec]::nat] ])
 
@@ -3477,23 +3480,24 @@ declare done :: bool   -- Flag to request termination
 nat exitCode() =
     [ExitCode]::nat
 
+-- The clock/timer factor here is arbitrary, except it that if it is
+-- >= approx 200, some 32-bit -pt- tests unexpectedly pass.
+
+nat CYCLES_PER_TIMER_TICK = 200
+
 unit tickClock() =
-{ c_cycles(procID)  <- c_cycles(procID)  + 1
-; clock             <- clock + 1
+{ cycles             = c_cycles(procID) + 1
+; c_cycles(procID)  <- cycles
+; clock             <- cycles div [CYCLES_PER_TIMER_TICK]
 }
 
 unit incrInstret() =
     c_instret(procID) <- c_instret(procID) + 1
 
 unit checkTimers () =
-{ -- The timer implementation here is arbitrary. The factor for the
-  -- wall-clock below was only chosen to get most of the rv*-pt-*
-  -- tests to pass.  However, this factor causes the rv64ui-p-timer
-  -- test to take a very long time.
-  wall_clock = c_instret(procID) div 20
-; when (wall_clock > MCSR.mtimecmp + MCSR.mtime_delta)
+{ when (clock >+ MCSR.mtimecmp + MCSR.mtime_delta)
   do MCSR.mip.MTIP <- true
-; when wall_clock > SCSR.stimecmp + SCSR.stime_delta
+; when (clock >+ SCSR.stimecmp + SCSR.stime_delta)
   do MCSR.mip.STIP <- true
 }
 

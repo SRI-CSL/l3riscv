@@ -1,6 +1,8 @@
 - mcpuid needs to be checked (and set appropriately on initialization) as
   appropriate for each affected instruction
 
+- the 64-bit CSRs in the model need to be projected in 32-bit mode
+
 - floating-point
 
 - RVC
