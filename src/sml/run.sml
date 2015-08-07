@@ -102,13 +102,11 @@ fun isLastCore () =
 
 (* Printing utilities *)
 
-fun printLog (n) = List.app (fn e => print(e ^ "\n"))
-                            (List.rev(riscv.Map.lookup(!riscv.log, n)))
-
-fun logLevels l =
-    if l <= !trace_level
-    then ( printLog(l) ; logLevels(l+1) )
-    else ()
+fun printLog () = List.app (fn (n, l) =>
+                               if n <= !trace_level
+                               then print (l ^ "\n")
+                               else ()
+                           ) (List.rev (!riscv.log))
 
 local
     fun readReg i = hex64 (riscv.GPR (BitsN.fromNat (i, 5)))
@@ -200,7 +198,7 @@ fun logLoop mx i =
     ( riscv.scheduleCore (nextCoreToSchedule ())
     ; riscv.Next ()
     ; print ("\n")
-    ; logLevels (0)
+    ; printLog ()
     ; if !verify then doVerify() else ()
     ; if !riscv.done orelse i = mx orelse isVerifyDone ()
       then ( print ("ExitCode: " ^ Nat.toString (riscv.exitCode ()) ^ "\n")
@@ -308,7 +306,7 @@ fun doElf cycles file dis =
         else ()
 
       ; if dis
-        then logLevels (0)
+        then printLog ()
         else runWrapped cycles
     end
 

@@ -1215,11 +1215,10 @@ string log_exc(e::ExceptionType) =
 string log_tohost(tohost::regType) =
     "-> host: " : [[tohost<7:0>]::char]
 
-declare log :: nat -> string list   -- One log per "trace level"
+declare log :: (nat * string) list
 
-unit mark_log(lvl::nat, s::string) = log(lvl) <- s @ log(lvl)
-unit unmark_log(lvl::nat) = log(lvl) <- Tail(log(lvl))
-unit clear_logs() = for i in 0 .. 5 do log(i) <- Nil
+unit mark_log(lvl::nat, s::string) = log <- (lvl, s) @ log
+unit clear_logs() = log <- Nil
 
 string hex32(x::word)  = PadLeft(#"0", 8, [x])
 string hex64(x::dword) = PadLeft(#"0", 16, [x])
