@@ -1539,7 +1539,7 @@ register SV_Vaddr :: regType
   11-0  : Sv_PgOfs
 }
 
-(pAddr * permType * nat * bool) option
+(pAddr * SV_PTE * nat * bool * pAddr) option
  walk64(vAddr::vAddr, ft::fetchType, ac::accessType, priv::Privilege, ptb::regType, level::nat) =
 { va        = SV_Vaddr(vAddr)
 ; pt_ofs    = ZeroExtend((va.Sv_VPNi >>+ (level * LEVEL_BITS))<(LEVEL_BITS-1):0>) << 3
@@ -1569,8 +1569,8 @@ register SV_Vaddr :: regType
                      }
                 else { var pte_w = pte
                      -- update referenced and dirty bits
-                     ; old_r = pte_w.PTE_R
-                     ; old_d = pte_w.PTE_D
+                     ; old_r = pte.PTE_R
+                     ; old_d = pte.PTE_D
                      ; pte_w.PTE_R <- true
                      ; when ac == Write
                        do pte_w.PTE_D <- true
@@ -1581,7 +1581,7 @@ register SV_Vaddr :: regType
                              then ((ZeroExtend((pte.PTE_PPNi >>+ (level * LEVEL_BITS)) << (level * LEVEL_BITS)))
                                    || ZeroExtend(va.Sv_VPNi && ((1 << (level * LEVEL_BITS)) - 1)))
                              else pte.PTE_PPNi
-                     ; Some(ZeroExtend(ppn : va.Sv_PgOfs), pte_w.PTE_T, level, isGlobal(pte.PTE_T))
+                     ; Some(ZeroExtend(ppn : va.Sv_PgOfs), pte_w, level, isGlobal(pte.PTE_T), pte_addr)
                      }
               }
        }
@@ -1611,19 +1611,23 @@ record TLBEntry
   global        :: bool
   vAddr         :: vAddr        -- VPN
   vMatchMask    :: vAddr        -- matching mask for superpages
-  perm          :: permType
 
   pAddr         :: pAddr        -- PPN
   vAddrMask     :: vAddr        -- selection mask for superpages
 
+  pte           :: SV_PTE       -- permissions and dirty bit writeback
+  pteAddr       :: pAddr
+
   age           :: regType      -- derived from instret
 }
 
-TLBEntry mkTLBEntry(asid::asidType, global::bool, vAddr::vAddr, pAddr::pAddr, perm::permType, i::nat) =
+TLBEntry mkTLBEntry(asid::asidType, global::bool, vAddr::vAddr, pAddr::pAddr,
+                    pte::SV_PTE, i::nat, pteAddr::pAddr) =
 { var ent :: TLBEntry
 ; ent.asid          <- asid
 ; ent.global        <- global
-; ent.perm          <- perm
+; ent.pte           <- pte
+; ent.pteAddr       <- pteAddr
 ; ent.vAddrMask     <- ((1::vAddr) << ((LEVEL_BITS*i) + PAGESIZE_BITS)) - 1
 ; ent.vMatchMask    <- (SignExtend('1')::vAddr) ?? ent.vAddrMask
 ; ent.vAddr         <- vAddr && ent.vMatchMask
@@ -1636,22 +1640,22 @@ nat  TLBEntries = 16
 type tlbIdx     = bits(4)
 type TLBMap     = tlbIdx -> TLBEntry option
 
-TLBEntry option lookupTLB(asid::asidType, vAddr::vAddr, tlb::TLBMap) =
+(TLBEntry * tlbIdx) option lookupTLB(asid::asidType, vAddr::vAddr, tlb::TLBMap) =
 { var ent = None
 ; for i in 0 .. TLBEntries - 1 do
   { match tlb([i])
     { case Some(e) => when ent == None and (e.global or e.asid == asid)
                            and (e.vAddr == vAddr && e.vMatchMask)
-                      do ent <- Some(e)
+                      do ent <- Some(e, [i])
       case None    => ()
     }
   }
 ; ent
 }
 
-TLBMap addToTLB(asid::asidType, vAddr::vAddr, pAddr::pAddr, perm::permType,
+TLBMap addToTLB(asid::asidType, vAddr::vAddr, pAddr::pAddr, pte::SV_PTE, pteAddr::pAddr,
                 i::nat, global::bool, curTLB::TLBMap) =
-{ var ent       = mkTLBEntry(asid, global, vAddr, pAddr, perm, i)
+{ var ent       = mkTLBEntry(asid, global, vAddr, pAddr, pte, i, pteAddr)
 ; var tlb       = curTLB
 ; var oldest    = SignExtend('1')
 ; var addIdx    = 0
@@ -1700,9 +1704,18 @@ component TLB :: TLBMap
 pAddr option translate64(vAddr::regType, ft::fetchType, ac::accessType, priv::Privilege, level::nat) =
 { asid = curASID()
 ; match lookupTLB(asid, vAddr, TLB)
-  { case Some(e) =>
-    { if checkMemPermission(ft, ac, priv, e.perm)
+  { case Some(e, idx) =>
+    { if checkMemPermission(ft, ac, priv, e.pte.PTE_T)
       then { mark_log(3, "TLB hit!")
+           -- update dirty bit in page table and TLB if needed
+           ; when ac == Write and not e.pte.PTE_D
+             do { var ent = e
+                ; ent.pte.PTE_D <- true
+                ; rawWriteData(ent.pteAddr, ent.&pte, 8)
+                ; var tlb = TLB
+                ; tlb([idx]) <- Some(ent)
+                ; TLB <- tlb
+                }
            ; Some(e.pAddr || (vAddr && e.vAddrMask))
            }
       else { mark_log(3, "TLB permission check failure")
@@ -1712,8 +1725,8 @@ pAddr option translate64(vAddr::regType, ft::fetchType, ac::accessType, priv::Pr
     case None =>
     { mark_log(3, "TLB miss!")
     ; match walk64(vAddr, ft, ac, priv, SCSR.sptbr, level)
-      { case Some(pAddr, perm, i, global)  =>
-        { TLB <- addToTLB(asid, vAddr, pAddr, perm, i, global, TLB)
+      { case Some(pAddr, pte, i, global, pteAddr)  =>
+        { TLB <- addToTLB(asid, vAddr, pAddr, pte, pteAddr, i, global, TLB)
         ; Some(pAddr)
         }
         case None   => None
