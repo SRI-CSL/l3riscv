@@ -30,7 +30,7 @@ static void check_open() {
   }
 }
 
-void l3riscv_load_elf(const char *filename)
+void l3riscv_mem_load_elf(const char *filename)
 {
   char *f;
   check_open();
@@ -44,54 +44,42 @@ void l3riscv_load_elf(const char *filename)
   (void) _l3r_load_elf(f);
 }
 
-uint64_t l3riscv_get_min_mem_addr()
+uint64_t l3riscv_mem_get_min_addr()
 {
   check_open();
-  return _l3_get_mem_base();
+  return _l3r_get_mem_base();
 }
 
-uint64_t l3riscv_get_max_mem_addr()
+uint64_t l3riscv_mem_get_max_addr()
 {
   check_open();
 
-  uint64_t base = _l3_get_mem_base();
-  uint64_t size = _l3_get_mem_size();
+  uint64_t base = _l3r_get_mem_base();
+  uint64_t size = _l3r_get_mem_size();
   return base + size;
 }
 
 /* _l3r_read_mem internally handles unaligned reads */
 
-uint64_t l3riscv_read_mem_64(uint64_t mem_addr)
+uint64_t l3riscv_mem_read_64(uint64_t mem_addr)
 {
   check_open();
   return _l3r_read_mem(mem_addr);
 }
 
-uint32_t l3riscv_read_mem_32(uint64_t mem_addr)
+uint32_t l3riscv_mem_read_32(uint64_t mem_addr)
 {
   check_open();
   return (uint32_t) _l3r_read_mem(mem_addr);
 }
 
+void l3riscv_mem_write_32(uint64_t addr, uint32_t val)
+{ assert(false); }
+
+void l3riscv_mem_write_64(uint64_t addr, uint64_t val)
+{ assert(false); }
+
 /* TODO: */
-
-uint32_t l3riscv_verify(uint32_t exc_taken,
-                        uint64_t pc,
-                        uint64_t addr,
-                        uint64_t data1,
-                        uint64_t data2,
-                        uint64_t data3,
-                        uint64_t fpdata,
-                        uint32_t verbosity)
-{  check_open();
-  return 0;
-}
-
-uint64_t l3riscv_get_exit_pc()
-{
-  check_open();
-  return 0;
-}
 
 void l3riscv_cpu_reset(uint64_t mem_base_addr, uint64_t mem_size)
 { assert(false); }
@@ -105,11 +93,17 @@ void l3riscv_cpu_write_gpr(uint8_t gpr, uint64_t val)
 void l3riscv_cpu_write_csr(uint16_t csr, uint64_t val)
 { assert(false); }
 
-void l3riscv_cpu_write_mem32(uint64_t addr, uint32_t val)
-{ assert(false); }
-
 void l3riscv_cpu_write_fpr(uint8_t fpr, uint64_t val)
 { assert(false); }
 
-void l3riscv_cpu_write_fsr(uint32_t fsr)
-{ assert(false); }
+uint32_t l3riscv_verify(uint32_t exc_taken,
+                        uint64_t pc,
+                        uint64_t addr,
+                        uint64_t data1,
+                        uint64_t data2,
+                        uint64_t data3,
+                        uint64_t fpdata,
+                        uint32_t verbosity)
+{  check_open();
+  return 0;
+}
