@@ -1,4 +1,3 @@
-/* These are for C_isa.h, taken from C_isa.c */
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -12,50 +11,81 @@
 #else
 #include <values.h>    // For Linux
 #endif
-/* End prologue. */
-#ifdef USE_CISSR
-#include <Cissr/C_isa_verify.h>
-#endif
-#include "riscv_oracle.h"
 
-void oracle_reset (uint64_t mem_base, uint64_t mem_size)
-{
-#ifdef USE_CISSR
-  cissr_cpu_reset(mem_base, mem_size);
-#endif
+#define PART_OF_L3RISCV 1
+#include "riscv_ffi.h"
+
+#define ENV_FILENAME "SIM_ELF_FILENAME"
+
+static int lib_is_opened = 0;
+
+static void check_open() {
+  if (!lib_is_opened) {
+    char *argv = NULL;
+
+    l3riscv_open(0, &argv);
+    _l3r_init_model();
+
+    lib_is_opened = 1;
+  }
 }
 
-void oracle_load (const char *filename)
+void l3riscv_load_elf(const char *filename)
 {
-#ifdef USE_CISSR
-  c_load_elf(filename);
-#endif
+  char *f;
+  check_open();
+
+  f = filename ? filename : getenv(ENV_FILENAME);
+  if (NULL == f) {
+    fprintf(stderr, "l3riscv_load_elf: no filename specified.\n");
+    exit(1);
+  }
+
+  (void) _l3r_load_elf(f);
 }
 
-uint32_t oracle_verify (uint32_t exc_taken,
-                        uint64_t pc,
-                        uint64_t addr,
-                        uint64_t data1,
-                        uint64_t data2,
-                        uint64_t data3,
-                        uint64_t fpdata,
-                        uint32_t verbosity)
+uint64_t l3riscv_get_min_mem_addr ()
+{
+  check_open();
+  return _l3_get_mem_base ();
+}
+
+uint64_t l3riscv_get_max_mem_addr ()
+{
+  check_open();
+
+  uint64_t base = _l3_get_mem_base();
+  uint64_t size = _l3_get_mem_size();
+  return base + size;
+}
+
+uint64_t l3riscv_read_mem_64 (uint64_t mem_addr)
+{
+  check_open();
+  return 0;
+}
+
+uint32_t l3riscv_read_mem_32 (uint64_t mem_addr)
+{
+  check_open();
+  return 0;
+}
+
+uint32_t l3riscv_verify (uint32_t exc_taken,
+                         uint64_t pc,
+                         uint64_t addr,
+                         uint64_t data1,
+                         uint64_t data2,
+                         uint64_t data3,
+                         uint64_t fpdata,
+                         uint32_t verbosity)
 { uint32_t ret = 0;
-#ifdef USE_CISSR
-  /* Enable max verbosity. */
-  ret = !cissr_verify_instr(exc_taken, pc, addr, data1, data2, data3, fpdata, verbosity);
-  /* Ensure verbose output is immediately visible instead of buffered in libc. */
-  fflush(stdout);
-  fflush(stderr);
-#endif
+  check_open();
   return ret;
 }
 
-uint64_t oracle_get_exit_pc ()
+uint64_t l3riscv_get_exit_pc ()
 {
-#ifdef USE_CISSR
-  return c_get_exit_pc();
-#else
+  check_open();
   return 0;
-#endif
 }

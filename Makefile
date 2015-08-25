@@ -47,7 +47,7 @@ endif
 # make targets
 #######################################
 
-all: l3riscv
+all: l3riscv l3riscv.so
 
 ${SMLSRCDIR}/riscv.sig ${SMLSRCDIR}/riscv.sml: ${L3SRC}
 	echo 'SMLExport.spec ("${L3SRC}", "${SMLSRCDIR}/riscv")' | l3
@@ -56,6 +56,12 @@ l3riscv: ${SMLLIB} ${SMLSRC} Makefile
 	mlton $(MLTON_OPTS) \
               $(MLTON_LIB_OPTS) \
               -output $@ ${SMLSRCDIR}/$(MLBFILE) ${SMLSRCDIR}/riscv_cissr.c
+
+l3riscv.so: ${SMLLIB} ${SMLSRC} Makefile
+	mlton $(MLTON_OPTS) \
+              $(MLTON_LIB_OPTS) \
+              -format library \
+              -output $@ ${SMLSRCDIR}/$(MLBFILE) ${SMLSRCDIR}/riscv_oracle.c
 
 clean:
 	rm -f l3riscv

@@ -146,9 +146,8 @@ fun disassemble pc range =
           ; disassemble (pc + 4) (range - 4)
          end
 
-(* Tandem verification *)
-
-(* client interface: external oracle, currently cissr *)
+(* Tandem verification:
+   client interface: external oracle, currently cissr *)
 val oracle_reset = _import "cissr_reset" : (Int64.int * Int64.int) -> unit;
 fun initVerify () =
     oracle_reset (!mem_base_addr, !mem_size)
@@ -287,7 +286,7 @@ fun initCores (arch, pc) =
            )
     )
 
-fun doElf cycles file dis =
+fun setupElf file dis =
     let val elf   = Elf.openElf file
         val hdr   = Elf.getElfHeader elf
         val psegs = Elf.getElfProgSegments elf hdr
@@ -302,6 +301,14 @@ fun doElf cycles file dis =
         else ()
       ; be := (if (#endian hdr = Elf.BIG) then true else false)
       ; loadElf psegs dis
+    end
+
+fun doElf cycles file dis =
+    let val elf   = Elf.openElf file
+        val hdr   = Elf.getElfHeader elf
+        val psegs = Elf.getElfProgSegments elf hdr
+    in  setupElf file dis
+
       ; if !verify
         then loadVerify file
         else ()
@@ -310,6 +317,24 @@ fun doElf cycles file dis =
         then printLog ()
         else runWrapped cycles
     end
+
+(* Tandem verification:
+   server interface: verify against model *)
+
+fun initModel () =
+    let val exp_mem_base = _export "_l3r_get_mem_base" private : (unit -> Int64.int) -> unit;
+        val exp_mem_size = _export "_l3r_get_mem_size" private : (unit -> Int64.int) -> unit;
+        val exp_load_elf = _export "_l3r_load_elf"     private : (string -> Int64.int) -> unit;
+    in  exp_mem_base (fn () => !mem_base_addr)
+      ; exp_mem_size (fn () => !mem_size)
+      ; exp_load_elf (fn s  => (setupElf s false; 0) handle _ => ~1)
+
+      ; initPlatform (1)
+    end
+
+val _ = let val exp = _export "_l3r_init_model" private : (unit -> unit) -> unit;
+        in exp initModel
+        end
 
 (* Command line interface *)
 
