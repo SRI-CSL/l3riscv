@@ -336,13 +336,20 @@ fun doElf cycles file dis =
    server interface: verify against model *)
 
 fun initModel () =
-    let val exp_mem_base = _export "_l3r_get_mem_base" private : (unit -> Int64.int) -> unit;
-        val exp_mem_size = _export "_l3r_get_mem_size" private : (unit -> Int64.int) -> unit;
-        val exp_load_elf = _export "_l3r_load_elf"     private : (string -> Int64.int) -> unit;
+    let val exp_mem_base = _export "_l3r_get_mem_base" private : (unit -> Int64.int)        -> unit
+      ; val exp_mem_size = _export "_l3r_get_mem_size" private : (unit -> Int64.int)        -> unit
+      ; val exp_load_elf = _export "_l3r_load_elf"     private : (string -> Int64.int)      -> unit
+      ; val exp_mem_read = _export "_l3r_read_mem"     private : (Int64.int -> Int64.int)   -> unit
+      ;
     in  exp_mem_base (fn () => !mem_base_addr)
       ; exp_mem_size (fn () => !mem_size)
       ; exp_load_elf (fn s  => (setupElf s false; 0) handle _ => ~1)
-
+      ; exp_mem_read (fn a  =>
+                         let val addr  = BitsN.fromInt (Int64.toInt a, 64)
+                             val dword = riscv.rawReadData addr
+                         in  Int64.fromInt (BitsN.toInt dword)
+                         end
+                     )
       ; initPlatform (1)
     end
 
