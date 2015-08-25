@@ -148,12 +148,13 @@ fun disassemble pc range =
 
 (* Tandem verification *)
 
-val oracle_reset = _import "oracle_reset" : (Int64.int * Int64.int) -> unit;
+(* client interface: external oracle, currently cissr *)
+val oracle_reset = _import "cissr_reset" : (Int64.int * Int64.int) -> unit;
 fun initVerify () =
     oracle_reset (!mem_base_addr, !mem_size)
 
-val oracle_load     = _import "oracle_load" : string -> unit;
-val oracle_get_exit = _import "oracle_get_exit_pc" : unit -> Int64.int;
+val oracle_load     = _import "cissr_load" : string -> unit;
+val oracle_get_exit = _import "cissr_get_exit_pc" : unit -> Int64.int;
 fun loadVerify filename =
     ( oracle_load filename
     ; verify_exit_pc := oracle_get_exit ()
@@ -161,7 +162,7 @@ fun loadVerify filename =
     )
 
 val oracle_verify =
-    _import "oracle_verify" : (bool
+    _import "cissr_verify"  : (bool
                                * Int64.int * Int64.int * Int64.int
                                * Int64.int * Int64.int * Int64.int
                                * Int32.int) -> bool;
