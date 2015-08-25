@@ -138,12 +138,12 @@ fun disassemble pc range =
     else let val addr = BitsN.fromInt (IntInf.toInt pc, 64)
              val word = riscv.rawReadInst (addr)
              val inst = riscv.Decode word
-         in print ("0x" ^ (L3.padLeftString(#"0", (10, BitsN.toHexString addr)))
-                   ^ ": 0x" ^ hex32 word
-                   ^ ": " ^ riscv.instructionToString inst
-                   ^ "\n"
-                  )
-          ; disassemble (pc + 4) (range - 4)
+         in  print ("0x" ^ (L3.padLeftString(#"0", (10, BitsN.toHexString addr)))
+                    ^ ": 0x" ^ hex32 word
+                    ^ ": " ^ riscv.instructionToString inst
+                    ^ "\n"
+                   )
+           ; disassemble (pc + 4) (range - 4)
          end
 
 (* Tandem verification:
@@ -175,8 +175,7 @@ fun doVerify () =
         val data3       = Int64.fromInt (BitsN.toInt (#data3   delta))
         val fp_data     = Int64.fromInt (BitsN.toInt (#fp_data delta))
         val verbosity   = Int32.fromInt (!trace_level)
-    in
-        if oracle_verify (exc_taken, pc, addr, data1, data2, data3, fp_data, verbosity)
+    in  if oracle_verify (exc_taken, pc, addr, data1, data2, data3, fp_data, verbosity)
         then ()
         else ( print "Verification error:\n"
              ; dumpRegisters (currentCore ())
@@ -215,10 +214,10 @@ fun silentLoop mx =
     ; if !verify then doVerify() else ()
     ; if !riscv.done orelse (mx = 1) orelse isVerifyDone ()
       then let val ec = riscv.exitCode ()
-           in print ("done: exit code " ^ Nat.toString ec ^ "\n")
-            ; OS.Process.exit (if ec = 0
-                               then OS.Process.success
-                               else OS.Process.failure)
+           in  print ("done: exit code " ^ Nat.toString ec ^ "\n")
+             ; OS.Process.exit (if ec = 0
+                                then OS.Process.success
+                                else OS.Process.failure)
            end
       else silentLoop (if isLastCore () then (decr mx) else mx)
     )
@@ -252,6 +251,15 @@ fun loadElf segs dis =
                              )
                         else ()
                       ; storeVecInMem ((#vaddr s), (#memsz s), (#bytes s))
+                      (* update memory range *)
+                      ; if Int64.<(Int64.fromInt (#vaddr s), !mem_base_addr)
+                        then mem_base_addr := Int64.fromInt (#vaddr s)
+                        else ()
+                      ; if Int64.>( Int64.fromInt ((#vaddr s) + (#memsz s))
+                                  , !mem_base_addr + !mem_size)
+                        then mem_size := Int64.-( Int64.fromInt ((#vaddr s) + (#memsz s))
+                                                , !mem_base_addr)
+                        else ()
                       (* TODO: should check flags for executable segment *)
                       ; if dis then disassemble (#vaddr s) (#memsz s)
                         else ()
@@ -290,8 +298,10 @@ fun setupElf file dis =
     let val elf   = Elf.openElf file
         val hdr   = Elf.getElfHeader elf
         val psegs = Elf.getElfProgSegments elf hdr
-    in  initCores (if (#class hdr) = Elf.BIT_32
-                   then riscv.RV32I else riscv.RV64I
+        fun h64 n = Int64.fmt StringCvt.HEX n
+        fun d64 n = Int64.toString n
+    in  initCores ( if (#class hdr) = Elf.BIT_32
+                    then riscv.RV32I else riscv.RV64I
                   , if !boot then 0x200 else (#entry hdr)
                   )
       ; if !trace_elf
@@ -301,6 +311,12 @@ fun setupElf file dis =
         else ()
       ; be := (if (#endian hdr = Elf.BIG) then true else false)
       ; loadElf psegs dis
+      ; if !trace_elf
+        then ( print ("\nMem base: " ^ (h64 (!mem_base_addr)))
+             ; print ("\nMem size: " ^ (h64 (!mem_size))
+                      ^ " (" ^ (d64 (!mem_size)) ^ ")\n")
+             )
+        else ()
     end
 
 fun doElf cycles file dis =
@@ -308,11 +324,9 @@ fun doElf cycles file dis =
         val hdr   = Elf.getElfHeader elf
         val psegs = Elf.getElfProgSegments elf hdr
     in  setupElf file dis
-
       ; if !verify
         then loadVerify file
         else ()
-
       ; if dis
         then printLog ()
         else runWrapped cycles
@@ -333,7 +347,7 @@ fun initModel () =
     end
 
 val _ = let val exp = _export "_l3r_init_model" private : (unit -> unit) -> unit;
-        in exp initModel
+        in  exp initModel
         end
 
 (* Command line interface *)
@@ -378,7 +392,7 @@ local
                    then (SOME b, List.rev acc @ r)
                    else loop (a :: acc) (b :: r)
               | r => (NONE, List.rev acc @ r)
-        in loop []
+        in  loop []
         end
 in
 val () =
@@ -398,9 +412,9 @@ val () =
             val v = Option.getOpt (Option.map getBool v, !verify)
 
             val () = trace_level := Int.max (0, t)
-            val () = verify := v
-        in
-            if List.null l then printUsage ()
+            val () = verify      := v
+            val () = trace_elf   := d
+        in  if List.null l then printUsage ()
             else ( initPlatform (m)
                  ; doElf c (List.hd l) d
                  )
