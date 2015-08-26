@@ -19,25 +19,41 @@
 
 static int lib_is_opened = 0;
 
+const char *dummy_argv[] = {
+  "libl3riscv.so",
+  "-v",
+  "true",
+  NULL
+};
+
 static void check_open() {
   if (!lib_is_opened) {
     char *argv = NULL;
 
-    l3riscv_open(0, &argv);
+    l3riscv_open(3, dummy_argv);
     _l3r_init_model();
 
     lib_is_opened = 1;
   }
 }
 
+void l3riscv_init() {
+  check_open();
+}
+
+void l3riscv_done() {
+  l3riscv_close();
+}
+
 void l3riscv_mem_load_elf(const char *filename)
 {
   char *f;
+  fprintf(stderr, "opening l3riscv.so ...\n");
   check_open();
 
   f = filename ? filename : getenv(ENV_FILENAME);
   if (NULL == f) {
-    fprintf(stderr, "l3riscv_load_elf: no filename specified.\n");
+    fprintf(stderr, "l3riscv_mem_load_elf: no filename specified.\n");
     exit(1);
   }
 
@@ -104,6 +120,6 @@ uint32_t l3riscv_verify(uint32_t exc_taken,
                         uint64_t data3,
                         uint64_t fpdata,
                         uint32_t verbosity)
-{  check_open();
+{ check_open();
   return 0;
 }

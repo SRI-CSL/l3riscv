@@ -7,6 +7,9 @@
 #include <values.h>    // For Linux
 #endif
 
+void l3riscv_init();
+void l3riscv_done();
+
 void l3riscv_mem_load_elf(const char *filename);
 
 uint64_t l3riscv_mem_get_min_addr();

@@ -35,6 +35,8 @@ val trace_elf   = ref false
 val check           = ref false
 val checker_exit_pc = ref (Int64.fromInt (~1))
 
+val verifier_mode   = ref false
+
 (* Utilities *)
 
 fun hex s = L3.lowercase (BitsN.toHexString s)
@@ -366,11 +368,11 @@ local
               \http://www.cl.cam.ac.uk/~acjf3/l3\n\n\
               \usage: " ^ OS.Path.file (CommandLine.name ()) ^ " [arguments] file\n\n\
               \Arguments:\n\
-              \  --dis <bool>         only disassemble loaded code\n\
+              \  --dis    <bool>      only disassemble loaded code\n\
               \  --cycles <number>    upper bound on instruction cycles\n\
-              \  --trace <level>      verbosity level (0 default, 2 maximum)\n\
-              \  --multi <#cores>     number of cores (1 default)\n\
-              \  --check              check execution against external verifier\n\
+              \  --trace  <level>     verbosity level (0 default, 2 maximum)\n\
+              \  --multi  <#cores>    number of cores (1 default)\n\
+              \  --check  <bool>      check execution against external verifier\n\
               \  -h or --help         print this message\n\n")
 
     fun getNumber s =
@@ -391,6 +393,7 @@ local
             | "-h"   => "--help"
             | "-k"   => "--check"
             | "-m"   => "--multi"
+            | "-v"   => "--verifier"
             | s      => s
             ) (CommandLine.arguments ())
 
@@ -408,21 +411,25 @@ val () =
     case getArguments () of
         ["--help"] => printUsage ()
       | l =>
-        let val (c, l) = processOption "--cycles" l
-            val (t, l) = processOption "--trace"  l
-            val (d, l) = processOption "--dis"    l
-            val (k, l) = processOption "--check" l
-            val (m, l) = processOption "--multi"  l
+        let val (c, l) = processOption "--cycles"   l
+            val (t, l) = processOption "--trace"    l
+            val (d, l) = processOption "--dis"      l
+            val (k, l) = processOption "--check"    l
+            val (m, l) = processOption "--multi"    l
+            val (v, l) = processOption "--verifier" l
 
             val c = Option.getOpt (Option.map getNumber c, ~1)
             val d = Option.getOpt (Option.map getBool d, false)
             val t = Option.getOpt (Option.map getNumber t, !trace_level)
             val m = Option.getOpt (Option.map getNumber m, 1)
             val k = Option.getOpt (Option.map getBool k, !check)
+            val v = Option.getOpt (Option.map getBool v, !verifier_mode)
 
-            val () = trace_level := Int.max (0, t)
-            val () = check       := k
-            val () = trace_elf   := d
+            val () = trace_level    := Int.max (0, t)
+            val () = check          := k
+            val () = trace_elf      := d
+            val () = verifier_mode  := v
+
         in  if List.null l then printUsage ()
             else ( initPlatform (m)
                  ; doElf c (List.hd l) d
