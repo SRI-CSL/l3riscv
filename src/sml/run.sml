@@ -32,8 +32,8 @@ val time_run    = ref true
 val trace_level = ref 0
 val trace_elf   = ref false
 
-val verify          = ref false
-val verify_exit_pc  = ref (Int64.fromInt (~1))
+val check           = ref false
+val checker_exit_pc = ref (Int64.fromInt (~1))
 
 (* Utilities *)
 
@@ -149,23 +149,23 @@ fun disassemble pc range =
 (* Tandem verification:
    client interface: external oracle, currently cissr *)
 val oracle_reset = _import "oracle_reset" : (Int64.int * Int64.int) -> unit;
-fun initVerify () =
+fun initChecker () =
     oracle_reset (!mem_base_addr, !mem_size)
 
 val oracle_load     = _import "oracle_load" : string -> unit;
 val oracle_get_exit = _import "oracle_get_exit_pc" : unit -> Int64.int;
-fun loadVerify filename =
+fun loadChecker filename =
     ( oracle_load filename
-    ; verify_exit_pc := oracle_get_exit ()
-    ; print ("Set exit pc to 0x" ^ Int64.fmt StringCvt.HEX (!verify_exit_pc) ^ "\n")
+    ; checker_exit_pc := oracle_get_exit ()
+    ; print ("Set exit pc to 0x" ^ Int64.fmt StringCvt.HEX (!checker_exit_pc) ^ "\n")
     )
 
-val oracle_verify =
-    _import "oracle_verify"  : (bool
+val oracle_check =
+    _import "oracle_check"  : (bool
                                * Int64.int * Int64.int * Int64.int
                                * Int64.int * Int64.int * Int64.int
                                * Int32.int) -> bool;
-fun doVerify () =
+fun doCheck () =
     let val delta       = riscv.Delta ()
         val exc_taken   = #exc_taken delta
         val pc          = Int64.fromInt (BitsN.toInt (#pc      delta))
@@ -175,7 +175,7 @@ fun doVerify () =
         val data3       = Int64.fromInt (BitsN.toInt (#data3   delta))
         val fp_data     = Int64.fromInt (BitsN.toInt (#fp_data delta))
         val verbosity   = Int32.fromInt (!trace_level)
-    in  if oracle_verify (exc_taken, pc, addr, data1, data2, data3, fp_data, verbosity)
+    in  if oracle_check (exc_taken, pc, addr, data1, data2, data3, fp_data, verbosity)
         then ()
         else ( print "Verification error:\n"
              ; dumpRegisters (currentCore ())
@@ -183,11 +183,11 @@ fun doVerify () =
              )
     end
 
-fun isVerifyDone () =
-    if !verify then
+fun isCheckerDone () =
+    if !check then
         let val pc   = BitsN.toInt (riscv.Map.lookup(!riscv.c_PC, 0))
             val pc64 = Int64.fromInt pc
-        in  Int64.compare (!verify_exit_pc, pc64) = EQUAL
+        in  Int64.compare (!checker_exit_pc, pc64) = EQUAL
         end
     else false
 
@@ -198,8 +198,8 @@ fun logLoop mx i =
     ; riscv.Next ()
     ; print ("\n")
     ; printLog ()
-    ; if !verify then doVerify() else ()
-    ; if !riscv.done orelse i = mx orelse isVerifyDone ()
+    ; if !check then doCheck() else ()
+    ; if !riscv.done orelse i = mx orelse isCheckerDone ()
       then ( print ("ExitCode: " ^ Nat.toString (riscv.exitCode ()) ^ "\n")
            ; print ("Completed " ^ Int.toString (i + 1) ^ " instructions.\n")
            )
@@ -211,8 +211,8 @@ fun decr i = if i <= 0 then i else i - 1
 fun silentLoop mx =
     ( riscv.scheduleCore (nextCoreToSchedule ())
     ; riscv.Next ()
-    ; if !verify then doVerify() else ()
-    ; if !riscv.done orelse (mx = 1) orelse isVerifyDone ()
+    ; if !check then doCheck() else ()
+    ; if !riscv.done orelse (mx = 1) orelse isCheckerDone ()
       then let val ec = riscv.exitCode ()
            in  print ("done: exit code " ^ Nat.toString ec ^ "\n")
              ; OS.Process.exit (if ec = 0
@@ -275,10 +275,10 @@ fun initPlatform (cores) =
     ; riscv.procID    := BitsN.B(0, BitsN.size(!riscv.procID))
     ; riscv.totalCore := cores
     ; riscv.initMem (BitsN.fromInt
-                         ((if !verify then 0xaaaaaaaaAAAAAAAA else 0x0)
+                         ((if !check then 0xaaaaaaaaAAAAAAAA else 0x0)
                          , 64))
-    ; if !verify
-      then initVerify ()
+    ; if !check
+      then initChecker ()
       else ()
     )
 
@@ -324,8 +324,8 @@ fun doElf cycles file dis =
         val hdr   = Elf.getElfHeader elf
         val psegs = Elf.getElfProgSegments elf hdr
     in  setupElf file dis
-      ; if !verify
-        then loadVerify file
+      ; if !check
+        then loadChecker file
         else ()
       ; if dis
         then printLog ()
@@ -369,6 +369,8 @@ local
               \  --dis <bool>         only disassemble loaded code\n\
               \  --cycles <number>    upper bound on instruction cycles\n\
               \  --trace <level>      verbosity level (0 default, 2 maximum)\n\
+              \  --multi <#cores>     number of cores (1 default)\n\
+              \  --check              check execution against external verifier\n\
               \  -h or --help         print this message\n\n")
 
     fun getNumber s =
@@ -387,7 +389,7 @@ local
             | "-t"   => "--trace"
             | "-d"   => "--dis"
             | "-h"   => "--help"
-            | "-v"   => "--verify"
+            | "-k"   => "--check"
             | "-m"   => "--multi"
             | s      => s
             ) (CommandLine.arguments ())
@@ -409,17 +411,17 @@ val () =
         let val (c, l) = processOption "--cycles" l
             val (t, l) = processOption "--trace"  l
             val (d, l) = processOption "--dis"    l
-            val (v, l) = processOption "--verify" l
+            val (k, l) = processOption "--check" l
             val (m, l) = processOption "--multi"  l
 
             val c = Option.getOpt (Option.map getNumber c, ~1)
             val d = Option.getOpt (Option.map getBool d, false)
             val t = Option.getOpt (Option.map getNumber t, !trace_level)
             val m = Option.getOpt (Option.map getNumber m, 1)
-            val v = Option.getOpt (Option.map getBool v, !verify)
+            val k = Option.getOpt (Option.map getBool k, !check)
 
             val () = trace_level := Int.max (0, t)
-            val () = verify      := v
+            val () = check       := k
             val () = trace_elf   := d
         in  if List.null l then printUsage ()
             else ( initPlatform (m)

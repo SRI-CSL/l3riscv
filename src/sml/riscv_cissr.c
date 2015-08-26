@@ -32,14 +32,14 @@ void oracle_load(const char *filename)
 #endif
 }
 
-uint32_t oracle_verify(uint32_t exc_taken,
-                       uint64_t pc,
-                       uint64_t addr,
-                       uint64_t data1,
-                       uint64_t data2,
-                       uint64_t data3,
-                       uint64_t fpdata,
-                       uint32_t verbosity)
+uint32_t oracle_check(uint32_t exc_taken,
+                      uint64_t pc,
+                      uint64_t addr,
+                      uint64_t data1,
+                      uint64_t data2,
+                      uint64_t data3,
+                      uint64_t fpdata,
+                      uint32_t verbosity)
 { uint32_t ret = 0;
 #ifdef USE_CISSR
   /* Enable max verbosity. */
