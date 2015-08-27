@@ -1104,11 +1104,9 @@ record StateDelta
                                 --   new memory value for STORE, STORE_FP, SC, AMOs
                                 --   argument for CSR ops
 
-  data3         :: regType      -- unused
+  data3         :: regType      -- the retired instruction (zero-extended)
 
   fp_data       :: fpval        -- floating point value
-
-  pc_instr      :: word         -- the retired instruction
 }
 
 declare c_update :: id -> StateDelta
@@ -1124,9 +1122,8 @@ unit setupDelta(pc::regType, instr_word::word) =
 ; Delta.addr      <- 0
 ; Delta.data1     <- 0
 ; Delta.data2     <- 0
-; Delta.data3     <- 0
+; Delta.data3     <- ZeroExtend(instr_word)
 ; Delta.fp_data   <- 0
-; Delta.pc_instr  <- instr_word
 }
 
 unit recordLoad(addr::vAddr, val::regType) =
