@@ -13,13 +13,13 @@
 #include "l3riscv.h"
 
 uint64_t bsv_tandem_mkCPU(uint64_t mem_base_addr, uint64_t mem_size) {
-  /* No-op currently. */
-  return 0;
+  /* No-op currently, but need to return a non-NULL value. */
+  return 1;
 }
 
+/* bitwidth: 32 => RV32, 64 => RV64 */
 void     bsv_tandem_load_elf2    (uint64_t   p_cpu_state, uint64_t bitwidth) {
   l3riscv_mem_load_elf(NULL);
-  /* TODO: Check bitwidth. */
 }
 
 uint64_t bsv_tandem_get_exit_pc  (uint64_t   p_cpu_state) {

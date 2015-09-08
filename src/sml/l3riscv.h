@@ -13,7 +13,8 @@ void l3riscv_init();
 /* This should be called at the end of the program. */
 void l3riscv_done();
 
-void l3riscv_mem_load_elf(const char *filename);
+/* The filename is specified using the SIM_ELF_FILENAME environment variable. */
+void l3riscv_mem_load_elf();
 
 uint64_t l3riscv_mem_get_min_addr();
 uint64_t l3riscv_mem_get_max_addr();

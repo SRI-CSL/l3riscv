@@ -17,8 +17,10 @@
 
 (* Default Configuration *)
 
-val mem_base_addr   = ref 0
-val mem_size        = ref 4000000
+val mem_base_addr   = ref (case Int64.maxInt of
+                               SOME i => i | NONE => 400000
+                          )
+val mem_size        = ref 0
 
 (* Execution parameters *)
 
@@ -35,7 +37,8 @@ val trace_elf   = ref false
 val check           = ref false
 val checker_exit_pc = ref (Int64.fromInt (~1))
 
-val verifier_mode   = ref false
+val verifier_mode       = ref false
+val verifier_exe_name   = "SIM_ELF_FILENAME"
 
 (* Utilities *)
 
@@ -340,12 +343,18 @@ fun doElf cycles file dis =
 fun initModel () =
     let val exp_mem_base = _export "_l3r_get_mem_base" private : (unit -> Int64.int)        -> unit
       ; val exp_mem_size = _export "_l3r_get_mem_size" private : (unit -> Int64.int)        -> unit
-      ; val exp_load_elf = _export "_l3r_load_elf"     private : (string -> Int64.int)      -> unit
+      ; val exp_load_elf = _export "_l3r_load_elf"     private : (unit -> Int64.int)        -> unit
       ; val exp_mem_read = _export "_l3r_read_mem"     private : (Int64.int -> Int64.int)   -> unit
       ;
     in  exp_mem_base (fn () => !mem_base_addr)
       ; exp_mem_size (fn () => !mem_size)
-      ; exp_load_elf (fn s  => (setupElf s false; 0) handle _ => ~1)
+      ; exp_load_elf (fn () =>
+                         (case OS.Process.getEnv verifier_exe_name of
+                             SOME s => ((setupElf s false; 0)
+                                        handle _ => ~1)
+                           | NONE   => (print ("Env variable " ^ verifier_exe_name ^ " not set!\n");
+                                        ~1))
+                     )
       ; exp_mem_read (fn a  =>
                          let val addr  = BitsN.fromInt (Int64.toInt a, 64)
                              val dword = riscv.rawReadData addr
@@ -353,11 +362,8 @@ fun initModel () =
                          end
                      )
       ; initPlatform (1)
+      ; print "L3 RISCV model verifier initialized.\n"
     end
-
-val _ = let val exp = _export "_l3r_init_model" private : (unit -> unit) -> unit;
-        in  exp initModel
-        end
 
 (* Command line interface *)
 
@@ -419,7 +425,7 @@ val () =
             val (v, l) = processOption "--verifier" l
 
             val c = Option.getOpt (Option.map getNumber c, ~1)
-            val d = Option.getOpt (Option.map getBool d, false)
+            val d = Option.getOpt (Option.map getBool d, !trace_elf)
             val t = Option.getOpt (Option.map getNumber t, !trace_level)
             val m = Option.getOpt (Option.map getNumber m, 1)
             val k = Option.getOpt (Option.map getBool k, !check)
@@ -430,9 +436,12 @@ val () =
             val () = trace_elf      := d
             val () = verifier_mode  := v
 
-        in  if List.null l then printUsage ()
+        in  if List.null l andalso not (!verifier_mode)
+            then printUsage ()
             else ( initPlatform (m)
-                 ; doElf c (List.hd l) d
+                 ; if !verifier_mode
+                   then initModel ()
+                   else doElf c (List.hd l) d
                  )
         end
 end

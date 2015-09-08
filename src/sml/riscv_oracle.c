@@ -15,8 +15,6 @@
 #define PART_OF_L3RISCV 1
 #include "riscv_ffi.h"
 
-#define ENV_FILENAME "SIM_ELF_FILENAME"
-
 static int lib_is_opened = 0;
 
 const char *dummy_argv[] = {
@@ -28,11 +26,7 @@ const char *dummy_argv[] = {
 
 static void check_open() {
   if (!lib_is_opened) {
-    char *argv = NULL;
-
     l3riscv_open(3, dummy_argv);
-    _l3r_init_model();
-
     lib_is_opened = 1;
   }
 }
@@ -45,21 +39,13 @@ void l3riscv_done() {
   l3riscv_close();
 }
 
-void l3riscv_mem_load_elf(const char *filename) {
-  char *f;
-  fprintf(stderr, "opening l3riscv.so ...\n");
+void l3riscv_mem_load_elf() {
   check_open();
-
-  f = filename ? filename : getenv(ENV_FILENAME);
-  if (NULL == f) {
-    fprintf(stderr, "l3riscv_mem_load_elf: no filename specified.\n");
-    exit(1);
-  }
-
-  (void) _l3r_load_elf(f);
+  (void) _l3r_load_elf();
 }
 
 uint64_t l3riscv_cpu_get_cpuid(uint64_t cpu) {
+  fprintf(stdout, "l3riscv_cpu_get_cpuid: not implemented.\n");
   /* TODO: */
   return 0;
 }
