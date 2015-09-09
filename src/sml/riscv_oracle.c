@@ -87,5 +87,7 @@ uint32_t l3riscv_verify(uint64_t cpu,
                         uint64_t fpdata,
                         uint32_t verbosity) {
   check_open();
-  return 0;
+  return _l3r_verify_instr(cpu, cmd, exc_taken, pc, addr,
+                           data1, data2, data3, fpdata,
+                           verbosity);
 }

@@ -340,11 +340,19 @@ fun doElf cycles file dis =
 (* Tandem verification:
    server interface: verify against model *)
 
+fun verifyInstr (cpu, cmd, exc, pc, addr, d1, d2, d3, fpd, v) =
+    0
+
 fun initModel () =
     let val exp_mem_base = _export "_l3r_get_mem_base" private : (unit -> Int64.int)        -> unit
       ; val exp_mem_size = _export "_l3r_get_mem_size" private : (unit -> Int64.int)        -> unit
       ; val exp_load_elf = _export "_l3r_load_elf"     private : (unit -> Int64.int)        -> unit
       ; val exp_mem_read = _export "_l3r_read_mem"     private : (Int64.int -> Int64.int)   -> unit
+      ; val exp_ver_inst = _export "_l3r_verify_instr" private : ((Int64.int * Int32.int * Int32.int
+                                                                   * Int64.int * Int64.int * Int64.int
+                                                                   * Int64.int * Int64.int * Int64.int
+                                                                   * Int32.int) -> Int32.int
+                                                                 ) -> unit
       ;
     in  exp_mem_base (fn () => !mem_base_addr)
       ; exp_mem_size (fn () => !mem_size)
@@ -361,6 +369,7 @@ fun initModel () =
                          in  Int64.fromInt (BitsN.toInt dword)
                          end
                      )
+      ; exp_ver_inst verifyInstr
       ; initPlatform (1)
       ; print "L3 RISCV model verifier initialized.\n"
     end
