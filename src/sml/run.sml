@@ -31,7 +31,7 @@ val boot        = ref true
 val be          = ref false (* little-endian *)
 val time_run    = ref true
 
-val trace_level = ref 0
+val trace_lvl   = ref 0
 val trace_elf   = ref false
 
 val check           = ref false
@@ -39,6 +39,7 @@ val checker_exit_pc = ref (Int64.fromInt (~1))
 
 val verifier_mode       = ref false
 val verifier_exe_name   = "SIM_ELF_FILENAME"
+val verifier_trace_lvl  = ref 1
 
 (* Utilities *)
 
@@ -108,7 +109,7 @@ fun isLastCore () =
 (* Printing utilities *)
 
 fun printLog () = List.app (fn (n, l) =>
-                               if n <= !trace_level
+                               if n <= !trace_lvl
                                then print (l ^ "\n")
                                else ()
                            ) (List.rev (!riscv.log))
@@ -151,6 +152,11 @@ fun disassemble pc range =
            ; disassemble (pc + 4) (range - 4)
          end
 
+fun verifierTrace (lvl, str) =
+    if   lvl <= !verifier_trace_lvl
+    then print (String.concat ["L3RISCV:", str, "\n"])
+    else ()
+
 (* Tandem verification:
    client interface: external oracle, currently cissr *)
 val oracle_reset = _import "oracle_reset" : (Int64.int * Int64.int) -> unit;
@@ -179,7 +185,7 @@ fun doCheck () =
         val data2       = Int64.fromInt (BitsN.toInt (#data2   delta))
         val data3       = Int64.fromInt (BitsN.toInt (#data3   delta))
         val fp_data     = Int64.fromInt (BitsN.toInt (#fp_data delta))
-        val verbosity   = Int32.fromInt (!trace_level)
+        val verbosity   = Int32.fromInt (!trace_lvl)
     in  if oracle_check (exc_taken, pc, addr, data1, data2, data3, fp_data, verbosity)
         then ()
         else ( print "Verification error:\n"
@@ -231,7 +237,7 @@ local
     fun t f x = if !time_run then Runtime.time f x else f x
 in
 fun run mx =
-    if   1 <= !trace_level
+    if   1 <= !trace_lvl
     then t (logLoop mx) 0
     else t silentLoop mx
 
@@ -340,8 +346,94 @@ fun doElf cycles file dis =
 (* Tandem verification:
    server interface: verify against model *)
 
-fun verifyInstr (cpu, cmd, exc, pc, addr, d1, d2, d3, fpd, v) =
+datatype VerifyMsg = InstrRetire | Reset | WriteMem | WriteGPR | WriteCSR | WriteFPR | WriteFSR | WritePC
+
+fun typeOfMsg m =
+    case m of 0 => SOME InstrRetire
+            | 1 => SOME Reset
+            | 2 => SOME WriteMem
+            | 3 => SOME WriteGPR
+            | 4 => SOME WriteCSR
+            | 5 => SOME WriteFPR
+            | 6 => SOME WriteFSR
+            | 7 => SOME WritePC
+            | _ => NONE
+
+fun strOfMsg m =
+    case m of SOME InstrRetire => "instr-retire"
+            | SOME Reset       => "reset"
+            | SOME WriteMem    => "write-mem"
+            | SOME WriteGPR    => "write-gpr"
+            | SOME WriteCSR    => "write-csr"
+            | SOME WriteFPR    => "write-fpr"
+            | SOME WriteFSR    => "write-fsr"
+            | SOME WritePC     => "write-pc"
+            | NONE             => "unknown"
+
+fun doInstrRetire (exc, pc, addr, d1, d2, d3, fpd, v) =
+    ( verifierTrace(1, String.concat(["instr-retire: pc=", Int64.toString pc
+                                      , " addr=", Int64.toString addr
+                                      , " d1=", Int64.toString d1
+                                      , " d2=", Int64.toString d2
+                                      , " d3=", Int64.toString d3
+                                      , " fpd=", Int64.toString fpd]))
+    ; 0
+    )
+
+fun doReset (exc, pc, addr, d1, d2, d3, fpd, v) =
     0
+
+fun doWriteMem (exc, pc, addr, d1, d2, d3, fpd, v) =
+    ( verifierTrace(2, "mem[" ^ Int64.toString addr ^ "] <- " ^ Int64.toString d2)
+    ; 0
+    )
+
+fun doWriteGPR (exc, pc, addr, d1, d2, d3, fpd, v) =
+    ( verifierTrace(1, "writeGPR at pc " ^ Int64.toString pc)
+    ; 0
+    )
+
+fun doWriteCSR (exc, pc, addr, d1, d2, d3, fpd, v) =
+    ( verifierTrace(1, "writeCSR at pc " ^ Int64.toString pc)
+    ; 0
+    )
+
+fun doWriteFPR (exc, pc, addr, d1, d2, d3, fpd, v) =
+    ( verifierTrace(1, "writeFPR at pc " ^ Int64.toString pc)
+    ; 0
+    )
+
+fun doWriteFSR (exc, pc, addr, d1, d2, d3, fpd, v) =
+    ( verifierTrace(1, "writeFSR at pc " ^ Int64.toString pc)
+    ; 0
+    )
+
+fun doWritePC (exc, pc, addr, d1, d2, d3, fpd, v) =
+    ( verifierTrace(1, "writePC at pc " ^ Int64.toString pc)
+    ; 0
+    )
+
+fun doUnknown m (exc, pc, addr, d1, d2, d3, fpd, v) =
+    ( verifierTrace(0, "UNKNOWN msg " ^ Int32.toString m
+                       ^ " at pc "    ^ Int64.toString pc)
+    ; 0
+    )
+
+fun verifyInstr (cpu, m, exc, pc, addr, d1, d2, d3, fpd, v) =
+    (* FIXME: use cpu for multi-core verification *)
+    let val msgType = typeOfMsg m
+        val msg     = (exc, pc, addr, d1, d2, d3, fpd, v)
+    in  case msgType of
+            SOME InstrRetire => doInstrRetire msg
+          | SOME Reset       => doReset msg
+          | SOME WriteMem    => doWriteMem msg
+          | SOME WriteGPR    => doWriteGPR msg
+          | SOME WriteCSR    => doWriteCSR msg
+          | SOME WriteFPR    => doWriteFPR msg
+          | SOME WriteFSR    => doWriteFSR msg
+          | SOME WritePC     => doWritePC  msg
+          | NONE             => doUnknown  m msg
+    end
 
 fun initModel () =
     let val exp_mem_base = _export "_l3r_get_mem_base" private : (unit -> Int64.int)        -> unit
@@ -366,7 +458,10 @@ fun initModel () =
       ; exp_mem_read (fn a  =>
                          let val addr  = BitsN.fromInt (Int64.toInt a, 64)
                              val dword = riscv.rawReadData addr
-                         in  Int64.fromInt (BitsN.toInt dword)
+                             val mem   = Int64.fromInt (BitsN.toInt dword)
+                         in  verifierTrace(2, String.concat["L3RISCV: mem[", Int64.toString a
+                                                            , "] -> ", Int64.toString mem, "\n"])
+                           ; mem
                          end
                      )
       ; exp_ver_inst verifyInstr
@@ -435,12 +530,12 @@ val () =
 
             val c = Option.getOpt (Option.map getNumber c, ~1)
             val d = Option.getOpt (Option.map getBool d, !trace_elf)
-            val t = Option.getOpt (Option.map getNumber t, !trace_level)
+            val t = Option.getOpt (Option.map getNumber t, !trace_lvl)
             val m = Option.getOpt (Option.map getNumber m, 1)
             val k = Option.getOpt (Option.map getBool k, !check)
             val v = Option.getOpt (Option.map getBool v, !verifier_mode)
 
-            val () = trace_level    := Int.max (0, t)
+            val () = trace_lvl      := Int.max (0, t)
             val () = check          := k
             val () = trace_elf      := d
             val () = verifier_mode  := v

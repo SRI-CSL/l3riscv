@@ -47,7 +47,7 @@ endif
 # make targets
 #######################################
 
-all: l3riscv libl3riscv.so
+all: libl3riscv.so l3riscv
 
 ${SMLSRCDIR}/riscv.sig ${SMLSRCDIR}/riscv.sml: ${L3SRC}
 	echo 'SMLExport.spec ("${L3SRC}", "${SMLSRCDIR}/riscv")' | l3
