@@ -17,10 +17,8 @@
 
 (* Default Configuration *)
 
-val mem_base_addr   = ref (case Int64.maxInt of
-                               SOME i => i | NONE => 400000
-                          )
-val mem_size        = ref 0
+val mem_base_addr   = ref (Word64.fromInt 400000)
+val mem_size        = ref (Word64.fromInt 0)
 
 (* Execution parameters *)
 
@@ -35,7 +33,7 @@ val trace_lvl   = ref 0
 val trace_elf   = ref false
 
 val check           = ref false
-val checker_exit_pc = ref (Int64.fromInt (~1))
+val checker_exit_pc = ref (Word64.fromInt (~1))
 
 val verifier_mode       = ref false
 val verifier_exe_name   = "SIM_ELF_FILENAME"
@@ -48,14 +46,18 @@ fun phex n = StringCvt.padLeft #"0" (n div 4) o hex
 val hex32  = phex 32
 val hex64  = phex 64
 
-fun hx32 n = Int32.fmt StringCvt.HEX n
-fun hx64 n = Int64.fmt StringCvt.HEX n
+fun hx32 n = Word32.fmt StringCvt.HEX n
+fun hx64 n = Word64.fmt StringCvt.HEX n
 
 fun failExit s = ( print (s ^ "\n"); OS.Process.exit OS.Process.failure )
 fun err e s = failExit ("Failed to " ^ e ^ " file \"" ^ s ^ "\"")
 
 fun debugPrint s = print("==DEBUG== "^s)
 fun debugPrintln s = print("==DEBUG== "^s^"\n")
+
+fun mkMask64 w =
+    Word64.-(Word64.<<(Word64.fromInt 0x1, Word.fromInt (BitsN.toUInt w)),
+             Word64.fromInt 0x1)
 
 (* Bit vector utilities *)
 
@@ -127,7 +129,7 @@ fun dumpRegisters core =
       ; print "======   Registers   ======\n"
       ; print ("Core = " ^ Int.toString(core) ^ "\n")
       (* FIXME: work around a possibly corrupt data3 *)
-      ; let val w   = #data3 (riscv.Delta ())
+      ; let val w   = #rinstr (riscv.Delta ())
             val w32 = Int32.toInt (Int32.fromInt (BitsN.toInt w))
             val i   = riscv.Decode (BitsN.fromInt (w32, 32))
         in  print ("Faulting instruction: (0x" ^ hex32 w ^ ") "
@@ -166,12 +168,12 @@ fun verifierTrace (lvl, str) =
 (* Tandem verification:
    client interface: external oracle, currently cissr *)
 
-val oracle_reset = _import "oracle_reset" : (Int64.int * Int64.int) -> unit;
+val oracle_reset = _import "oracle_reset" : (Word64.word * Word64.word) -> unit;
 fun initChecker () =
     oracle_reset (!mem_base_addr, !mem_size)
 
 val oracle_load     = _import "oracle_load" : string -> unit;
-val oracle_get_exit = _import "oracle_get_exit_pc" : unit -> Int64.int;
+val oracle_get_exit = _import "oracle_get_exit_pc" : unit -> Word64.word;
 fun loadChecker filename =
     ( oracle_load filename
     ; checker_exit_pc := oracle_get_exit ()
@@ -185,13 +187,15 @@ val oracle_check =
                                * Int32.int) -> bool;
 fun doCheck () =
     let val delta       = riscv.Delta ()
+        fun toI64  b    = Int64.fromInt (BitsN.toInt b)
+        fun fromOpt ot  = case ot of SOME (b) => toI64 b | NONE => 0
         val exc_taken   = #exc_taken delta
-        val pc          = Int64.fromInt (BitsN.toInt (#pc      delta))
-        val addr        = Int64.fromInt (BitsN.toInt (#addr    delta))
-        val data1       = Int64.fromInt (BitsN.toInt (#data1   delta))
-        val data2       = Int64.fromInt (BitsN.toInt (#data2   delta))
-        val data3       = Int64.fromInt (BitsN.toInt (#data3   delta))
-        val fp_data     = Int64.fromInt (BitsN.toInt (#fp_data delta))
+        val pc          = toI64   (#pc      delta)
+        val addr        = fromOpt (#addr    delta)
+        val data3       = toI64   (#rinstr  delta)
+        val data1       = fromOpt (#data1   delta)
+        val data2       = fromOpt (#data2   delta)
+        val fp_data     = fromOpt (#fp_data delta)
         val verbosity   = Int32.fromInt (!trace_lvl)
     in  if oracle_check (exc_taken, pc, addr, data1, data2, data3, fp_data, verbosity)
         then ()
@@ -203,9 +207,9 @@ fun doCheck () =
 
 fun isCheckerDone () =
     if !check then
-        let val pc   = BitsN.toInt (riscv.Map.lookup(!riscv.c_PC, 0))
-            val pc64 = Int64.fromInt pc
-        in  Int64.compare (!checker_exit_pc, pc64) = EQUAL
+        let val pc   = BitsN.toUInt (riscv.Map.lookup(!riscv.c_PC, 0))
+            val pc64 = Word64.fromInt pc
+        in  Word64.compare (!checker_exit_pc, pc64) = EQUAL
         end
     else false
 
@@ -299,13 +303,13 @@ fun loadElf segs dis =
                         else ()
                       ; storeVecInMem ((#vaddr s), (#memsz s), (#bytes s))
                       (* update memory range *)
-                      ; if Int64.<(Int64.fromInt (#vaddr s), !mem_base_addr)
-                        then mem_base_addr := Int64.fromInt (#vaddr s)
+                      ; if Word64.<(Word64.fromInt (#vaddr s), !mem_base_addr)
+                        then mem_base_addr := Word64.fromInt (#vaddr s)
                         else ()
-                      ; if Int64.>( Int64.fromInt ((#vaddr s) + (#memsz s))
-                                  , !mem_base_addr + !mem_size)
-                        then mem_size := Int64.-( Int64.fromInt ((#vaddr s) + (#memsz s))
-                                                , !mem_base_addr)
+                      ; if Word64.>( Word64.fromInt ((#vaddr s) + (#memsz s))
+                                   , !mem_base_addr + !mem_size)
+                        then mem_size := Word64.-( Word64.fromInt ((#vaddr s) + (#memsz s))
+                                                 , !mem_base_addr)
                         else ()
                       (* TODO: should check flags for executable segment *)
                       ; if dis then disassemble (#vaddr s) (#memsz s)
@@ -320,13 +324,12 @@ fun setupElf file dis =
     let val elf   = Elf.openElf file
         val hdr   = Elf.getElfHeader elf
         val psegs = Elf.getElfProgSegments elf hdr
-        fun d64 n = Int64.toString n
         val pc    = if !boot then 0x200 else (#entry hdr)
     in  initCores ( if (#class hdr) = Elf.BIT_32
                     then riscv.RV32I else riscv.RV64I
                   , pc
                   )
-      ; print ("L3RISCV: Set pc to " ^ (hx64 (Int64.fromInt pc))
+      ; print ("L3RISCV: Set pc to " ^ (hx64 (Word64.fromInt pc))
                ^ (if !boot then " [boot]\n" else " [elf]\n"))
       ; if !trace_elf
         then ( print "Loading elf file ...\n"
@@ -338,7 +341,7 @@ fun setupElf file dis =
       ; if !trace_elf
         then ( print ("\nMem base: " ^ (hx64 (!mem_base_addr)))
              ; print ("\nMem size: " ^ (hx64 (!mem_size))
-                      ^ " (" ^ (d64 (!mem_size)) ^ ")\n")
+                      ^ " (" ^ (Word64.fmt StringCvt.DEC (!mem_size)) ^ ")\n")
              )
         else ()
     end
@@ -383,29 +386,66 @@ fun strOfMsg m =
             | SOME WritePC     => "write-pc"
             | NONE             => "unknown"
 
+
 fun doInstrRetire (exc, pc, addr, d1, d2, d3, fpd, v) =
-    let fun toI64 bits = Int64.fromInt (BitsN.toInt bits)
-        val rpc        = toI64 (riscv.PC ())
+    let fun toW64 bits      = Word64.fromInt (BitsN.toUInt bits)
+        val rpc             = toW64 (riscv.PC ())
+        fun eqW64 a b       = Word64.compare (a, b) = EQUAL
+        fun checkOpt ot v   = case ot of
+                                  SOME b => eqW64 (toW64 b) v
+                                | NONE   => true
+        fun checkSubOpt optval optwidth v =
+            case (optval, optwidth) of
+                (NONE, _)           => true
+              | (SOME b, NONE)      => eqW64 (toW64 b) v
+              | (SOME b, SOME w)    => let val mask = mkMask64 w
+                                       in  eqW64 (Word64.andb ((toW64 b), mask))
+                                                 (Word64.andb (v,         mask))
+                                       end
     in  verifierTrace(1, String.concat(["instr-retire: pc=", hx64 pc
                                         , " addr=", hx64 addr
                                         , " d1=", hx64 d1
                                         , " d2=", hx64 d2
                                         , " d3=", hx64 d3
                                         , " fpd=", hx64 fpd]))
-      ; if pc <> rpc
-        then verifierTrace(0, String.concat(["PC mismatch: exp=0x", hx64 rpc
-                                             , " got=0x", hx64 pc]))
-        else ( (riscv.Next () ; printLog (); print ("\n"))
-               handle riscv.UNDEFINED s =>
-                      ( dumpRegisters (currentCore ())
-                      ; failExit ("UNDEFINED \"" ^ s ^ "\"\n")
-                      )
-                    | riscv.INTERNAL_ERROR s =>
-                      ( dumpRegisters (currentCore ())
-                      ; failExit ("INTERNAL_ERROR \"" ^ s ^ "\"\n")
-                      )
-             )
-      ; 0
+      ; (riscv.Next () ; printLog (); print ("\n"))
+        handle riscv.UNDEFINED s =>
+               ( dumpRegisters (currentCore ())
+               ; failExit ("UNDEFINED \"" ^ s ^ "\"\n")
+               )
+             | riscv.INTERNAL_ERROR s =>
+               ( dumpRegisters (currentCore ())
+               ; failExit ("INTERNAL_ERROR \"" ^ s ^ "\"\n")
+               )
+      ; let val delta   = riscv.Delta ()
+            val exc_ok  = if (#exc_taken delta) then exc <> 0x0 else exc = 0x0
+            val pc_ok   = eqW64 (toW64 (#pc delta))     pc
+            val inst_ok = eqW64 (toW64 (#rinstr delta)) d3
+            val addr_ok = checkOpt (#addr delta)    addr
+            val d1_ok   = checkOpt (#data1 delta)   d1
+            val fp_ok   = checkOpt (#fp_data delta) fpd
+            val d2_ok   = checkSubOpt (#data2 delta) (#st_width delta) d2
+            val all_ok  = (exc_ok andalso pc_ok andalso inst_ok andalso addr_ok
+                           andalso d1_ok andalso d2_ok andalso fp_ok)
+        in  if all_ok then 0
+            else ( if exc_ok then ()
+                   else verifierTrace(0, "Exception mis-match")
+                 ; if pc_ok then ()
+                   else verifierTrace(0, "PC mis-match")
+                 ; if inst_ok then ()
+                   else verifierTrace(0, "Instruction mis-match")
+                 ; if addr_ok then ()
+                   else verifierTrace(0, "Address mis-match")
+                 ; if d1_ok then ()
+                   else verifierTrace(0, "Data1 mis-match")
+                 ; if d2_ok then ()
+                   else verifierTrace(0, "Data2 mis-match")
+                 ; if fp_ok then ()
+                   else verifierTrace(0, "FP mis-match")
+                 ; dumpRegisters (currentCore ())
+                 ; failExit ("VERIFICATION_FAILURE")
+                 )
+        end
     end
 
 fun doReset (exc, pc, addr, d1, d2, d3, fpd, v) =
@@ -451,7 +491,7 @@ fun doUnknown m (exc, pc, addr, d1, d2, d3, fpd, v) =
 
 fun verifyInstr (cpu, m, exc, pc, addr, d1, d2, d3, fpd, v) =
     (* FIXME: use cpu for multi-core verification *)
-    let val msgType = typeOfMsg m
+    let val msgType = typeOfMsg (Word32.toInt m)
         val msg     = (exc, pc, addr, d1, d2, d3, fpd, v)
     in  case msgType of
             SOME InstrRetire => doInstrRetire msg
@@ -466,14 +506,14 @@ fun verifyInstr (cpu, m, exc, pc, addr, d1, d2, d3, fpd, v) =
     end
 
 fun initModel () =
-    let val exp_mem_base = _export "_l3r_get_mem_base" private : (unit -> Int64.int)        -> unit
-      ; val exp_mem_size = _export "_l3r_get_mem_size" private : (unit -> Int64.int)        -> unit
+    let val exp_mem_base = _export "_l3r_get_mem_base" private : (unit -> Word64.word)        -> unit
+      ; val exp_mem_size = _export "_l3r_get_mem_size" private : (unit -> Word64.word)        -> unit
       ; val exp_load_elf = _export "_l3r_load_elf"     private : (unit -> Int64.int)        -> unit
-      ; val exp_mem_read = _export "_l3r_read_mem"     private : (Int64.int -> Int64.int)   -> unit
-      ; val exp_ver_inst = _export "_l3r_verify_instr" private : ((Int64.int * Int32.int * Int32.int
-                                                                   * Int64.int * Int64.int * Int64.int
-                                                                   * Int64.int * Int64.int * Int64.int
-                                                                   * Int32.int) -> Int32.int
+      ; val exp_mem_read = _export "_l3r_read_mem"     private : (Word64.word -> Word64.word) -> unit
+      ; val exp_ver_inst = _export "_l3r_verify_instr" private : ((Word64.word * Word32.word * Int32.int
+                                                                   * Word64.word * Word64.word * Word64.word
+                                                                   * Word64.word * Word64.word * Word64.word
+                                                                   * Word32.word) -> Int32.int
                                                                  ) -> unit
       ;
     in  exp_mem_base (fn () => !mem_base_addr)
@@ -486,11 +526,11 @@ fun initModel () =
                                         ~1))
                      )
       ; exp_mem_read (fn a  =>
-                         let val addr  = BitsN.fromInt (Int64.toInt a, 64)
+                         let val addr  = BitsN.fromInt (Word64.toInt a, 64)
                              val dword = riscv.rawReadData addr
-                             val mem   = Int64.fromInt (BitsN.toInt dword)
-                         in  verifierTrace(2, String.concat["L3RISCV: mem[", Int64.toString a
-                                                            , "] -> ", Int64.toString mem, "\n"])
+                             val mem   = Word64.fromInt (BitsN.toUInt dword)
+                         in  verifierTrace(2, String.concat["L3RISCV: mem[", Word64.toString a
+                                                            , "] -> ", Word64.toString mem, "\n"])
                            ; mem
                          end
                      )

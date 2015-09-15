@@ -886,7 +886,7 @@ component CSRMap(csr::creg) :: regType
         case 0x781  => c_MCSR(procID).mfromhost
         case 0x783  => 0
 
-        case _      => #INTERNAL_ERROR("unexpected CSR read at " : [csr])
+        case _      => #UNDEFINED("unexpected CSR read at " : [csr])
       }
 
   assign value =
@@ -1087,26 +1087,27 @@ string csrName(csr::creg) =
 -- designed against its API.
 
 record StateDelta
-{ exc_taken     :: bool         -- whether an exception (interrupt/trap) was taken
-  pc            :: regType      -- PC of retired instruction
+{ exc_taken     :: bool                 -- whether an exception (interrupt/trap) was taken
+  pc            :: regType              -- PC of retired instruction
+  rinstr        :: word                 -- the retired instruction
 
-  addr          :: regType      -- address argument for instruction:
+  addr          :: regType option       -- address argument for instruction:
                                 --   new control flow target for jump, exception branch, ERET
                                 --   memory address for memory ops and AMOs
                                 --   CSR register address for CSR instructions
 
-  data1         :: regType      -- data result for instruction:
+  data1         :: regType option       -- data result for instruction:
                                 --   new value for rd for ALU ops, LOAD, LOAD_FP, LR, SC, CSR ops
                                 --   new csr_status for exceptions and ERET
 
-  data2         :: regType      -- data argument for instruction:
+  data2         :: regType option       -- data argument for instruction:
                                 --   new csr_cause for exceptions
                                 --   new memory value for STORE, STORE_FP, SC, AMOs
                                 --   argument for CSR ops
 
-  data3         :: regType      -- the retired instruction (zero-extended)
+  fp_data       :: fpval option         -- floating point value
 
-  fp_data       :: fpval        -- floating point value
+  st_width      :: word option          -- width of store (optimization for sub-word store checks)
 }
 
 declare c_update :: id -> StateDelta
@@ -1116,20 +1117,30 @@ component Delta :: StateDelta
    assign value  = c_update(procID) <- value
 }
 
-unit setupDelta(pc::regType, instr_word::word) =
+unit setupDelta(pc::regType, instr::word) =
 { Delta.exc_taken <- false
 ; Delta.pc        <- pc
-; Delta.addr      <- 0
-; Delta.data1     <- 0
-; Delta.data2     <- 0
-; Delta.data3     <- ZeroExtend(instr_word)
-; Delta.fp_data   <- 0
+; Delta.rinstr    <- instr
+; Delta.addr      <- None
+; Delta.data1     <- None
+; Delta.data2     <- None
+; Delta.fp_data   <- None
+; Delta.st_width  <- None
 }
 
 unit recordLoad(addr::vAddr, val::regType) =
-{ Delta.addr      <- addr
-; Delta.data1     <- val
+{ Delta.addr      <- Some(addr)
+; Delta.data1     <- Some(val)
 }
+
+unit recordStore(addr::vAddr, val::regType, width::word) =
+{ Delta.addr      <- Some(addr)
+; Delta.data2     <- Some(val)
+; Delta.st_width  <- Some(width)
+}
+
+unit recordException() =
+{ Delta.exc_taken <- true }
 
 ---------------------------------------------------------------------------
 -- Logging
@@ -1231,11 +1242,13 @@ unit setTrap(e::ExceptionType, badaddr::vAddr option) =
 unit signalException(e::ExceptionType) =
 { mark_log(LOG_INSN, "signalling exception " : excName(e))
 ; setTrap(e, None)
+; recordException()
 }
 
 unit signalAddressException(e::ExceptionType, vAddr::vAddr) =
 { mark_log(LOG_INSN, "signalling address exception " : excName(e) : " at " : [vAddr])
 ; setTrap(e, Some(vAddr))
+; recordException()
 }
 
 unit signalEnvCall() =
@@ -1371,11 +1384,11 @@ component CSR(n::creg) :: regType
 
 unit writeCSR(csr::creg, val::regType) =
 { CSR(csr)      <- val;
-  Delta.addr    <- ZeroExtend(csr);
-  Delta.data2   <- CSR(csr) -- Note that writes to CSR are intercepted
-                            -- and controlled by CSRMap, so we need to
-                            -- use what was finally written to the
-                            -- CSR, and not val itself.
+  Delta.addr    <- Some(ZeroExtend(csr));
+  Delta.data2   <- Some(CSR(csr))   -- Note that writes to CSR are intercepted
+                                    -- and controlled by CSRMap, so we need to
+                                    -- use what was finally written to the
+                                    -- CSR, and not val itself.
 }
 
 ---------------------------------------------------------------------------
@@ -1392,7 +1405,7 @@ component GPR(n::reg) :: regType
 
 unit writeRD(rd::reg, val::regType) =
 { GPR(rd)       <- val
-; Delta.data1   <- val
+; Delta.data1   <- Some(val)
 }
 
 ---------------------------------------------------------------------------
@@ -1431,12 +1444,6 @@ unit rawWriteData(pAddr::pAddr, data::regType, nbytes::nat) =
 ; old      = MEM(pAddrIdx)
 
 ; mark_log(LOG_MEM, log_r_mem(pAddrIdx, pAddr, old))
-
--- The cissr verifier expects to see the full register width, as
--- opposed to the masked value for non-full-width stores.  It should
--- accept either, ideally.
-; Delta.data2 <- data
-; Delta.addr  <- pAddr
 
 ; if align == 0     -- aligned write
   then { new = old && ~mask || data && mask
@@ -1750,11 +1757,11 @@ bool matchLoadReservation(vAddr::vAddr) =
 
 unit branchTo(newPC::regType) =
 { NextFetch  <- Some(BranchTo(newPC))
-; Delta.addr <- newPC
+; Delta.addr <- Some(newPC)
 }
 
 unit noBranch(nextPC::regType) =
-    Delta.addr <- nextPC
+{ Delta.addr <- Some(nextPC) }
 
 ---------------------------------------------------------------------------
 -- Integer Computational Instructions
@@ -2368,6 +2375,7 @@ define Store > SW(rs1::reg, rs2::reg, offs::imm12) =
 ; match translateAddr(vAddr, Data, Write)
   { case Some(pAddr) => { data = GPR(rs2)
                         ; rawWriteData(pAddr, data, 4)
+                        ; recordStore(vAddr, data, 4)
                         }
     case None        => signalAddressException(Store_AMO_Fault, vAddr)
   }
@@ -2381,6 +2389,7 @@ define Store > SH(rs1::reg, rs2::reg, offs::imm12) =
 ; match translateAddr(vAddr, Data, Write)
   { case Some(pAddr) => { data = GPR(rs2)
                         ; rawWriteData(pAddr, data, 2)
+                        ; recordStore(vAddr, data, 2)
                         }
     case None        => signalAddressException(Store_AMO_Fault, vAddr)
   }
@@ -2394,6 +2403,7 @@ define Store > SB(rs1::reg, rs2::reg, offs::imm12) =
 ; match translateAddr(vAddr, Data, Write)
   { case Some(pAddr) => { data = GPR(rs2)
                         ; rawWriteData(pAddr, data, 1)
+                        ; recordStore(vAddr, data, 1)
                         }
     case None        => signalAddressException(Store_AMO_Fault, vAddr)
   }
@@ -2409,6 +2419,7 @@ define Store > SD(rs1::reg, rs2::reg, offs::imm12) =
          ; match translateAddr(vAddr, Data, Write)
            { case Some(pAddr) => { data = GPR(rs2)
                                  ; rawWriteData(pAddr, data, 8)
+                                 ; recordStore(vAddr, data, 8)
                                  }
              case None        => signalAddressException(Store_AMO_Fault, vAddr)
            }
@@ -2474,6 +2485,7 @@ define AMO > SC_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
        else match translateAddr(vAddr, Data, Read)
             { case Some(pAddr) => { data = GPR(rs2)
                                   ; rawWriteData(pAddr, data, 4)
+                                  ; recordStore(vAddr, data, 4)
                                   ; writeRD(rd, 0)
                                   ; ReserveLoad  <- None
                                   }
@@ -2495,6 +2507,7 @@ define AMO > SC_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                 else match translateAddr(vAddr, Data, Read)
                      { case Some(pAddr) => { data = GPR(rs2)
                                            ; rawWriteData(pAddr, data, 4)
+                                           ; recordStore(vAddr, data, 4)
                                            ; writeRD(rd, 0)
                                            ; ReserveLoad  <- None
                                            }
@@ -2515,6 +2528,7 @@ define AMO > AMOSWAP_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; GPR(rd) <- memv
                              ; rawWriteData(pAddr, data, 4)
                              ; recordLoad(vAddr, memv)
+                             ; recordStore(vAddr, data, 4)
                              }
          case None        => signalAddressException(Store_AMO_Fault, vAddr)
        }
@@ -2533,6 +2547,7 @@ define AMO > AMOSWAP_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; GPR(rd) <- memv
                              ; rawWriteData(pAddr, data, 8)
                              ; recordLoad(vAddr, memv)
+                             ; recordStore(vAddr, data, 8)
                              }
          case None        => signalAddressException(Store_AMO_Fault, vAddr)
        }
@@ -2552,6 +2567,7 @@ define AMO > AMOADD_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; val  = data + memv
                              ; rawWriteData(pAddr, val, 4)
                              ; recordLoad(vAddr, memv)
+                             ; recordStore(vAddr, val, 4)
                              }
          case None        => signalAddressException(Store_AMO_Fault, vAddr)
        }
@@ -2571,6 +2587,7 @@ define AMO > AMOADD_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; val  = data + memv
                              ; rawWriteData(pAddr, val, 8)
                              ; recordLoad(vAddr, memv)
+                             ; recordStore(vAddr, val, 8)
                              }
          case None        => signalAddressException(Store_AMO_Fault, vAddr)
        }
@@ -2590,6 +2607,7 @@ define AMO > AMOXOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; val  = data ?? memv
                              ; rawWriteData(pAddr, val, 4)
                              ; recordLoad(vAddr, memv)
+                             ; recordStore(vAddr, val, 4)
                              }
          case None        => signalAddressException(Store_AMO_Fault, vAddr)
        }
@@ -2609,6 +2627,7 @@ define AMO > AMOXOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; val  = data ?? memv
                              ; rawWriteData(pAddr, val, 8)
                              ; recordLoad(vAddr, memv)
+                             ; recordStore(vAddr, val, 8)
                              }
          case None        => signalAddressException(Store_AMO_Fault, vAddr)
        }
@@ -2628,6 +2647,7 @@ define AMO > AMOAND_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; val  = data && memv
                              ; rawWriteData(pAddr, val, 4)
                              ; recordLoad(vAddr, memv)
+                             ; recordStore(vAddr, val, 4)
                              }
          case None        => signalAddressException(Store_AMO_Fault, vAddr)
        }
@@ -2647,6 +2667,7 @@ define AMO > AMOAND_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; val  = data && memv
                              ; rawWriteData(pAddr, val, 8)
                              ; recordLoad(vAddr, memv)
+                             ; recordStore(vAddr, val, 8)
                              }
          case None        => signalAddressException(Store_AMO_Fault, vAddr)
        }
@@ -2666,6 +2687,7 @@ define AMO > AMOOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; val  = data || memv
                              ; rawWriteData(pAddr, val, 4)
                              ; recordLoad(vAddr, memv)
+                             ; recordStore(vAddr, val, 4)
                              }
          case None        => signalAddressException(Store_AMO_Fault, vAddr)
        }
@@ -2685,6 +2707,7 @@ define AMO > AMOOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; val  = data || memv
                              ; rawWriteData(pAddr, val, 8)
                              ; recordLoad(vAddr, memv)
+                             ; recordStore(vAddr, val, 8)
                              }
          case None        => signalAddressException(Store_AMO_Fault, vAddr)
        }
@@ -2704,6 +2727,7 @@ define AMO > AMOMIN_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; val  = SignedMin(data, memv)
                              ; rawWriteData(pAddr, val, 4)
                              ; recordLoad(vAddr, memv)
+                             ; recordStore(vAddr, val, 4)
                              }
          case None        => signalAddressException(Store_AMO_Fault, vAddr)
        }
@@ -2723,6 +2747,7 @@ define AMO > AMOMIN_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; val  = SignedMin(data, memv)
                              ; rawWriteData(pAddr, val, 8)
                              ; recordLoad(vAddr, memv)
+                             ; recordStore(vAddr, val, 8)
                              }
          case None        => signalAddressException(Store_AMO_Fault, vAddr)
        }
@@ -2742,6 +2767,7 @@ define AMO > AMOMAX_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; val  = SignedMax(data, memv)
                              ; rawWriteData(pAddr, val, 4)
                              ; recordLoad(vAddr, memv)
+                             ; recordStore(vAddr, val, 4)
                              }
          case None        => signalAddressException(Store_AMO_Fault, vAddr)
        }
@@ -2761,6 +2787,7 @@ define AMO > AMOMAX_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; val  = SignedMax(data, memv)
                              ; rawWriteData(pAddr, val, 8)
                              ; recordLoad(vAddr, memv)
+                             ; recordStore(vAddr, val, 8)
                              }
          case None        => signalAddressException(Store_AMO_Fault, vAddr)
        }
@@ -2780,6 +2807,7 @@ define AMO > AMOMINU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; val  = Min(data, memv)
                              ; rawWriteData(pAddr, val, 4)
                              ; recordLoad(vAddr, memv)
+                             ; recordStore(vAddr, val, 4)
                              }
          case None        => signalAddressException(Store_AMO_Fault, vAddr)
        }
@@ -2799,6 +2827,7 @@ define AMO > AMOMINU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; val  = Min(data, memv)
                              ; rawWriteData(pAddr, val, 8)
                              ; recordLoad(vAddr, memv)
+                             ; recordStore(vAddr, val, 8)
                              }
          case None        => signalAddressException(Store_AMO_Fault, vAddr)
        }
@@ -2818,6 +2847,7 @@ define AMO > AMOMAXU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; val  = Max(data, memv)
                              ; rawWriteData(pAddr, val, 4)
                              ; recordLoad(vAddr, memv)
+                             ; recordStore(vAddr, val, 4)
                              }
          case None        => signalAddressException(Store_AMO_Fault, vAddr)
        }
@@ -2837,6 +2867,7 @@ define AMO > AMOMAXU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; val  = Max(data, memv)
                              ; rawWriteData(pAddr, val, 8)
                              ; recordLoad(vAddr, memv)
+                             ; recordStore(vAddr, val, 8)
                              }
          case None        => signalAddressException(Store_AMO_Fault, vAddr)
        }
