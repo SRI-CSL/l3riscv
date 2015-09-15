@@ -165,6 +165,7 @@ fun verifierTrace (lvl, str) =
 
 (* Tandem verification:
    client interface: external oracle, currently cissr *)
+
 val oracle_reset = _import "oracle_reset" : (Int64.int * Int64.int) -> unit;
 fun initChecker () =
     oracle_reset (!mem_base_addr, !mem_size)
@@ -259,6 +260,35 @@ fun runWrapped mx =
            )
 end
 
+(* Platform initialization *)
+
+fun initPlatform (cores) =
+    ( riscv.print     := debugPrint
+    ; riscv.println   := debugPrintln
+    ; riscv.procID    := BitsN.B(0, BitsN.size(!riscv.procID))
+    ; riscv.totalCore := cores
+    ; riscv.initMem (BitsN.fromInt
+                         ((if !check then 0xaaaaaaaaAAAAAAAA else 0x0)
+                         , 64))
+    ; if !check
+      then initChecker ()
+      else ()
+    )
+
+(* assumes riscv.procID is 0 *)
+fun initCores (arch, pc) =
+    ( riscv.initIdent arch
+    ; riscv.initMachine (!riscv.procID)
+    ; riscv.initRegs pc
+    ; if isLastCore ()
+      then ()  (* core scheduler will wrap back to first core *)
+      else ( riscv.scheduleCore (nextCoreToSchedule ())
+           ; initCores (arch, pc)
+           )
+    )
+
+(* Program load *)
+
 fun loadElf segs dis =
     List.app (fn s =>
                  if (#ptype s) = Elf.PT_LOAD
@@ -285,31 +315,6 @@ fun loadElf segs dis =
                       ; Elf.printPSeg s
                       )
              ) segs
-
-fun initPlatform (cores) =
-    ( riscv.print     := debugPrint
-    ; riscv.println   := debugPrintln
-    ; riscv.procID    := BitsN.B(0, BitsN.size(!riscv.procID))
-    ; riscv.totalCore := cores
-    ; riscv.initMem (BitsN.fromInt
-                         ((if !check then 0xaaaaaaaaAAAAAAAA else 0x0)
-                         , 64))
-    ; if !check
-      then initChecker ()
-      else ()
-    )
-
-(* assumes riscv.procID is 0 *)
-fun initCores (arch, pc) =
-    ( riscv.initIdent arch
-    ; riscv.initMachine (!riscv.procID)
-    ; riscv.initRegs pc
-    ; if isLastCore ()
-      then ()  (* core scheduler will wrap back to first core *)
-      else ( riscv.scheduleCore (nextCoreToSchedule ())
-           ; initCores (arch, pc)
-           )
-    )
 
 fun setupElf file dis =
     let val elf   = Elf.openElf file
