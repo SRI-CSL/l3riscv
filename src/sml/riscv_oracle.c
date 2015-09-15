@@ -21,12 +21,16 @@ const char *dummy_argv[] = {
   "libl3riscv.so",
   "-v",
   "true",
+  "-b",
+  "false",
+  "-t",
+  "3",
   NULL
 };
 
 static void check_open() {
   if (!lib_is_opened) {
-    l3riscv_open(3, dummy_argv);
+    l3riscv_open(7, dummy_argv);
     lib_is_opened = 1;
   }
 }

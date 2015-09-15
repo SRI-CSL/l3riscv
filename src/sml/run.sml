@@ -43,10 +43,13 @@ val verifier_trace_lvl  = ref 1
 
 (* Utilities *)
 
-fun hex s = L3.lowercase (BitsN.toHexString s)
+fun hex s  = L3.lowercase (BitsN.toHexString s)
 fun phex n = StringCvt.padLeft #"0" (n div 4) o hex
-val hex32 = phex 32
-val hex64 = phex 64
+val hex32  = phex 32
+val hex64  = phex 64
+
+fun hx32 n = Int32.fmt StringCvt.HEX n
+fun hx64 n = Int64.fmt StringCvt.HEX n
 
 fun failExit s = ( print (s ^ "\n"); OS.Process.exit OS.Process.failure )
 fun err e s = failExit ("Failed to " ^ e ^ " file \"" ^ s ^ "\"")
@@ -123,12 +126,15 @@ fun dumpRegisters core =
     in  riscv.scheduleCore core
       ; print "======   Registers   ======\n"
       ; print ("Core = " ^ Int.toString(core) ^ "\n")
-      ; let val w = #data3 (riscv.Delta ())
-            val i = riscv.Decode w
+      (* FIXME: work around a possibly corrupt data3 *)
+      ; let val w   = #data3 (riscv.Delta ())
+            val w32 = Int32.toInt (Int32.fromInt (BitsN.toInt w))
+            val i   = riscv.Decode (BitsN.fromInt (w32, 32))
         in  print ("Faulting instruction: (0x" ^ hex32 w ^ ") "
                    ^ riscv.instructionToString i
                    ^ "\n\n")
         end
+
       ; print ("PC     " ^ hex64 pc ^ "\n")
       ; L3.for
             (0, 31,
@@ -168,7 +174,7 @@ val oracle_get_exit = _import "oracle_get_exit_pc" : unit -> Int64.int;
 fun loadChecker filename =
     ( oracle_load filename
     ; checker_exit_pc := oracle_get_exit ()
-    ; print ("Set exit pc to 0x" ^ Int64.fmt StringCvt.HEX (!checker_exit_pc) ^ "\n")
+    ; print ("Set exit pc to 0x" ^ hx64 (!checker_exit_pc) ^ "\n")
     )
 
 val oracle_check =
@@ -309,12 +315,14 @@ fun setupElf file dis =
     let val elf   = Elf.openElf file
         val hdr   = Elf.getElfHeader elf
         val psegs = Elf.getElfProgSegments elf hdr
-        fun h64 n = Int64.fmt StringCvt.HEX n
         fun d64 n = Int64.toString n
+        val pc    = if !boot then 0x200 else (#entry hdr)
     in  initCores ( if (#class hdr) = Elf.BIT_32
                     then riscv.RV32I else riscv.RV64I
-                  , if !boot then 0x200 else (#entry hdr)
+                  , pc
                   )
+      ; print ("L3RISCV: Set pc to " ^ (hx64 (Int64.fromInt pc))
+               ^ (if !boot then " [boot]\n" else " [elf]\n"))
       ; if !trace_elf
         then ( print "Loading elf file ...\n"
              ; Elf.printElfHeader hdr
@@ -323,8 +331,8 @@ fun setupElf file dis =
       ; be := (if (#endian hdr = Elf.BIG) then true else false)
       ; loadElf psegs dis
       ; if !trace_elf
-        then ( print ("\nMem base: " ^ (h64 (!mem_base_addr)))
-             ; print ("\nMem size: " ^ (h64 (!mem_size))
+        then ( print ("\nMem base: " ^ (hx64 (!mem_base_addr)))
+             ; print ("\nMem size: " ^ (hx64 (!mem_size))
                       ^ " (" ^ (d64 (!mem_size)) ^ ")\n")
              )
         else ()
@@ -371,51 +379,68 @@ fun strOfMsg m =
             | NONE             => "unknown"
 
 fun doInstrRetire (exc, pc, addr, d1, d2, d3, fpd, v) =
-    ( verifierTrace(1, String.concat(["instr-retire: pc=", Int64.toString pc
-                                      , " addr=", Int64.toString addr
-                                      , " d1=", Int64.toString d1
-                                      , " d2=", Int64.toString d2
-                                      , " d3=", Int64.toString d3
-                                      , " fpd=", Int64.toString fpd]))
+    let fun toI64 bits = Int64.fromInt (BitsN.toInt bits)
+        val rpc        = toI64 (riscv.PC ())
+    in  verifierTrace(1, String.concat(["instr-retire: pc=", hx64 pc
+                                        , " addr=", hx64 addr
+                                        , " d1=", hx64 d1
+                                        , " d2=", hx64 d2
+                                        , " d3=", hx64 d3
+                                        , " fpd=", hx64 fpd]))
+      ; if pc <> rpc
+        then verifierTrace(0, String.concat(["PC mismatch: exp=0x", hx64 rpc
+                                             , " got=0x", hx64 pc]))
+        else ( (riscv.Next () ; printLog (); print ("\n"))
+               handle riscv.UNDEFINED s =>
+                      ( dumpRegisters (currentCore ())
+                      ; failExit ("UNDEFINED \"" ^ s ^ "\"\n")
+                      )
+                    | riscv.INTERNAL_ERROR s =>
+                      ( dumpRegisters (currentCore ())
+                      ; failExit ("INTERNAL_ERROR \"" ^ s ^ "\"\n")
+                      )
+             )
+      ; 0
+    end
+
+fun doReset (exc, pc, addr, d1, d2, d3, fpd, v) =
+    ( verifierTrace(1, "reset at pc " ^ hx64 pc)
     ; 0
     )
 
-fun doReset (exc, pc, addr, d1, d2, d3, fpd, v) =
-    0
-
 fun doWriteMem (exc, pc, addr, d1, d2, d3, fpd, v) =
-    ( verifierTrace(2, "mem[" ^ Int64.toString addr ^ "] <- " ^ Int64.toString d2)
+    ( verifierTrace(2, "mem[" ^ hx64 addr ^ "] <- " ^ hx64 d2)
     ; 0
     )
 
 fun doWriteGPR (exc, pc, addr, d1, d2, d3, fpd, v) =
-    ( verifierTrace(1, "writeGPR at pc " ^ Int64.toString pc)
+    ( verifierTrace(1, "writeGPR at pc " ^ hx64 pc)
     ; 0
     )
 
 fun doWriteCSR (exc, pc, addr, d1, d2, d3, fpd, v) =
-    ( verifierTrace(1, "writeCSR at pc " ^ Int64.toString pc)
+    ( verifierTrace(1, "writeCSR at pc " ^ hx64 pc)
     ; 0
     )
 
 fun doWriteFPR (exc, pc, addr, d1, d2, d3, fpd, v) =
-    ( verifierTrace(1, "writeFPR at pc " ^ Int64.toString pc)
+    ( verifierTrace(1, "writeFPR at pc " ^ hx64 pc)
     ; 0
     )
 
 fun doWriteFSR (exc, pc, addr, d1, d2, d3, fpd, v) =
-    ( verifierTrace(1, "writeFSR at pc " ^ Int64.toString pc)
+    ( verifierTrace(1, "writeFSR at pc " ^ hx64 pc)
     ; 0
     )
 
 fun doWritePC (exc, pc, addr, d1, d2, d3, fpd, v) =
-    ( verifierTrace(1, "writePC at pc " ^ Int64.toString pc)
+    ( verifierTrace(1, "writePC at pc " ^ hx64 pc)
     ; 0
     )
 
 fun doUnknown m (exc, pc, addr, d1, d2, d3, fpd, v) =
-    ( verifierTrace(0, "UNKNOWN msg " ^ Int32.toString m
-                       ^ " at pc "    ^ Int64.toString pc)
+    ( verifierTrace(0, "UNKNOWN msg " ^ hx32 m
+                       ^ " at pc "    ^ hx64 pc)
     ; 0
     )
 
@@ -504,6 +529,7 @@ local
             | "-k"   => "--check"
             | "-m"   => "--multi"
             | "-v"   => "--verifier"
+            | "-b"   => "--boot"
             | s      => s
             ) (CommandLine.arguments ())
 
@@ -527,6 +553,7 @@ val () =
             val (k, l) = processOption "--check"    l
             val (m, l) = processOption "--multi"    l
             val (v, l) = processOption "--verifier" l
+            val (b, l) = processOption "--boot"     l
 
             val c = Option.getOpt (Option.map getNumber c, ~1)
             val d = Option.getOpt (Option.map getBool d, !trace_elf)
@@ -534,11 +561,13 @@ val () =
             val m = Option.getOpt (Option.map getNumber m, 1)
             val k = Option.getOpt (Option.map getBool k, !check)
             val v = Option.getOpt (Option.map getBool v, !verifier_mode)
+            val b = Option.getOpt (Option.map getBool b, !boot)
 
             val () = trace_lvl      := Int.max (0, t)
             val () = check          := k
             val () = trace_elf      := d
             val () = verifier_mode  := v
+            val () = boot           := b
 
         in  if List.null l andalso not (!verifier_mode)
             then printUsage ()
