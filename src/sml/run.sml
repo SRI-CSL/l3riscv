@@ -519,11 +519,17 @@ fun initModel () =
       ; exp_mem_size (fn () => !mem_size)
       ; exp_load_elf (fn () =>
                          case OS.Process.getEnv verifier_exe_name of
-                             SOME s => (verifierTrace (0, "Loading " ^ s)
+                             SOME s => ( verifierTrace (0, "Loading " ^ s)
                                        ; (setupElf s false; 0)
-                                         handle _ => ~1)
-                           | NONE   => (verifierTrace (0, "Env variable " ^ verifier_exe_name ^ " not set!")
-                                       ; ~1)
+                                         handle e => ( verifierTrace (0, exnMessage e)
+                                                     ; failExit ("ELF file failure")
+                                                     ; ~1
+                                                     )
+                                       )
+                           | NONE   => ( verifierTrace (0, "Env variable " ^ verifier_exe_name ^ " not set!")
+                                       ; failExit ("ELF file failure")
+                                       ; ~1
+                                       )
                      )
       ; exp_mem_read (fn a  =>
                          let val addr  = BitsN.fromInt (Word64.toInt a, 64)
