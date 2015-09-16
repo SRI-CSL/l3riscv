@@ -431,7 +431,7 @@ fun doInstrRetire (exc, pc, addr, d1, d2, d3, fpd, v) =
                    else verifierTrace (0, "Exception mis-match")
                  ; if pc_ok then ()
                    else verifierTrace (0, "PC mis-match")
-                 ; if inst_ok then ()
+                 ; if inst_ok orelse (#fetch_exc delta) then ()
                    else verifierTrace (0, "Instruction mis-match")
                  ; if addr_ok then ()
                    else verifierTrace (0, "Address mis-match")

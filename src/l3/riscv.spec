@@ -1088,6 +1088,8 @@ string csrName(csr::creg) =
 
 record StateDelta
 { exc_taken     :: bool                 -- whether an exception (interrupt/trap) was taken
+  fetch_exc     :: bool                 -- whether that exception occured on fetch
+                                --   if so, the retired instruction (rinstr) is undefined
   pc            :: regType              -- PC of retired instruction
   rinstr        :: word                 -- the retired instruction
 
@@ -1119,6 +1121,7 @@ component Delta :: StateDelta
 
 unit setupDelta(pc::regType, instr::word) =
 { Delta.exc_taken <- false
+; Delta.fetch_exc <- false
 ; Delta.pc        <- pc
 ; Delta.rinstr    <- instr
 ; Delta.addr      <- None
@@ -1141,6 +1144,11 @@ unit recordStore(addr::vAddr, val::regType, width::word) =
 
 unit recordException() =
 { Delta.exc_taken <- true }
+
+unit recordFetchException(pc::regType) =
+{ Delta.fetch_exc <- true
+; Delta.pc        <- pc
+}
 
 ---------------------------------------------------------------------------
 -- Logging
@@ -3011,10 +3019,14 @@ define UnknownInstruction =
 -- The argument is the value from the PC.
 
 define Internal > FETCH_MISALIGNED(addr::regType) =
-    signalAddressException(Fetch_Misaligned, [addr])
+{ signalAddressException(Fetch_Misaligned, [addr])
+; recordFetchException(addr)
+}
 
 define Internal > FETCH_FAULT(addr::regType) =
-    signalAddressException(Fetch_Fault, [addr])
+{ signalAddressException(Fetch_Fault, [addr])
+; recordFetchException(addr)
+}
 
 define Run
 
