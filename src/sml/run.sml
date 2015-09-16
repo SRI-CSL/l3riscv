@@ -495,7 +495,7 @@ fun verifyInstr (cpu, m, exc, pc, addr, d1, d2, d3, fpd, v) =
     in  case msgType of
             SOME InstrRetire => doInstrRetire msg
           | SOME Reset       => doReset msg
-          | SOME WriteMem    => doWriteMem msg
+          | SOME WriteMem    => 0 (* doWriteMem msg *)
           | SOME WriteGPR    => doWriteGPR msg
           | SOME WriteCSR    => doWriteCSR msg
           | SOME WriteFPR    => doWriteFPR msg
@@ -529,9 +529,9 @@ fun initModel () =
                          let val addr  = BitsN.fromInt (Word64.toInt a, 64)
                              val dword = riscv.rawReadData addr
                              val mem   = Word64.fromInt (BitsN.toUInt dword)
-                         in  verifierTrace (2, String.concat["L3RISCV: mem[", Word64.toString a
+                         in  (* verifierTrace (2, String.concat["L3RISCV: mem[", Word64.toString a
                                                              , "] -> ", Word64.toString mem, "\n"])
-                           ; mem
+                           ; *) mem
                          end
                      )
       ; exp_ver_inst verifyInstr
