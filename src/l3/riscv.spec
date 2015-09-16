@@ -581,7 +581,7 @@ mstatus lower_sstatus_mstatus(sst::sstatus, mst::mstatus) =
 }
 
 -- pop the privilege stack for ERET
-mstatus popPrivilegeStack (mst::mstatus) =
+mstatus popPrivilegeStack(mst::mstatus) =
 { var st = mst
 ; st.MIE    <- mst.MIE1
 ; st.MPRV   <- mst.MPRV1
@@ -592,7 +592,7 @@ mstatus popPrivilegeStack (mst::mstatus) =
 ; st
 }
 
-mstatus pushPrivilegeStack (mst::mstatus, p::Privilege) =
+mstatus pushPrivilegeStack(mst::mstatus, p::Privilege) =
 { var st = mst
 ; st.MIE2   <- mst.MIE1
 ; st.MPRV2  <- mst.MPRV1
@@ -3523,7 +3523,7 @@ unit tickClock() =
 unit incrInstret() =
     c_instret(procID) <- c_instret(procID) + 1
 
-unit checkTimers () =
+unit checkTimers() =
 { when (clock >+ MCSR.mtimecmp + MCSR.mtime_delta)
   do MCSR.mip.MTIP <- true
 ; when (clock >+ SCSR.stimecmp + SCSR.stime_delta)
@@ -3558,14 +3558,14 @@ unit Next =
     }
   }
 
-; checkTimers ()    -- this can trigger timer interrupts
+; checkTimers()     -- this can trigger timer interrupts
 
 ; match NextFetch, checkInterrupts()
   { case None, None =>
              { incrInstret()
              ; PC <- PC + 4
              }
-    case None, Some (i, p) =>
+    case None, Some(i, p) =>
              { incrInstret()
              ; takeTrap(true, interruptIndex(i), PC + 4, None, p)
              }
@@ -3598,7 +3598,7 @@ unit Next =
              }
   }
 
-; tickClock ()
+; tickClock()
 }
 
 unit initIdent(arch::Architecture) =
