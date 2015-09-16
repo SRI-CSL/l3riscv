@@ -128,7 +128,6 @@ fun dumpRegisters core =
     in  riscv.scheduleCore core
       ; print "======   Registers   ======\n"
       ; print ("Core = " ^ Int.toString(core) ^ "\n")
-      (* FIXME: work around a possibly corrupt data3 *)
       ; let val w   = #rinstr (riscv.Delta ())
             val w32 = Int32.toInt (Int32.fromInt (BitsN.toInt w))
             val i   = riscv.Decode (BitsN.fromInt (w32, 32))
@@ -162,7 +161,7 @@ fun disassemble pc range =
 
 fun verifierTrace (lvl, str) =
     if   lvl <= !verifier_trace_lvl
-    then print (String.concat ["L3RISCV:", str, "\n"])
+    then print (String.concat ["L3RISCV: ", str, "\n"])
     else ()
 
 (* Tandem verification:
@@ -402,12 +401,12 @@ fun doInstrRetire (exc, pc, addr, d1, d2, d3, fpd, v) =
                                        in  eqW64 (Word64.andb ((toW64 b), mask))
                                                  (Word64.andb (v,         mask))
                                        end
-    in  verifierTrace(1, String.concat(["instr-retire: pc=", hx64 pc
-                                        , " addr=", hx64 addr
-                                        , " d1=", hx64 d1
-                                        , " d2=", hx64 d2
-                                        , " d3=", hx64 d3
-                                        , " fpd=", hx64 fpd]))
+    in  verifierTrace (1, String.concat(["instr-retire: pc=", hx64 pc
+                                         , " addr=", hx64 addr
+                                         , " d1=", hx64 d1
+                                         , " d2=", hx64 d2
+                                         , " d3=", hx64 d3
+                                         , " fpd=", hx64 fpd]))
       ; (riscv.Next () ; printLog (); print ("\n"))
         handle riscv.UNDEFINED s =>
                ( dumpRegisters (currentCore ())
@@ -429,19 +428,19 @@ fun doInstrRetire (exc, pc, addr, d1, d2, d3, fpd, v) =
                            andalso d1_ok andalso d2_ok andalso fp_ok)
         in  if all_ok then 0
             else ( if exc_ok then ()
-                   else verifierTrace(0, "Exception mis-match")
+                   else verifierTrace (0, "Exception mis-match")
                  ; if pc_ok then ()
-                   else verifierTrace(0, "PC mis-match")
+                   else verifierTrace (0, "PC mis-match")
                  ; if inst_ok then ()
-                   else verifierTrace(0, "Instruction mis-match")
+                   else verifierTrace (0, "Instruction mis-match")
                  ; if addr_ok then ()
-                   else verifierTrace(0, "Address mis-match")
+                   else verifierTrace (0, "Address mis-match")
                  ; if d1_ok then ()
-                   else verifierTrace(0, "Data1 mis-match")
+                   else verifierTrace (0, "Data1 mis-match")
                  ; if d2_ok then ()
-                   else verifierTrace(0, "Data2 mis-match")
+                   else verifierTrace (0, "Data2 mis-match")
                  ; if fp_ok then ()
-                   else verifierTrace(0, "FP mis-match")
+                   else verifierTrace (0, "FP mis-match")
                  ; dumpRegisters (currentCore ())
                  ; failExit ("VERIFICATION_FAILURE")
                  )
@@ -449,43 +448,43 @@ fun doInstrRetire (exc, pc, addr, d1, d2, d3, fpd, v) =
     end
 
 fun doReset (exc, pc, addr, d1, d2, d3, fpd, v) =
-    ( verifierTrace(1, "reset at pc " ^ hx64 pc)
+    ( verifierTrace (1, "reset at pc " ^ hx64 pc)
     ; 0
     )
 
 fun doWriteMem (exc, pc, addr, d1, d2, d3, fpd, v) =
-    ( verifierTrace(2, "mem[" ^ hx64 addr ^ "] <- " ^ hx64 d2)
+    ( verifierTrace (2, "mem[" ^ hx64 addr ^ "] <- " ^ hx64 d2)
     ; 0
     )
 
 fun doWriteGPR (exc, pc, addr, d1, d2, d3, fpd, v) =
-    ( verifierTrace(1, "writeGPR at pc " ^ hx64 pc)
+    ( verifierTrace (1, "writeGPR at pc " ^ hx64 pc)
     ; 0
     )
 
 fun doWriteCSR (exc, pc, addr, d1, d2, d3, fpd, v) =
-    ( verifierTrace(1, "writeCSR at pc " ^ hx64 pc)
+    ( verifierTrace (1, "writeCSR at pc " ^ hx64 pc)
     ; 0
     )
 
 fun doWriteFPR (exc, pc, addr, d1, d2, d3, fpd, v) =
-    ( verifierTrace(1, "writeFPR at pc " ^ hx64 pc)
+    ( verifierTrace (1, "writeFPR at pc " ^ hx64 pc)
     ; 0
     )
 
 fun doWriteFSR (exc, pc, addr, d1, d2, d3, fpd, v) =
-    ( verifierTrace(1, "writeFSR at pc " ^ hx64 pc)
+    ( verifierTrace (1, "writeFSR at pc " ^ hx64 pc)
     ; 0
     )
 
 fun doWritePC (exc, pc, addr, d1, d2, d3, fpd, v) =
-    ( verifierTrace(1, "writePC at pc " ^ hx64 pc)
+    ( verifierTrace (1, "writePC at pc " ^ hx64 pc)
     ; 0
     )
 
 fun doUnknown m (exc, pc, addr, d1, d2, d3, fpd, v) =
-    ( verifierTrace(0, "UNKNOWN msg " ^ hx32 m
-                       ^ " at pc "    ^ hx64 pc)
+    ( verifierTrace (0, "UNKNOWN msg " ^ hx32 m
+                        ^ " at pc "    ^ hx64 pc)
     ; 0
     )
 
@@ -519,24 +518,25 @@ fun initModel () =
     in  exp_mem_base (fn () => !mem_base_addr)
       ; exp_mem_size (fn () => !mem_size)
       ; exp_load_elf (fn () =>
-                         (case OS.Process.getEnv verifier_exe_name of
-                             SOME s => ((setupElf s false; 0)
-                                        handle _ => ~1)
-                           | NONE   => (print ("Env variable " ^ verifier_exe_name ^ " not set!\n");
-                                        ~1))
+                         case OS.Process.getEnv verifier_exe_name of
+                             SOME s => (verifierTrace (0, "Loading " ^ s)
+                                       ; (setupElf s false; 0)
+                                         handle _ => ~1)
+                           | NONE   => (verifierTrace (0, "Env variable " ^ verifier_exe_name ^ " not set!")
+                                       ; ~1)
                      )
       ; exp_mem_read (fn a  =>
                          let val addr  = BitsN.fromInt (Word64.toInt a, 64)
                              val dword = riscv.rawReadData addr
                              val mem   = Word64.fromInt (BitsN.toUInt dword)
-                         in  verifierTrace(2, String.concat["L3RISCV: mem[", Word64.toString a
-                                                            , "] -> ", Word64.toString mem, "\n"])
+                         in  verifierTrace (2, String.concat["L3RISCV: mem[", Word64.toString a
+                                                             , "] -> ", Word64.toString mem, "\n"])
                            ; mem
                          end
                      )
       ; exp_ver_inst verifyInstr
       ; initPlatform (1)
-      ; print "L3 RISCV model verifier initialized.\n"
+      ; verifierTrace (0, "L3 RISCV model verifier initialized.\n")
     end
 
 (* Command line interface *)
