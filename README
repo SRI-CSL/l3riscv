@@ -1,8 +1,86 @@
-This is a port of the L3 MIPS simulator to RISCV.
-http://riscv.org
+L3 Specification of the RISC-V ISA
+----------------------------------
 
-You will need to install L3, available from
-http://www.cl.cam.ac.uk/~acjf3/l3
+For more on RISC-V, see http://riscv.org.
 
-The original l3mips simulator is at
-https://github.com/acjf3/l3mips
+This L3 specification can be used to generate an executable interpreter of
+RISC-V binaries, similar to the Spike simulator of RISC-V.
+
+It can also be used as a verification library, and used to verify a processor
+implementation in a simulator.  The verification interface implemented by this
+model was designed by Bluespec, Inc.
+
+Dependencies
+------------
+
+This model has a fair amount of dependencies: two Standard ML compilers, and L3
+itself.
+
+L3 is available from: http://www.cl.cam.ac.uk/~acjf3/l3
+Ensure that you are using a recent version (L3-2015-07-22 or later) of L3.
+
+L3 itself needs PolyML 5.5, which depending on your platform, you may need to
+install from source from www.polyml.org.  L3 generated code is compiled with
+mlton, available as a standard package on most Unix platforms.
+
+Building
+--------
+
+- Ensure that l3 is in your path.
+
+- $ make
+
+This will build the interpreter 'l3riscv' and a verification library
+'libl3riscv.so' in the top-level directory.
+
+Using the interpreter
+---------------------
+
+- Execute a RISC-V ELF binary:
+
+  $ ./l3riscv --trace 1 <riscv-binary>
+
+- Disassemble a RISC-V ELF binary:
+
+  $ ./l3riscv --dis true  <riscv-binary>
+
+There is initial but undocumented support for verifying the interpreter against
+another interpreter.
+
+Note that the interpreter cannot currently boot an OS since the SBI spec for
+RISC-V has not yet been released.
+
+Using the verification library
+------------------------------
+
+Use the src/sml/l3riscv.h to write a C file that calls into the library.
+Incorporate that file into your project, and link it against libl3riscv.so.
+
+See src/sml/TandemVerification_api.{h,c} to see how this is being done for the
+RISC-V processors from Bluespec, Inc.
+
+Known Issues
+------------
+
+- The interpreter does not currently implement floating-point, RVC or vector
+  instructions.
+
+- There is incomplete support for pure RV32 binaries.  The implementation of the
+  privileged mode is currently only 64-bit.
+
+- It passes all but one of the RV64 tests in the riscv-tests suite.  The L3
+  interpreter does not trap on misaligned addresses.  However, the
+  rv64si-p-ma_addr and rv64mi-p-ma_addr tests (misaligned access in
+  supervisor-mode and machine-mode resp.) expect a trap, and fail otherwise.
+  Both approaches are supported by the RISC-V specification.
+
+Credits
+-------
+
+This model started out as a port of the L3 MIPS model to RISC-V. The original
+l3mips model is at https://github.com/acjf3/l3mips
+
+The verification library API originates from Bluespec, Inc, as part of the
+tandem-verification infrastructure for their RISC-V processors.
+
+
