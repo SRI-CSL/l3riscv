@@ -82,5 +82,3 @@ l3mips model is at https://github.com/acjf3/l3mips
 
 The verification library API originates from Bluespec, Inc, as part of the
 tandem-verification infrastructure for their RISC-V processors.
-
-
