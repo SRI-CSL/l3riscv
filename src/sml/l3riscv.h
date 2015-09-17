@@ -41,7 +41,7 @@ void l3riscv_cpu_write_fpr(uint8_t fpr, uint64_t val);
 
    - exc_taken: non-zero when the retired instruction caused an exception, zero otherwise
 
-   - pc:   PC for the retired instruction
+   - pc:   PC for the retired instruction (undefined on fetch exceptions)
 
    - addr:  address argument for instruction:
             --   new control flow target for jump, exception branch, ERET

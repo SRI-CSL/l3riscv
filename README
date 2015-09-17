@@ -6,9 +6,8 @@ For more on RISC-V, see http://riscv.org.
 This L3 specification can be used to generate an executable interpreter of
 RISC-V binaries, similar to the Spike simulator of RISC-V.
 
-It can also be used as a verification library, and used to verify a processor
-implementation in a simulator.  The verification interface implemented by this
-model was designed by Bluespec, Inc.
+It can also be used as a verification library to verify a processor
+implementation in a simulator.
 
 Dependencies
 ------------
@@ -17,11 +16,12 @@ This model has a fair amount of dependencies: two Standard ML compilers, and L3
 itself.
 
 L3 is available from: http://www.cl.cam.ac.uk/~acjf3/l3
-Ensure that you are using a recent version (L3-2015-07-22 or later) of L3.
+Ensure that you are using a recent version (L3-2015-07-22 or later).
 
 L3 itself needs PolyML 5.5, which depending on your platform, you may need to
 install from source from www.polyml.org.  L3 generated code is compiled with
-mlton, available as a standard package on most Unix platforms.
+mlton (http://mlton.org), available as a standard package on most Unix
+platforms.
 
 Building
 --------
@@ -54,7 +54,10 @@ Using the verification library
 ------------------------------
 
 Use the src/sml/l3riscv.h to write a C file that calls into the library.
-Incorporate that file into your project, and link it against libl3riscv.so.
+Incorporate that file into your project, and link it against libl3riscv.so.  As
+the processor executes, use the l3riscv_verify() call to check every retired
+instruction against the model.  The model will generate a trace log of the
+verification, and exit on the first verification error.
 
 See src/sml/TandemVerification_api.{h,c} to see how this is being done for the
 RISC-V processors from Bluespec, Inc.
