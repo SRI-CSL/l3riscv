@@ -4,7 +4,7 @@ L3 Specification of the RISC-V ISA
 For more on RISC-V, see http://riscv.org.
 
 This L3 specification can be used to generate an executable interpreter of
-RISC-V binaries, similar to the Spike simulator of RISC-V.
+RISC-V binaries, similar to the Spike simulator for RISC-V.
 
 It can also be used as a verification library to verify a processor
 implementation in a simulator.
@@ -83,5 +83,5 @@ Credits
 This model started out as a port of the L3 MIPS model to RISC-V. The original
 l3mips model is at https://github.com/acjf3/l3mips
 
-The verification library API originates from Bluespec, Inc, as part of the
-tandem-verification infrastructure for their RISC-V processors.
+The verification library API originates from Bluespec, Inc, and forms part of
+the tandem-verification infrastructure for their RISC-V processors.
