@@ -77,6 +77,10 @@ Known Issues
   supervisor-mode and machine-mode resp.) expect a trap, and fail otherwise.
   Both approaches are supported by the RISC-V specification.
 
+- The verification API is evolving and its implementation is incomplete.
+  However, it is complete enough for most basic verification purposes
+  (e.g. testcases).
+
 Credits
 -------
 

@@ -41,7 +41,7 @@ void l3riscv_cpu_write_fpr(uint8_t fpr, uint64_t val);
 
    - exc_taken: non-zero when the retired instruction caused an exception, zero otherwise
 
-   - pc:   PC for the retired instruction (undefined on fetch exceptions)
+   - pc:   PC for the retired instruction
 
    - addr:  address argument for instruction:
             --   new control flow target for jump, exception branch, ERET
@@ -60,6 +60,10 @@ void l3riscv_cpu_write_fpr(uint8_t fpr, uint64_t val);
    - fp_data: floating point value, currently unused
 
    - verbosity: for any generated tracing, currently unused
+
+   Note that some of the state arguments are often undefined.  For e.g., after a
+   fetch exception, only exc_taken and pc will be checked.
+
  */
 uint32_t l3riscv_verify(uint64_t cpu,
                         uint32_t cmd,

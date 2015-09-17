@@ -7,9 +7,6 @@
 
 - RVC
 
-- exporting a server-side C interface for tandem-verification, to make it usable
-  from Flute/BluRoCs.
-
 - coding conventions for variable naming etc.
 
 - Caches and store buffers.
