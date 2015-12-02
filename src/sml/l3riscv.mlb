@@ -13,7 +13,9 @@ $(L3LIBDIR)/Bitstring.sig
 $(L3LIBDIR)/Bitstring.sml
 $(L3LIBDIR)/BitsN.sig
 $(L3LIBDIR)/BitsN.sml
-$(L3LIBDIR)/FP64.sig
+$(L3LIBDIR)/FP.sig
+$(L3LIBDIR)/FP.sml
+$(L3LIBDIR)/FP32.sml
 $(L3LIBDIR)/FP64.sml
 $(L3LIBDIR)/Ptree.sig
 $(L3LIBDIR)/Ptree.sml
