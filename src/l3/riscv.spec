@@ -2180,7 +2180,7 @@ define MulDiv > REMUW(rd::reg, rs1::reg, rs2::reg) =
 -- JAL   rd, offs
 -----------------------------------
 define Branch > JAL(rd::reg, imm::imm20) =
-{ addr = PC + SignExtend(imm << 1)
+{ addr = PC + SignExtend(imm) << 1
 ; if addr<1:0> != 0
   then signalAddressException(Fetch_Misaligned, addr)
   else { writeRD(rd, PC + 4)
@@ -3400,7 +3400,7 @@ word Encode(i::instruction) =
      case ArithI(AUIPC(rd, imm))            =>  Utype(opc(0x05), rd, imm)
 
      case ArithI( ADDI(rd, rs1, imm))       =>  Itype(opc(0x04), 0, rd, rs1, imm)
-     case  Shift( SLLI(rd, rs1, imm))       =>  Itype(opc(0x04), 0, rd, rs1, '000000' : imm)
+     case  Shift( SLLI(rd, rs1, imm))       =>  Itype(opc(0x04), 1, rd, rs1, '000000' : imm)
      case ArithI( SLTI(rd, rs1, imm))       =>  Itype(opc(0x04), 2, rd, rs1, imm)
      case ArithI(SLTIU(rd, rs1, imm))       =>  Itype(opc(0x04), 3, rd, rs1, imm)
      case ArithI( XORI(rd, rs1, imm))       =>  Itype(opc(0x04), 4, rd, rs1, imm)
