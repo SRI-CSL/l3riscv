@@ -24,7 +24,7 @@ val mem_size        = ref (Word64.fromInt 0)
 
 (* true  -> init starting PC to reset vector
    false -> use start offset from ELF *)
-val boot        = ref true
+val boot        = ref false
 
 val be          = ref false (* little-endian *)
 val time_run    = ref true
@@ -559,6 +559,7 @@ local
               \  --trace  <level>     verbosity level (0 default, 2 maximum)\n\
               \  --multi  <#cores>    number of cores (1 default)\n\
               \  --check  <bool>      check execution against external verifier\n\
+              \  --boot   <bool>      set starting pc to reset address x200 (false default)\n\
               \  -h or --help         print this message\n\n")
 
     fun getNumber s =
