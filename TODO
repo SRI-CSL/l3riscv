@@ -1,3 +1,5 @@
+- handling of dirty bit (SD, FS, XS) in mstatus/sstatus
+
 - mcpuid needs to be checked (and set appropriately on initialization) as
   appropriate for each affected instruction
 

@@ -31,6 +31,8 @@ type byte     = bits(8)
 type half     = bits(16)
 type word     = bits(32)
 type dword    = bits(64)
+
+type fprnd    = bits(3)         -- rounding mode
 type fpval    = bits(64)
 
 type exc_code = bits(4)
@@ -488,10 +490,23 @@ record SupervisorCSR
 
 -- User-Level CSRs
 
+-- floating point control and status
+
+register FPCSR :: word          -- 32-bit control register
+{ 7-5 : FRM         -- dynamic rounding mode
+                    -- exception flags
+,   4 : NV          --     invalid operation
+,   3 : DZ          --     divide by zero
+,   2 : OF          --     overflow
+,   1 : UF          --     underflow
+,   0 : NX          --     inexact
+}
+
 record UserCSR
 { cycle_delta   :: regType      -- timers and counters wrt base values
   time_delta    :: regType
   instret_delta :: regType
+  fpcsr         :: FPCSR
 }
 
 -- Machine state projections
@@ -634,6 +649,8 @@ declare
   c_cycles      :: id -> regType
 
   c_gpr         :: id -> RegFile                -- general purpose registers
+  c_fpr         :: id -> RegFile                -- floating-point registers
+
   c_PC          :: id -> regType                -- program counter
 
   c_UCSR        :: id -> UserCSR                -- user-level CSRs
@@ -669,14 +686,27 @@ component gpr(n::reg) :: regType
                  }
 }
 
+component fcsr :: FPCSR
+{ value        = c_UCSR(procID).fpcsr
+  assign value = { c_UCSR(procID).fpcsr <- value }
+}
+
+component fpr(n::reg) :: regType
+{ value        = { m = c_fpr(procID); m(n) }
+  assign value = { var m = c_fpr(procID)
+                 ; m(n) <- value
+                 ; c_fpr(procID) <- m
+                 }
+}
+
 component PC :: regType
 { value        = c_PC(procID)
   assign value = c_PC(procID) <- value
 }
 
 component UCSR :: UserCSR
-{  value        = c_UCSR(procID)
-   assign value = c_UCSR(procID) <- value
+{ value        = c_UCSR(procID)
+  assign value = c_UCSR(procID) <- value
 }
 
 component SCSR :: SupervisorCSR
@@ -735,6 +765,61 @@ unit sendIPI(core::regType) =
 }
 
 ---------------------------------------------------------------------------
+-- Floating Point
+---------------------------------------------------------------------------
+
+
+-- Rounding
+
+construct Rounding
+{ RNE, RTZ, RDN, RUP, RMM, RDYN }
+
+-- instruction rounding mode
+Rounding option rnd_mode_static(rnd::fprnd) =
+    match rnd
+    { case 0          => Some(RNE)
+      case 1          => Some(RTZ)
+      case 2          => Some(RDN)
+      case 3          => Some(RUP)
+      case 4          => Some(RMM)
+      case 7          => Some(RDYN)     -- from rounding mode register
+      case _          => None
+    }
+
+-- dynamic rounding mode
+Rounding option rnd_mode_dynamic(rnd::fprnd) =
+    match rnd
+    { case 0          => Some(RNE)
+      case 1          => Some(RTZ)
+      case 2          => Some(RDN)
+      case 3          => Some(RUP)
+      case 4          => Some(RMM)
+      case _          => None
+    }
+
+-- currently implemented rounding modes
+ieee_rounding option l3round(rnd::Rounding) =
+    match rnd
+    { case RNE        => Some(roundTiesToEven)
+      case RTZ        => Some(roundTowardZero)
+      case RDN        => Some(roundTowardNegative)
+      case RUP        => Some(roundTowardPositive)
+      case RMM        => None  -- roundTiesToMaxMagnitude not in L3
+      case RDYN       => None  -- invalid
+    }
+
+-- composed rounding mode
+ieee_rounding option round(rnd::fprnd) =
+    match rnd_mode_static(rnd)
+    { case Some(RDYN) => match rnd_mode_dynamic(fcsr.FRM)
+                         { case Some(frm) => l3round(frm)
+                           case None      => None
+                         }
+      case Some(frm)  => l3round(frm)
+      case None       => None
+    }
+
+---------------------------------------------------------------------------
 -- CSR Register address map
 ---------------------------------------------------------------------------
 
@@ -754,10 +839,8 @@ bool check_CSR_access(rw::csrRW, pr::csrPR, p::Privilege, a::accessType) =
 -- XXX: Revise this to handle absence of counter regs in RV32E.
 bool is_CSR_defined(csr::creg) =
     -- user-mode
- {- XXX: skip since we don't have floating-point yet
     (csr >= 0x001 and csr <= 0x003)
-  -}
-    (csr >= 0xC00 and csr <= 0xC02)
+ or (csr >= 0xC00 and csr <= 0xC02)
  or (csr >= 0xC80 and csr <= 0xC82 and in32BitMode())
 
     -- supervisor-mode
@@ -789,7 +872,12 @@ component CSRMap(csr::creg) :: regType
 {
   value =
       match csr
-      { -- user counter/timers
+      { -- user floating-point context
+        case 0x001  => ZeroExtend(c_UCSR(procID).&fpcsr<4:0>)
+        case 0x002  => ZeroExtend(c_UCSR(procID).fpcsr.FRM)
+        case 0x003  => ZeroExtend(c_UCSR(procID).&fpcsr<7:0>)
+
+        -- user counter/timers
         case 0xC00  => c_cycles(procID)  + c_UCSR(procID).cycle_delta
         case 0xC01  => clock             + c_UCSR(procID).time_delta
         case 0xC02  => c_instret(procID) + c_UCSR(procID).instret_delta
@@ -891,7 +979,12 @@ component CSRMap(csr::creg) :: regType
 
   assign value =
       match csr
-      { -- user counters/timers are URO
+      { -- user floating-point context
+        case 0x001  => c_UCSR(procID).&fpcsr<4:0>       <- value<4:0>
+        case 0x002  => c_UCSR(procID).fpcsr.FRM         <- value<2:0>
+        case 0x003  => c_UCSR(procID).&fpcsr            <- value<31:0>
+
+        -- user counters/timers are URO
 
         -- supervisor trap setup
         case 0x100  => c_MCSR(procID).mstatus           <- lower_sstatus_mstatus(sstatus(value),
@@ -977,7 +1070,12 @@ component CSRMap(csr::creg) :: regType
 
 string csrName(csr::creg) =
     match csr
-    { -- user counter/timers
+    { -- user floating-point context
+      case 0x001  => "fflags"
+      case 0x002  => "frm"
+      case 0x003  => "fcsr"
+
+      -- user counter/timers
       case 0xC00  => "cycle"
       case 0xC01  => "time"
       case 0xC02  => "instret"
@@ -1115,8 +1213,8 @@ record StateDelta
 declare c_update :: id -> StateDelta
 
 component Delta :: StateDelta
-{  value         = c_update(procID)
-   assign value  = c_update(procID) <- value
+{ value        = c_update(procID)
+  assign value = c_update(procID) <- value
 }
 
 unit setupDelta(pc::regType, instr::word) =
@@ -1194,8 +1292,49 @@ string reg(r::reg) =
   else                 "t6"
 }
 
+string fpreg(r::reg) =
+{ if      r ==  0 then "fs0"
+  else if r ==  1 then "fs1"
+  else if r ==  2 then "fs2"
+  else if r ==  3 then "fs3"
+  else if r ==  4 then "fs4"
+  else if r ==  5 then "fs5"
+  else if r ==  6 then "fs6"
+  else if r ==  7 then "fs7"
+  else if r ==  8 then "fs8"
+  else if r ==  9 then "fs9"
+  else if r == 10 then "fs10"
+  else if r == 11 then "fs11"
+  else if r == 12 then "fs12"
+  else if r == 13 then "fs13"
+  else if r == 14 then "fs14"
+  else if r == 15 then "fs15"
+  else if r == 16 then "fv0"
+  else if r == 17 then "fv1"
+  else if r == 18 then "fa0"
+  else if r == 19 then "fa1"
+  else if r == 20 then "fa2"
+  else if r == 21 then "fa3"
+  else if r == 22 then "fa4"
+  else if r == 23 then "fa5"
+  else if r == 24 then "fa6"
+  else if r == 25 then "fa7"
+  else if r == 26 then "ft0"
+  else if r == 27 then "ft1"
+  else if r == 28 then "ft2"
+  else if r == 29 then "ft3"
+  else if r == 30 then "ft4"
+  else                 "ft5"
+}
+
 string log_w_gpr(r::reg, data::regType) =
     "Reg " : reg(r) : " (" : [[r]::nat] : ") <- 0x" : hex64(data)
+
+string log_w_fprs(r::reg, data::word) =
+    "FPR " : reg(r) : " (" : [[r]::nat] : ") <- 0x" : hex32(data)
+
+string log_w_fprd(r::reg, data::regType) =
+    "FPR " : reg(r) : " (" : [[r]::nat] : ") <- 0x" : hex64(data)
 
 string log_w_mem_mask(pAddrIdx::pAddrIdx, vAddr::vAddr, mask::regType,
                       data::regType, old::regType, new::regType) =
@@ -1384,7 +1523,7 @@ unit takeTrap(intr::bool, ec::exc_code, epc::regType, badaddr::vAddr option, toP
 ---------------------------------------------------------------------------
 
 component CSR(n::creg) :: regType
-{ value = CSRMap(n)
+{ value        = CSRMap(n)
   assign value =  { CSRMap(n) <- value
                   ; mark_log(LOG_REG, log_w_csr(n, value))
                   }
@@ -1400,11 +1539,11 @@ unit writeCSR(csr::creg, val::regType) =
 }
 
 ---------------------------------------------------------------------------
--- GPR access with logging
+-- GPR/FPR access with logging
 ---------------------------------------------------------------------------
 
 component GPR(n::reg) :: regType
-{ value = if n == 0 then 0 else gpr(n)
+{ value        = if n == 0 then 0 else gpr(n)
   assign value = when n <> 0
                  do { gpr(n) <- value
                     ; mark_log(LOG_REG, log_w_gpr(n, value))
@@ -1413,6 +1552,30 @@ component GPR(n::reg) :: regType
 
 unit writeRD(rd::reg, val::regType) =
 { GPR(rd)       <- val
+; Delta.data1   <- Some(val)
+}
+
+component FPRS(n::reg) :: word
+{ value        = fpr(n)<31:0>
+  assign value = { fpr(n)<31:0> <- value
+                 ; mark_log(LOG_REG, log_w_fprs(n, value))
+                 }
+}
+
+unit writeFPRS(rd::reg, val::word) =
+{ FPRS(rd)      <- val
+; Delta.data1   <- Some(ZeroExtend(val))
+}
+
+component FPRD(n::reg) :: regType
+{ value        = fpr(n)
+  assign value = { fpr(n) <- value
+                 ; mark_log(LOG_REG, log_w_fprd(n, value))
+                 }
+}
+
+unit writeFPRD(rd::reg, val::regType) =
+{ FPRD(rd)      <- val
 ; Delta.data1   <- Some(val)
 }
 
@@ -2881,6 +3044,297 @@ define AMO > AMOMAXU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
        }
 }
 
+
+---------------------------------------------------------------------------
+-- Floating Point Instructions (Single Precision)
+---------------------------------------------------------------------------
+
+-- Load/Store
+
+-----------------------------------
+-- FLW   rd, rs2, offs
+-----------------------------------
+
+define FPLoad > FLW(rd::reg, rs1::reg, offs::imm12) =
+{ vAddr = GPR(rs1) + SignExtend(offs)
+; match translateAddr(vAddr, Data, Read)
+  { case Some(pAddr) => { val       = rawReadData(pAddr)<31:0>
+                        ; FPRS(rd) <- val
+                        ; recordLoad(vAddr, ZeroExtend(val))
+                        }
+    case None        => signalAddressException(Load_Fault, vAddr)
+  }
+}
+
+-----------------------------------
+-- FSW   rs1, rs2, offs
+-----------------------------------
+
+define FPStore > FSW(rs1::reg, rs2::reg, offs::imm12) =
+{ vAddr = GPR(rs1) + SignExtend(offs)
+; match translateAddr(vAddr, Data, Write)
+  { case Some(pAddr) => { data = FPRS(rs2)
+                        ; rawWriteData(pAddr, ZeroExtend(data), 4)
+                        ; recordStore(vAddr, ZeroExtend(data), 4)
+                        }
+    case None        => signalAddressException(Store_AMO_Fault, vAddr)
+  }
+}
+
+-- Computational
+
+-----------------------------------
+-- FADD.S   rd, rs1, rs2
+-----------------------------------
+
+define FArith > FADD_S(rd::reg, rs1::reg, rs2::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRS(rd, FP32_Add(r, FPRS(rs1), FPRS(rs2)))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+-----------------------------------
+-- FSUB.S   rd, rs1, rs2
+-----------------------------------
+
+define FArith > FSUB_S(rd::reg, rs1::reg, rs2::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRS(rd, FP32_Sub(r, FPRS(rs1), FPRS(rs2)))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+-----------------------------------
+-- FMUL.S   rd, rs1, rs2
+-----------------------------------
+
+define FArith > FMUL_S(rd::reg, rs1::reg, rs2::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRS(rd, FP32_Mul(r, FPRS(rs1), FPRS(rs2)))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+-----------------------------------
+-- FDIV.S   rd, rs1, rs2
+-----------------------------------
+
+define FArith > FDIV_S(rd::reg, rs1::reg, rs2::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRS(rd, FP32_Div(r, FPRS(rs1), FPRS(rs2)))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+-----------------------------------
+-- FSQRT.S   rd, rs
+-----------------------------------
+
+define FArith > FSQRT_S(rd::reg, rs::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRS(rd, FP32_Sqrt(r, FPRS(rs)))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+-- TODO: FMIN/FMAX, need to check L3's NaN handling wrt RISC-V
+
+-----------------------------------
+-- FMADD.S   rd, rs1, rs2, rs3
+-----------------------------------
+
+define FArith > FMADD_S(rd::reg, rs1::reg, rs2::reg, rs3::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRS(rd, FP32_Add(r, FP32_Mul(r, FPRS(rs1), FPRS(rs2)), FPRS(rs3)))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+-----------------------------------
+-- FMSUB.S   rd, rs1, rs2, rs3
+-----------------------------------
+
+define FArith > FMSUB_S(rd::reg, rs1::reg, rs2::reg, rs3::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRS(rd, FP32_Sub(r, FP32_Mul(r, FPRS(rs1), FPRS(rs2)), FPRS(rs3)))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+-----------------------------------
+-- FNMADD.S   rd, rs1, rs2, rs3
+-----------------------------------
+
+define FArith > FNMADD_S(rd::reg, rs1::reg, rs2::reg, rs3::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRS(rd, FP32_Neg(FP32_Add(r, FP32_Mul(r, FPRS(rs1), FPRS(rs2)), FPRS(rs3))))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+-----------------------------------
+-- FNMSUB.S   rd, rs1, rs2, rs3
+-----------------------------------
+
+define FArith > FNMSUB_S(rd::reg, rs1::reg, rs2::reg, rs3::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRS(rd, FP32_Neg(FP32_Sub(r, FP32_Mul(r, FPRS(rs1), FPRS(rs2)), FPRS(rs3))))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+-- TODO
+-- Conversions
+-- Compare
+-- Classify
+
+
+
+---------------------------------------------------------------------------
+-- Floating Point Instructions (Double Precision)
+---------------------------------------------------------------------------
+
+-- Load/Store
+
+-----------------------------------
+-- FLD   rd, rs2, offs
+-----------------------------------
+
+define FPLoad > FLD(rd::reg, rs1::reg, offs::imm12) =
+{ vAddr = GPR(rs1) + SignExtend(offs)
+; match translateAddr(vAddr, Data, Read)
+  { case Some(pAddr) => { val       = rawReadData(pAddr)
+                        ; FPRD(rd) <- val
+                        ; recordLoad(vAddr, val)
+                        }
+    case None        => signalAddressException(Load_Fault, vAddr)
+  }
+}
+
+-----------------------------------
+-- FSD   rs1, rs2, offs
+-----------------------------------
+
+define FPStore > FSD(rs1::reg, rs2::reg, offs::imm12) =
+{ vAddr = GPR(rs1) + SignExtend(offs)
+; match translateAddr(vAddr, Data, Write)
+  { case Some(pAddr) => { data = FPRD(rs2)
+                        ; rawWriteData(pAddr, data, 8)
+                        ; recordStore(vAddr, data, 8)
+                        }
+    case None        => signalAddressException(Store_AMO_Fault, vAddr)
+  }
+}
+
+-- Computational
+
+-----------------------------------
+-- FADD.D   rd, rs1, rs2
+-----------------------------------
+
+define FArith > FADD_D(rd::reg, rs1::reg, rs2::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRD(rd, FP64_Add(r, FPRD(rs1), FPRD(rs2)))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+-----------------------------------
+-- FSUB.D   rd, rs1, rs2
+-----------------------------------
+
+define FArith > FSUB_D(rd::reg, rs1::reg, rs2::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRD(rd, FP64_Sub(r, FPRD(rs1), FPRD(rs2)))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+-----------------------------------
+-- FMUL.D   rd, rs1, rs2
+-----------------------------------
+
+define FArith > FMUL_D(rd::reg, rs1::reg, rs2::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRD(rd, FP64_Mul(r, FPRD(rs1), FPRD(rs2)))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+-----------------------------------
+-- FDIV.D   rd, rs1, rs2
+-----------------------------------
+
+define FArith > FDIV_D(rd::reg, rs1::reg, rs2::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRD(rd, FP64_Div(r, FPRD(rs1), FPRD(rs2)))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+-----------------------------------
+-- FSQRT.D   rd, rs
+-----------------------------------
+
+define FArith > FSQRT_D(rd::reg, rs::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRD(rd, FP64_Sqrt(r, FPRD(rs)))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+-- TODO: FMIN/FMAX, need to check L3's NaN handling wrt RISC-V
+
+-----------------------------------
+-- FMADD.D   rd, rs1, rs2, rs3
+-----------------------------------
+
+define FArith > FMADD_D(rd::reg, rs1::reg, rs2::reg, rs3::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRD(rd, FP64_Add(r, FP64_Mul(r, FPRD(rs1), FPRD(rs2)), FPRD(rs3)))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+-----------------------------------
+-- FMSUB.D   rd, rs1, rs2, rs3
+-----------------------------------
+
+define FArith > FMSUB_D(rd::reg, rs1::reg, rs2::reg, rs3::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRD(rd, FP64_Sub(r, FP64_Mul(r, FPRD(rs1), FPRD(rs2)), FPRD(rs3)))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+-----------------------------------
+-- FNMADD.D   rd, rs1, rs2, rs3
+-----------------------------------
+
+define FArith > FNMADD_D(rd::reg, rs1::reg, rs2::reg, rs3::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRD(rd, FP64_Neg(FP64_Add(r, FP64_Mul(r, FPRD(rs1), FPRD(rs2)), FPRD(rs3))))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+-----------------------------------
+-- FNMSUB.D   rd, rs1, rs2, rs3
+-----------------------------------
+
+define FArith > FNMSUB_D(rd::reg, rs1::reg, rs2::reg, rs3::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRD(rd, FP64_Neg(FP64_Sub(r, FP64_Mul(r, FPRD(rs1), FPRD(rs2)), FPRD(rs3))))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+-- TODO
+-- Conversions
+-- Compare
+-- Classify
+
 ---------------------------------------------------------------------------
 -- System Instructions
 ---------------------------------------------------------------------------
@@ -3143,6 +3597,33 @@ instruction Decode(w::word) =
      case '_`4 pred succ rs1 000  rd 00011 11' =>        FENCE(rd, rs1, pred, succ)
      case 'imm           rs1 001  rd 00011 11' =>      FENCE_I(rd, rs1, imm)
 
+     case 'rs3  00   rs2 rs1 frm  rd 10000 11' => FArith(  FMADD_S(rd, rs1, rs2, rs3, frm))
+     case 'rs3  00   rs2 rs1 frm  rd 10001 11' => FArith(  FMSUB_S(rd, rs1, rs2, rs3, frm))
+     case 'rs3  00   rs2 rs1 frm  rd 10010 11' => FArith( FNMSUB_S(rd, rs1, rs2, rs3, frm))
+     case 'rs3  00   rs2 rs1 frm  rd 10011 11' => FArith( FNMADD_S(rd, rs1, rs2, rs3, frm))
+
+     case '0000000   rs2 rs1 frm  rd 10100 11' => FArith(   FADD_S(rd, rs1, rs2, frm))
+     case '0000100   rs2 rs1 frm  rd 10100 11' => FArith(   FSUB_S(rd, rs1, rs2, frm))
+     case '0001000   rs2 rs1 frm  rd 10100 11' => FArith(   FMUL_S(rd, rs1, rs2, frm))
+     case '0001100   rs2 rs1 frm  rd 10100 11' => FArith(   FDIV_S(rd, rs1, rs2, frm))
+     case '0101100 00000 rs1 frm  rd 10100 11' => FArith(  FSQRT_S(rd, rs1, frm))
+
+     case 'rs3  01   rs2 rs1 frm  rd 10000 11' => FArith(  FMADD_D(rd, rs1, rs2, rs3, frm))
+     case 'rs3  01   rs2 rs1 frm  rd 10001 11' => FArith(  FMSUB_D(rd, rs1, rs2, rs3, frm))
+     case 'rs3  01   rs2 rs1 frm  rd 10010 11' => FArith( FNMSUB_D(rd, rs1, rs2, rs3, frm))
+     case 'rs3  01   rs2 rs1 frm  rd 10011 11' => FArith( FNMADD_D(rd, rs1, rs2, rs3, frm))
+
+     case '0000001   rs2 rs1 frm  rd 10100 11' => FArith(   FADD_D(rd, rs1, rs2, frm))
+     case '0000101   rs2 rs1 frm  rd 10100 11' => FArith(   FSUB_D(rd, rs1, rs2, frm))
+     case '0001001   rs2 rs1 frm  rd 10100 11' => FArith(   FMUL_D(rd, rs1, rs2, frm))
+     case '0001101   rs2 rs1 frm  rd 10100 11' => FArith(   FDIV_D(rd, rs1, rs2, frm))
+     case '0101101 00000 rs1 frm  rd 10100 11' => FArith(  FSQRT_D(rd, rs1, frm))
+
+     case 'imm           rs1 010  rd 00001 11' => FPLoad(  FLW(rd, rs1, imm))
+     case 'imm           rs1 011  rd 00001 11' => FPLoad(  FLD(rd, rs1, imm))
+     case 'ihi       rs2 rs1 010 ilo 01001 11' => FPStore( FSW(rs1, rs2, asSImm12(ihi, ilo)))
+     case 'ihi       rs2 rs1 011 ilo 01001 11' => FPStore( FSD(rs1, rs2, asSImm12(ihi, ilo)))
+
      case '00010 aq rl 00000  rs1 010 rd 01011 11' => AMO(     LR_W(aq, rl, rd, rs1))
      case '00010 aq rl 00000  rs1 011 rd 01011 11' => AMO(     LR_D(aq, rl, rd, rs1))
      case '00011 aq rl rs2    rs1 010 rd 01011 11' => AMO(     SC_W(aq, rl, rd, rs1, rs2))
@@ -3219,7 +3700,7 @@ string pCSRItype(o::string, rd::reg, i::bits(N), csr::creg) =
     instr(o) : " " : reg(rd) : ", " : imm(i) : ", " : csrName(csr)
 
 string pStype(o::string, rs1::reg, rs2::reg, i::bits(N)) =
-    instr(o) : " " : reg(rs1) : ", " : reg(rs2) : ", " : imm(i)
+    instr(o) : " " : reg(rs2) : ", " : reg(rs1) : ", " : imm(i)
 
 string pSBtype(o::string, rs1::reg, rs2::reg, i::bits(N)) =
     instr(o) : " " : reg(rs1) : ", " : reg(rs2) : ", " : imm(i<<1)
@@ -3235,6 +3716,21 @@ string pN0type(o::string) =
 
 string pN1type(o::string, r::reg) =
     instr(o) : " " : reg(r)
+
+string pFRtype(o::string, rd::reg, rs1::reg, rs2::reg) =
+    instr(o) : " " : fpreg(rd) : ", " : fpreg(rs1) : ", " : fpreg(rs2)
+
+string pFR1type(o::string, rd::reg, rs::reg) =
+    instr(o) : " " : fpreg(rd) : ", " : fpreg(rs)
+
+string pFR3type(o::string, rd::reg, rs1::reg, rs2::reg, rs3::reg) =
+    instr(o) : " " : fpreg(rd) : ", " : fpreg(rs1) : ", " : fpreg(rs2) : ", " : fpreg(rs3)
+
+string pFItype(o::string, rd::reg, rs1::reg, i::bits(N)) =
+    instr(o) : " " : fpreg(rd) : ", " : reg(rs1) : ", " : imm(i)
+
+string pFStype(o::string, rs1::reg, rs2::reg, i::bits(N)) =
+    instr(o) : " " : fpreg(rs2) : ", " : reg(rs1) : ", " : imm(i)
 
 string instructionToString(i::instruction) =
    match i
@@ -3314,6 +3810,34 @@ string instructionToString(i::instruction) =
      case   FENCE(rd, rs1, pred, succ)      => pN0type("FENCE")
      case FENCE_I(rd, rs1, imm)             => pN0type("FENCE.I")
 
+     case FArith(  FADD_S(rd, rs1, rs2, frm)) => pFRtype("FADD.S", rd, rs1, rs2)
+     case FArith(  FSUB_S(rd, rs1, rs2, frm)) => pFRtype("FSUB.S", rd, rs1, rs2)
+     case FArith(  FMUL_S(rd, rs1, rs2, frm)) => pFRtype("FMUL.S", rd, rs1, rs2)
+     case FArith(  FDIV_S(rd, rs1, rs2, frm)) => pFRtype("FDIV.S", rd, rs1, rs2)
+
+     case FArith( FSQRT_S(rd, rs, frm))       => pFR1type("FSQRT.S", rd, rs)
+     case FArith( FSQRT_D(rd, rs, frm))       => pFR1type("FSQRT.D", rd, rs)
+
+     case FArith( FMADD_S(rd, rs1, rs2, rs3, frm)) => pFR3type("FMADD.S",  rd, rs1, rs2, rs3)
+     case FArith( FMSUB_S(rd, rs1, rs2, rs3, frm)) => pFR3type("FMSUB.S",  rd, rs1, rs2, rs3)
+     case FArith(FNMADD_S(rd, rs1, rs2, rs3, frm)) => pFR3type("FNMADD.S", rd, rs1, rs2, rs3)
+     case FArith(FNMSUB_S(rd, rs1, rs2, rs3, frm)) => pFR3type("FNMSUB.S", rd, rs1, rs2, rs3)
+
+     case FArith(  FADD_D(rd, rs1, rs2, frm)) => pFRtype("FADD.D", rd, rs1, rs2)
+     case FArith(  FSUB_D(rd, rs1, rs2, frm)) => pFRtype("FSUB.D", rd, rs1, rs2)
+     case FArith(  FMUL_D(rd, rs1, rs2, frm)) => pFRtype("FMUL.D", rd, rs1, rs2)
+     case FArith(  FDIV_D(rd, rs1, rs2, frm)) => pFRtype("FDIV.D", rd, rs1, rs2)
+
+     case FArith( FMADD_D(rd, rs1, rs2, rs3, frm)) => pFR3type("FMADD.D",  rd, rs1, rs2, rs3)
+     case FArith( FMSUB_D(rd, rs1, rs2, rs3, frm)) => pFR3type("FMSUB.D",  rd, rs1, rs2, rs3)
+     case FArith(FNMADD_D(rd, rs1, rs2, rs3, frm)) => pFR3type("FNMADD.D", rd, rs1, rs2, rs3)
+     case FArith(FNMSUB_D(rd, rs1, rs2, rs3, frm)) => pFR3type("FNMSUB.D", rd, rs1, rs2, rs3)
+
+     case FPLoad(  FLW(rd, rs1, imm))         => pFItype("FLW",    rd, rs1, imm)
+     case FPLoad(  FLD(rd, rs1, imm))         => pFItype("FLD",    rd, rs1, imm)
+     case FPStore( FSW(rs1, rs2, imm))        => pFStype("FSW",   rs1, rs2, imm)
+     case FPStore( FSD(rs1, rs2, imm))        => pFStype("FSD",   rs1, rs2, imm)
+
      case AMO(     LR_W(aq, rl, rd, rs1))       => pLRtype("LR.W",      aq, rl, rd, rs1)
      case AMO(     LR_D(aq, rl, rd, rs1))       => pLRtype("LR.D",      aq, rl, rd, rs1)
      case AMO(     SC_W(aq, rl, rd, rs1, rs2))  => pARtype("SC.W",      aq, rl, rd, rs1, rs2)
@@ -3363,6 +3887,9 @@ string instructionToString(i::instruction) =
 
 word Rtype(o::opcode, f3::bits(3), rd::reg, rs1::reg, rs2::reg, f7::bits(7)) =
     f7 : rs2 : rs1 : f3 : rd : o
+
+word R4type(o::opcode, f3::bits(3), rd::reg, rs1::reg, rs2::reg, rs3::reg, f2::bits(2)) =
+    rs3 : f2 : rs2 : rs1 : f3 : rd : o
 
 word Itype(o::opcode, f3::bits(3), rd::reg, rs1::reg, imm::imm12) =
     imm : rs1 : f3 : rd : o
@@ -3461,6 +3988,33 @@ word Encode(i::instruction) =
 
      case   FENCE(rd, rs1, pred, succ)      =>  Itype(opc(0x03), 0, rd, rs1, '0000' : pred : succ)
      case FENCE_I(rd, rs1, imm)             =>  Itype(opc(0x03), 1, rd, rs1, imm)
+
+     case FArith(  FADD_S(rd, rs1, rs2, frm)) => Rtype(opc(0x14), frm, rd, rs1, rs2, 0)
+     case FArith(  FSUB_S(rd, rs1, rs2, frm)) => Rtype(opc(0x14), frm, rd, rs1, rs2, 4)
+     case FArith(  FMUL_S(rd, rs1, rs2, frm)) => Rtype(opc(0x14), frm, rd, rs1, rs2, 8)
+     case FArith(  FDIV_S(rd, rs1, rs2, frm)) => Rtype(opc(0x14), frm, rd, rs1, rs2, 12)
+     case FArith( FSQRT_S(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs,    0, 48)
+
+     case FArith(  FADD_D(rd, rs1, rs2, frm)) => Rtype(opc(0x14), frm, rd, rs1, rs2, 1)
+     case FArith(  FSUB_D(rd, rs1, rs2, frm)) => Rtype(opc(0x14), frm, rd, rs1, rs2, 5)
+     case FArith(  FMUL_D(rd, rs1, rs2, frm)) => Rtype(opc(0x14), frm, rd, rs1, rs2, 9)
+     case FArith(  FDIV_D(rd, rs1, rs2, frm)) => Rtype(opc(0x14), frm, rd, rs1, rs2, 13)
+     case FArith( FSQRT_D(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs,    0, 49)
+
+     case FPLoad(  FLW(rd, rs1, imm))         => Itype(opc(0x01), 2, rd, rs1, imm)
+     case FPLoad(  FLD(rd, rs1, imm))         => Itype(opc(0x01), 3, rd, rs1, imm)
+     case FPStore( FSW(rs1, rs2, imm))        => Stype(opc(0x09), 2, rs1, rs2, imm)
+     case FPStore( FSD(rs1, rs2, imm))        => Stype(opc(0x09), 3, rs1, rs2, imm)
+
+     case FArith( FMADD_S(rd, rs1, rs2, rs3, frm)) => R4type(opc(0x10), frm, rd, rs1, rs2, rs3, 0)
+     case FArith( FMSUB_S(rd, rs1, rs2, rs3, frm)) => R4type(opc(0x11), frm, rd, rs1, rs2, rs3, 0)
+     case FArith(FNMSUB_S(rd, rs1, rs2, rs3, frm)) => R4type(opc(0x12), frm, rd, rs1, rs2, rs3, 0)
+     case FArith(FNMADD_S(rd, rs1, rs2, rs3, frm)) => R4type(opc(0x13), frm, rd, rs1, rs2, rs3, 0)
+
+     case FArith( FMADD_D(rd, rs1, rs2, rs3, frm)) => R4type(opc(0x10), frm, rd, rs1, rs2, rs3, 1)
+     case FArith( FMSUB_D(rd, rs1, rs2, rs3, frm)) => R4type(opc(0x11), frm, rd, rs1, rs2, rs3, 1)
+     case FArith(FNMSUB_D(rd, rs1, rs2, rs3, frm)) => R4type(opc(0x12), frm, rd, rs1, rs2, rs3, 1)
+     case FArith(FNMADD_D(rd, rs1, rs2, rs3, frm)) => R4type(opc(0x13), frm, rd, rs1, rs2, rs3, 1)
 
      case AMO(     LR_W(aq, rl, rd, rs1))       => Rtype(opc(0x0B), 2, rd, rs1, 0,   amofunc('00010', aq, rl))
      case AMO(     LR_D(aq, rl, rd, rs1))       => Rtype(opc(0x0B), 3, rd, rs1, 0,   amofunc('00010', aq, rl))
