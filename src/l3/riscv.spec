@@ -556,10 +556,10 @@ mstatus update_mstatus(orig::mstatus, v::mstatus) =
   do mt.VM <- v.VM
 ; mt.MMPRV <- v.MMPRV
 
--- ignore MFS since we don't yet have floating-point.  ignore MXS
--- since we don't have any state extension.
-; when extStatus(mt.MXS) == Dirty or extStatus(mt.MFS) == Dirty
-  do mt.MSD <- true
+-- update extension context status
+; mt.MFS   <- v.MFS
+; mt.MXS   <- v.MXS
+; mt.MSD   <- extStatus(v.MXS) == Dirty or extStatus(v.MFS) == Dirty
 
 ; mt
 }
@@ -569,9 +569,9 @@ sstatus lift_mstatus_sstatus(mst::mstatus) =
 ; st.SMPRV  <- mst.MMPRV
 
 -- shared state
-; st.SSD    <- mst.MSD
 ; st.SXS    <- mst.MXS
 ; st.SFS    <- mst.MFS
+; st.SSD    <- extStatus(mst.MXS) == Dirty or extStatus(mst.MFS) == Dirty
 
 -- projected state
 ; st.SPS    <- not (privilege(mst.MPRV1) == User)
@@ -688,7 +688,10 @@ component gpr(n::reg) :: regType
 
 component fcsr :: FPCSR
 { value        = c_UCSR(procID).fpcsr
-  assign value = { c_UCSR(procID).fpcsr <- value }
+  assign value = { c_UCSR(procID).fpcsr       <- value
+                 ; c_MCSR(procID).mstatus.MFS <- ext_status(Dirty)
+                 ; c_MCSR(procID).mstatus.MSD <- true
+                 }
 }
 
 component fpr(n::reg) :: regType
@@ -980,10 +983,18 @@ component CSRMap(csr::creg) :: regType
   assign value =
       match csr
       { -- user floating-point context
-        case 0x001  => c_UCSR(procID).&fpcsr<4:0>       <- value<4:0>
-        case 0x002  => c_UCSR(procID).fpcsr.FRM         <- value<2:0>
-        case 0x003  => c_UCSR(procID).&fpcsr            <- value<31:0>
-
+        case 0x001  => { c_UCSR(procID).&fpcsr<4:0>     <- value<4:0>
+                       ; c_MCSR(procID).mstatus.MFS     <- ext_status(Dirty)
+                       ; c_MCSR(procID).mstatus.MSD     <- true
+                       }
+        case 0x002  => { c_UCSR(procID).fpcsr.FRM       <- value<2:0>
+                       ; c_MCSR(procID).mstatus.MFS     <- ext_status(Dirty)
+                       ; c_MCSR(procID).mstatus.MSD     <- true
+                       }
+        case 0x003  => { c_UCSR(procID).&fpcsr          <- value<31:0>
+                       ; c_MCSR(procID).mstatus.MFS     <- ext_status(Dirty)
+                       ; c_MCSR(procID).mstatus.MSD     <- true
+                       }
         -- user counters/timers are URO
 
         -- supervisor trap setup
@@ -1572,12 +1583,14 @@ component FPRD(n::reg) :: regType
 unit writeFPRS(rd::reg, val::word) =
 { FPRS(rd)          <- val
 ; MCSR.mstatus.MFS  <- ext_status(Dirty)
+; MCSR.mstatus.MSD  <- true
 ; Delta.data1       <- Some(ZeroExtend(val))
 }
 
 unit writeFPRD(rd::reg, val::regType) =
 { FPRD(rd)          <- val
 ; MCSR.mstatus.MFS  <- ext_status(Dirty)
+; MCSR.mstatus.MSD  <- true
 ; Delta.data1       <- Some(val)
 }
 
@@ -4444,6 +4457,10 @@ unit initMachine(hartid::id) =
   MCSR.mstatus.VM   <- vmMode(Mbare)
 ; MCSR.mstatus.MPRV <- privLevel(Machine)
 ; MCSR.mstatus.MIE  <- false
+  -- initialize extension context state
+; MCSR.mstatus.MFS  <- ext_status(Initial)
+; MCSR.mstatus.MXS  <- ext_status(Off)
+; MCSR.mstatus.MSD  <- false
 
   -- MPRV1/MIE1 and MPRV2/MIE2 are unspecified.
 
@@ -4460,6 +4477,8 @@ unit initRegs(pc::nat) =
   -- the verifier, which assumes 0-valued initialization.
   for i in 0 .. 31 do
     gpr([i])   <- 0x0
+; for i in 0 .. 31 do
+    fpr([i])   <- 0x0
 
 ; PC           <- [pc]
 ; NextFetch    <- None
