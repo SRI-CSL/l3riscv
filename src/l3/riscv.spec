@@ -1562,11 +1562,6 @@ component FPRS(n::reg) :: word
                  }
 }
 
-unit writeFPRS(rd::reg, val::word) =
-{ FPRS(rd)      <- val
-; Delta.data1   <- Some(ZeroExtend(val))
-}
-
 component FPRD(n::reg) :: regType
 { value        = fpr(n)
   assign value = { fpr(n) <- value
@@ -1574,9 +1569,16 @@ component FPRD(n::reg) :: regType
                  }
 }
 
+unit writeFPRS(rd::reg, val::word) =
+{ FPRS(rd)          <- val
+; MCSR.mstatus.MFS  <- ext_status(Dirty)
+; Delta.data1       <- Some(ZeroExtend(val))
+}
+
 unit writeFPRD(rd::reg, val::regType) =
-{ FPRD(rd)      <- val
-; Delta.data1   <- Some(val)
+{ FPRD(rd)          <- val
+; MCSR.mstatus.MFS  <- ext_status(Dirty)
+; Delta.data1       <- Some(val)
 }
 
 ---------------------------------------------------------------------------
@@ -3184,12 +3186,79 @@ define FArith > FNMSUB_S(rd::reg, rs1::reg, rs2::reg, rs3::reg, fprnd::fprnd) =
   }
 }
 
--- TODO
 -- Conversions
+
+-----------------------------------
+-- FCVT.S   rd, rs
+-----------------------------------
+
+-- TODO: handle signed/unsigned conversion
+
+define FConv > FCVT_S_W(rd::reg, rs::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRS(rd, FP32_FromInt(r, [GPR(rs)<31:0>]::int))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+define FConv > FCVT_S_WU(rd::reg, rs::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRS(rd, FP32_FromInt(r, [GPR(rs)<31:0>]::int))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+-- TODO: handle out-of-range / infinities ; signed/unsigned
+define FConv > FCVT_W_S(rd::reg, rs::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) =>
+         match FP32_ToInt(r, FPRS(rs))
+         { case Some(i) => GPR(rd) <- SignExtend([i]::bits(32))
+           case None    => GPR(rd) <- 0 -- FIXME: need info on conv failure from L3
+         }
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+define FConv > FCVT_WU_S(rd::reg, rs::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) =>
+         match FP32_ToInt(r, FPRS(rs))
+         { case Some(i) => GPR(rd) <- SignExtend([i]::bits(32))
+           case None    => GPR(rd) <- 0 -- FIXME: need info on conv failure from L3
+         }
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+-- Movement
+
+-----------------------------------
+-- FMV.X.S   rd, rs
+-----------------------------------
+
+define FConv > FMV_X_S(rd::reg, rs::reg) =
+    GPR(rd) <- SignExtend(FPRS(rs))
+
+-----------------------------------
+-- FMV.S.X   rd, rs
+-----------------------------------
+
+define FConv > FMV_S_X(rd::reg, rs::reg) =
+    writeFPRS(rd, GPR(rs)<31:0>)
+
+-- Classification
+
+-----------------------------------
+-- FCLASS.S  rd, rs
+-----------------------------------
+
+define FConv > FCLASS_S(rd::reg, rs::reg) =
+    #INTERNAL_ERROR("not implemented")
+
+-- TODO:
+-- Sign injections
 -- Compare
--- Classify
-
-
 
 ---------------------------------------------------------------------------
 -- Floating Point Instructions (Double Precision)
@@ -3330,10 +3399,120 @@ define FArith > FNMSUB_D(rd::reg, rs1::reg, rs2::reg, rs3::reg, fprnd::fprnd) =
   }
 }
 
--- TODO
 -- Conversions
+
+-----------------------------------
+-- FCVT.D   rd, rs
+-----------------------------------
+
+-- TODO: handle signed/unsigned conversion
+-- TODO: check storage of singles in 64-bit regs
+
+define FConv > FCVT_S_L(rd::reg, rs::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRD(rd, ZeroExtend(FP32_FromInt(r, [GPR(rs)]::int)))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+define FConv > FCVT_S_LU(rd::reg, rs::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRD(rd, ZeroExtend(FP32_FromInt(r, [GPR(rs)]::int)))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+define FConv > FCVT_L_S(rd::reg, rs::reg, fprnd::fprnd) =
+    #INTERNAL_ERROR("not implemented")
+
+define FConv > FCVT_LU_S(rd::reg, rs::reg, fprnd::fprnd) =
+    #INTERNAL_ERROR("not implemented")
+
+define FConv > FCVT_D_W(rd::reg, rs::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRD(rd, FP64_FromInt(r, [GPR(rs)<31:0>]::int))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+define FConv > FCVT_D_WU(rd::reg, rs::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRD(rd, FP64_FromInt(r, [GPR(rs)<31:0>]::int))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+define FConv > FCVT_W_D(rd::reg, rs::reg, fprnd::fprnd) =
+    #INTERNAL_ERROR("not implemented")
+
+define FConv > FCVT_WU_D(rd::reg, rs::reg, fprnd::fprnd) =
+    #INTERNAL_ERROR("not implemented")
+
+define FConv > FCVT_D_L(rd::reg, rs::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRD(rd, FP64_FromInt(r, [GPR(rs)]::int))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+define FConv > FCVT_D_LU(rd::reg, rs::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRD(rd, FP64_FromInt(r, [GPR(rs)]::int))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+-- TODO: handle out-of-range / infinities ; signed/unsigned
+define FConv > FCVT_L_D(rd::reg, rs::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) =>
+         match FP64_ToInt(r, FPRD(rs))
+         { case Some(i) => GPR(rd) <- SignExtend([i]::bits(64))
+           case None    => GPR(rd) <- 0 -- FIXME: need info on conv failure from L3
+         }
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+define FConv > FCVT_LU_D(rd::reg, rs::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) =>
+         match FP64_ToInt(r, FPRD(rs))
+         { case Some(i) => GPR(rd) <- SignExtend([i]::bits(64))
+           case None    => GPR(rd) <- 0 -- FIXME: need info on conv failure from L3
+         }
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+-- Movement
+
+-----------------------------------
+-- FMV.X.D   rd, rs
+-----------------------------------
+
+define FConv > FMV_X_D(rd::reg, rs::reg) =
+    GPR(rd) <- SignExtend(FPRD(rs))
+
+-----------------------------------
+-- FMV.D.X   rd, rs
+-----------------------------------
+
+define FConv > FMV_D_X(rd::reg, rs::reg) =
+    writeFPRD(rd, GPR(rs))
+
+-- Classification
+
+-----------------------------------
+-- FCLASS.D  rd, rs
+-----------------------------------
+
+define FConv > FCLASS_D(rd::reg, rs::reg) =
+    #INTERNAL_ERROR("not implemented")
+
+-- TODO:
+-- Sign injections
 -- Compare
--- Classify
 
 ---------------------------------------------------------------------------
 -- System Instructions
@@ -3608,6 +3787,14 @@ instruction Decode(w::word) =
      case '0001100   rs2 rs1 frm  rd 10100 11' => FArith(   FDIV_S(rd, rs1, rs2, frm))
      case '0101100 00000 rs1 frm  rd 10100 11' => FArith(  FSQRT_S(rd, rs1, frm))
 
+     case '1100000 00000 rs1 frm  rd 10100 11' => FConv(  FCVT_W_S(rd, rs1, frm))
+     case '1100000 00001 rs1 frm  rd 10100 11' => FConv( FCVT_WU_S(rd, rs1, frm))
+     case '1110000 00000 rs1 000  rd 10100 11' => FConv(   FMV_X_S(rd, rs1))
+     case '1110000 00000 rs1 001  rd 10100 11' => FConv(  FCLASS_S(rd, rs1))
+     case '1101000 00000 rs1 frm  rd 10100 11' => FConv(  FCVT_S_W(rd, rs1, frm))
+     case '1101000 00001 rs1 frm  rd 10100 11' => FConv( FCVT_S_WU(rd, rs1, frm))
+     case '1111000 00000 rs1 000  rd 10100 11' => FConv(   FMV_S_X(rd, rs1))
+
      case 'rs3  01   rs2 rs1 frm  rd 10000 11' => FArith(  FMADD_D(rd, rs1, rs2, rs3, frm))
      case 'rs3  01   rs2 rs1 frm  rd 10001 11' => FArith(  FMSUB_D(rd, rs1, rs2, rs3, frm))
      case 'rs3  01   rs2 rs1 frm  rd 10010 11' => FArith( FNMSUB_D(rd, rs1, rs2, rs3, frm))
@@ -3618,6 +3805,24 @@ instruction Decode(w::word) =
      case '0001001   rs2 rs1 frm  rd 10100 11' => FArith(   FMUL_D(rd, rs1, rs2, frm))
      case '0001101   rs2 rs1 frm  rd 10100 11' => FArith(   FDIV_D(rd, rs1, rs2, frm))
      case '0101101 00000 rs1 frm  rd 10100 11' => FArith(  FSQRT_D(rd, rs1, frm))
+
+     case '1100001 00000 rs1 frm  rd 10100 11' => FConv(  FCVT_W_D(rd, rs1, frm))
+     case '1100001 00001 rs1 frm  rd 10100 11' => FConv( FCVT_WU_D(rd, rs1, frm))
+     case '1110001 00000 rs1 001  rd 10100 11' => FConv(  FCLASS_D(rd, rs1))
+     case '1101001 00000 rs1 frm  rd 10100 11' => FConv(  FCVT_D_W(rd, rs1, frm))
+     case '1101001 00001 rs1 frm  rd 10100 11' => FConv( FCVT_D_WU(rd, rs1, frm))
+
+     case '1100000 00010 rs1 frm  rd 10100 11' => FConv(  FCVT_L_S(rd, rs1, frm))
+     case '1100000 00011 rs1 frm  rd 10100 11' => FConv( FCVT_LU_S(rd, rs1, frm))
+     case '1101000 00010 rs1 frm  rd 10100 11' => FConv(  FCVT_S_L(rd, rs1, frm))
+     case '1101000 00011 rs1 frm  rd 10100 11' => FConv( FCVT_S_LU(rd, rs1, frm))
+
+     case '1100001 00010 rs1 frm  rd 10100 11' => FConv(  FCVT_L_D(rd, rs1, frm))
+     case '1100001 00011 rs1 frm  rd 10100 11' => FConv( FCVT_LU_D(rd, rs1, frm))
+     case '1101001 00010 rs1 frm  rd 10100 11' => FConv(  FCVT_D_L(rd, rs1, frm))
+     case '1101001 00011 rs1 frm  rd 10100 11' => FConv( FCVT_D_LU(rd, rs1, frm))
+     case '1110001 00000 rs1 000  rd 10100 11' => FConv(  FMV_X_D(rd, rs1))
+     case '1111001 00000 rs1 000  rd 10100 11' => FConv(  FMV_D_X(rd, rs1))
 
      case 'imm           rs1 010  rd 00001 11' => FPLoad(  FLW(rd, rs1, imm))
      case 'imm           rs1 011  rd 00001 11' => FPLoad(  FLD(rd, rs1, imm))
@@ -3732,6 +3937,12 @@ string pFItype(o::string, rd::reg, rs1::reg, i::bits(N)) =
 string pFStype(o::string, rs1::reg, rs2::reg, i::bits(N)) =
     instr(o) : " " : fpreg(rs2) : ", " : reg(rs1) : ", " : imm(i)
 
+string pCFItype(o::string, rd::reg, rs::reg) =
+    instr(o) : " " : fpreg(rd) : ", " : reg(rs)
+
+string pCIFtype(o::string, rd::reg, rs::reg) =
+    instr(o) : " " : reg(rd) : ", " : fpreg(rs)
+
 string instructionToString(i::instruction) =
    match i
    { case Branch(  BEQ(rs1, rs2, imm))      => pSBtype("BEQ",  rs1, rs2, imm)
@@ -3832,6 +4043,31 @@ string instructionToString(i::instruction) =
      case FArith( FMSUB_D(rd, rs1, rs2, rs3, frm)) => pFR3type("FMSUB.D",  rd, rs1, rs2, rs3)
      case FArith(FNMADD_D(rd, rs1, rs2, rs3, frm)) => pFR3type("FNMADD.D", rd, rs1, rs2, rs3)
      case FArith(FNMSUB_D(rd, rs1, rs2, rs3, frm)) => pFR3type("FNMSUB.D", rd, rs1, rs2, rs3)
+
+     case FConv( FCVT_W_S(rd, rs, frm))       => pCIFtype("FCVT.W.S",  rd, rs)
+     case FConv(FCVT_WU_S(rd, rs, frm))       => pCIFtype("FCVT.WU.S", rd, rs)
+     case FConv(  FMV_X_S(rd, rs))            => pCIFtype("FMV.X.S",   rd, rs)
+     case FConv( FCLASS_S(rd, rs))            => pCIFtype("FCLASS.S",  rd, rs)
+     case FConv( FCVT_S_W(rd, rs, frm))       => pCFItype("FCVT.S.W",  rd, rs)
+     case FConv(FCVT_S_WU(rd, rs, frm))       => pCFItype("FCVT.S.WU", rd, rs)
+     case FConv(  FMV_S_X(rd, rs))            => pCFItype("FMV.S.X",   rd, rs)
+
+     case FConv( FCVT_W_D(rd, rs, frm))       => pCIFtype("FCVT.W.D",  rd, rs)
+     case FConv(FCVT_WU_D(rd, rs, frm))       => pCIFtype("FCVT.WU.D", rd, rs)
+     case FConv( FCLASS_D(rd, rs))            => pCIFtype("FCLASS.D",  rd, rs)
+     case FConv( FCVT_D_W(rd, rs, frm))       => pCFItype("FCVT.D.W",  rd, rs)
+     case FConv(FCVT_D_WU(rd, rs, frm))       => pCFItype("FCVT.D.WU", rd, rs)
+
+     case FConv( FCVT_L_S(rd, rs, frm))       => pCIFtype("FCVT.L.S",  rd, rs)
+     case FConv(FCVT_LU_S(rd, rs, frm))       => pCIFtype("FCVT.LU.S", rd, rs)
+     case FConv( FCVT_S_L(rd, rs, frm))       => pCFItype("FCVT.S.L",  rd, rs)
+     case FConv(FCVT_S_LU(rd, rs, frm))       => pCFItype("FCVT.S.LU", rd, rs)
+     case FConv( FCVT_L_D(rd, rs, frm))       => pCIFtype("FCVT.L.D",  rd, rs)
+     case FConv(FCVT_LU_D(rd, rs, frm))       => pCIFtype("FCVT.LU.D", rd, rs)
+     case FConv(  FMV_X_D(rd, rs))            => pCIFtype("FMV.X.D",   rd, rs)
+     case FConv( FCVT_D_L(rd, rs, frm))       => pCFItype("FCVT.D.L",  rd, rs)
+     case FConv(FCVT_D_LU(rd, rs, frm))       => pCFItype("FCVT.D.LU", rd, rs)
+     case FConv(  FMV_D_X(rd, rs))            => pCFItype("FMV.D.X",   rd, rs)
 
      case FPLoad(  FLW(rd, rs1, imm))         => pFItype("FLW",    rd, rs1, imm)
      case FPLoad(  FLD(rd, rs1, imm))         => pFItype("FLD",    rd, rs1, imm)
@@ -4015,6 +4251,31 @@ word Encode(i::instruction) =
      case FArith( FMSUB_D(rd, rs1, rs2, rs3, frm)) => R4type(opc(0x11), frm, rd, rs1, rs2, rs3, 1)
      case FArith(FNMSUB_D(rd, rs1, rs2, rs3, frm)) => R4type(opc(0x12), frm, rd, rs1, rs2, rs3, 1)
      case FArith(FNMADD_D(rd, rs1, rs2, rs3, frm)) => R4type(opc(0x13), frm, rd, rs1, rs2, rs3, 1)
+
+     case FConv( FCVT_W_S(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs, 0, 0x60)
+     case FConv(FCVT_WU_S(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs, 1, 0x60)
+     case FConv(  FMV_X_S(rd, rs))            => Rtype(opc(0x14), 0,   rd, rs, 0, 0x70)
+     case FConv( FCLASS_S(rd, rs))            => Rtype(opc(0x14), 1,   rd, rs, 0, 0x70)
+     case FConv( FCVT_S_W(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs, 0, 0x68)
+     case FConv(FCVT_S_WU(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs, 1, 0x68)
+     case FConv(  FMV_S_X(rd, rs))            => Rtype(opc(0x14), 0,   rd, rs, 0, 0x78)
+
+     case FConv( FCVT_W_D(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs, 0, 0x61)
+     case FConv(FCVT_WU_D(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs, 1, 0x61)
+     case FConv( FCLASS_D(rd, rs))            => Rtype(opc(0x14), 1,   rd, rs, 0, 0x71)
+     case FConv( FCVT_D_W(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs, 0, 0x69)
+     case FConv(FCVT_D_WU(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs, 1, 0x69)
+
+     case FConv( FCVT_L_S(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs, 2, 0x60)
+     case FConv(FCVT_LU_S(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs, 3, 0x60)
+     case FConv( FCVT_S_L(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs, 2, 0x68)
+     case FConv(FCVT_S_LU(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs, 3, 0x68)
+     case FConv( FCVT_L_D(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs, 2, 0x61)
+     case FConv(FCVT_LU_D(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs, 3, 0x61)
+     case FConv(  FMV_X_D(rd, rs))            => Rtype(opc(0x14), 0,   rd, rs, 0, 0x71)
+     case FConv( FCVT_D_L(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs, 2, 0x69)
+     case FConv(FCVT_D_LU(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs, 3, 0x69)
+     case FConv(  FMV_D_X(rd, rs))            => Rtype(opc(0x14), 0,   rd, rs, 0, 0x79)
 
      case AMO(     LR_W(aq, rl, rd, rs1))       => Rtype(opc(0x0B), 2, rd, rs1, 0,   amofunc('00010', aq, rl))
      case AMO(     LR_D(aq, rl, rd, rs1))       => Rtype(opc(0x0B), 3, rd, rs1, 0,   amofunc('00010', aq, rl))
