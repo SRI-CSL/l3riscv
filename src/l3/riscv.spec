@@ -3149,7 +3149,33 @@ define FArith > FSQRT_S(rd::reg, rs::reg, fprnd::fprnd) =
   }
 }
 
--- TODO: FMIN/FMAX, need to check L3's NaN handling wrt RISC-V
+-----------------------------------
+-- FMIN.S    rd, rs1, rs2
+-----------------------------------
+define FArith > FMIN_S(rd::reg, rs1::reg, rs2::reg) =
+{ f1 = FPRS(rs1)
+; f2 = FPRS(rs2)
+; match FP32_Compare(f1, f2)
+  { case FP_LT   => writeFPRS(rd, f1)
+    case FP_EQ   => writeFPRS(rd, f1)
+    case FP_GT   => writeFPRS(rd, f2)
+    case FP_UN   => #INTERNAL_ERROR("NaN generation unsupported")
+  }
+}
+
+-----------------------------------
+-- FMAX.S    rd, rs1, rs2
+-----------------------------------
+define FArith > FMAX_S(rd::reg, rs1::reg, rs2::reg) =
+{ f1 = FPRS(rs1)
+; f2 = FPRS(rs2)
+; match FP32_Compare(f1, f2)
+  { case FP_LT   => writeFPRS(rd, f2)
+    case FP_EQ   => writeFPRS(rd, f2)
+    case FP_GT   => writeFPRS(rd, f1)
+    case FP_UN   => #INTERNAL_ERROR("NaN generation unsupported")
+  }
+}
 
 -----------------------------------
 -- FMADD.S   rd, rs1, rs2, rs3
@@ -3240,6 +3266,29 @@ define FConv > FCVT_WU_S(rd::reg, rs::reg, fprnd::fprnd) =
   }
 }
 
+-- Sign injection
+
+-----------------------------------
+-- FSGNJ.S  rd, rs
+-----------------------------------
+
+define FConv > FSGNJ_S(rd::reg, rs1::reg, rs2::reg) =
+    #INTERNAL_ERROR("not implemented")
+
+-----------------------------------
+-- FSGNJN.S  rd, rs
+-----------------------------------
+
+define FConv > FSGNJN_S(rd::reg, rs1::reg, rs2::reg) =
+    #INTERNAL_ERROR("not implemented")
+
+-----------------------------------
+-- FSGNJX.S  rd, rs
+-----------------------------------
+
+define FConv > FSGNJX_S(rd::reg, rs1::reg, rs2::reg) =
+    #INTERNAL_ERROR("not implemented")
+
 -- Movement
 
 -----------------------------------
@@ -3256,6 +3305,56 @@ define FConv > FMV_X_S(rd::reg, rs::reg) =
 define FConv > FMV_S_X(rd::reg, rs::reg) =
     writeFPRS(rd, GPR(rs)<31:0>)
 
+-- Comparisons
+
+-----------------------------------
+-- FEQ.S   rd, rs
+-----------------------------------
+
+define FArith > FEQ_S(rd::reg, rs1::reg, rs2::reg) =
+{ -- TODO: check for signalling NaN inputs
+  f1 = FPRS(rs1)
+; f2 = FPRS(rs2)
+; match FP32_Compare(f1, f2)
+  { case FP_LT   => writeRD(rd, 0x0)
+    case FP_EQ   => writeRD(rd, 0x1)
+    case FP_GT   => writeRD(rd, 0x0)
+    case FP_UN   => writeRD(rd, 0x0)
+  }
+}
+
+-----------------------------------
+-- FLT.S   rd, rs
+-----------------------------------
+
+define FArith > FLT_S(rd::reg, rs1::reg, rs2::reg) =
+{ -- TODO: check for signalling NaN inputs
+  f1 = FPRS(rs1)
+; f2 = FPRS(rs2)
+; match FP32_Compare(f1, f2)
+  { case FP_LT   => writeRD(rd, 0x1)
+    case FP_EQ   => writeRD(rd, 0x0)
+    case FP_GT   => writeRD(rd, 0x0)
+    case FP_UN   => writeRD(rd, 0x0)
+  }
+}
+
+-----------------------------------
+-- FLE.S   rd, rs
+-----------------------------------
+
+define FArith > FLE_S(rd::reg, rs1::reg, rs2::reg) =
+{ -- TODO: check for signalling NaN inputs
+  f1 = FPRS(rs1)
+; f2 = FPRS(rs2)
+; match FP32_Compare(f1, f2)
+  { case FP_LT   => writeRD(rd, 0x1)
+    case FP_EQ   => writeRD(rd, 0x1)
+    case FP_GT   => writeRD(rd, 0x0)
+    case FP_UN   => writeRD(rd, 0x0)
+  }
+}
+
 -- Classification
 
 -----------------------------------
@@ -3264,10 +3363,6 @@ define FConv > FMV_S_X(rd::reg, rs::reg) =
 
 define FConv > FCLASS_S(rd::reg, rs::reg) =
     #INTERNAL_ERROR("not implemented")
-
--- TODO:
--- Sign injections
--- Compare
 
 ---------------------------------------------------------------------------
 -- Floating Point Instructions (Double Precision)
@@ -3362,7 +3457,33 @@ define FArith > FSQRT_D(rd::reg, rs::reg, fprnd::fprnd) =
   }
 }
 
--- TODO: FMIN/FMAX, need to check L3's NaN handling wrt RISC-V
+-----------------------------------
+-- FMIN.D    rd, rs1, rs2
+-----------------------------------
+define FArith > FMIN_D(rd::reg, rs1::reg, rs2::reg) =
+{ f1 = FPRD(rs1)
+; f2 = FPRD(rs2)
+; match FP64_Compare(f1, f2)
+  { case FP_LT   => writeFPRD(rd, f1)
+    case FP_EQ   => writeFPRD(rd, f1)
+    case FP_GT   => writeFPRD(rd, f2)
+    case FP_UN   => #INTERNAL_ERROR("NaN generation unsupported")
+  }
+}
+
+-----------------------------------
+-- FMAX.D    rd, rs1, rs2
+-----------------------------------
+define FArith > FMAX_D(rd::reg, rs1::reg, rs2::reg) =
+{ f1 = FPRD(rs1)
+; f2 = FPRD(rs2)
+; match FP64_Compare(f1, f2)
+  { case FP_LT   => writeFPRD(rd, f2)
+    case FP_EQ   => writeFPRD(rd, f2)
+    case FP_GT   => writeFPRD(rd, f1)
+    case FP_UN   => #INTERNAL_ERROR("NaN generation unsupported")
+  }
+}
 
 -----------------------------------
 -- FMADD.D   rd, rs1, rs2, rs3
@@ -3494,6 +3615,29 @@ define FConv > FCVT_LU_D(rd::reg, rs::reg, fprnd::fprnd) =
   }
 }
 
+-- Sign injection
+
+-----------------------------------
+-- FSGNJ.D  rd, rs
+-----------------------------------
+
+define FConv > FSGNJ_D(rd::reg, rs1::reg, rs2::reg) =
+    #INTERNAL_ERROR("not implemented")
+
+-----------------------------------
+-- FSGNJN.D  rd, rs
+-----------------------------------
+
+define FConv > FSGNJN_D(rd::reg, rs1::reg, rs2::reg) =
+    #INTERNAL_ERROR("not implemented")
+
+-----------------------------------
+-- FSGNJX.D  rd, rs
+-----------------------------------
+
+define FConv > FSGNJX_D(rd::reg, rs1::reg, rs2::reg) =
+    #INTERNAL_ERROR("not implemented")
+
 -- Movement
 
 -----------------------------------
@@ -3510,6 +3654,56 @@ define FConv > FMV_X_D(rd::reg, rs::reg) =
 define FConv > FMV_D_X(rd::reg, rs::reg) =
     writeFPRD(rd, GPR(rs))
 
+-- Comparisons
+
+-----------------------------------
+-- FEQ.D   rd, rs
+-----------------------------------
+
+define FArith > FEQ_D(rd::reg, rs1::reg, rs2::reg) =
+{ -- TODO: check for signalling NaN inputs
+  f1 = FPRD(rs1)
+; f2 = FPRD(rs2)
+; match FP64_Compare(f1, f2)
+  { case FP_LT   => writeRD(rd, 0x0)
+    case FP_EQ   => writeRD(rd, 0x1)
+    case FP_GT   => writeRD(rd, 0x0)
+    case FP_UN   => writeRD(rd, 0x0)
+  }
+}
+
+-----------------------------------
+-- FLT.D   rd, rs
+-----------------------------------
+
+define FArith > FLT_D(rd::reg, rs1::reg, rs2::reg) =
+{ -- TODO: check for signalling NaN inputs
+  f1 = FPRD(rs1)
+; f2 = FPRD(rs2)
+; match FP64_Compare(f1, f2)
+  { case FP_LT   => writeRD(rd, 0x1)
+    case FP_EQ   => writeRD(rd, 0x0)
+    case FP_GT   => writeRD(rd, 0x0)
+    case FP_UN   => writeRD(rd, 0x0)
+  }
+}
+
+-----------------------------------
+-- FLE.D   rd, rs
+-----------------------------------
+
+define FArith > FLE_D(rd::reg, rs1::reg, rs2::reg) =
+{ -- TODO: check for signalling NaN inputs
+  f1 = FPRD(rs1)
+; f2 = FPRD(rs2)
+; match FP64_Compare(f1, f2)
+  { case FP_LT   => writeRD(rd, 0x1)
+    case FP_EQ   => writeRD(rd, 0x1)
+    case FP_GT   => writeRD(rd, 0x0)
+    case FP_UN   => writeRD(rd, 0x0)
+  }
+}
+
 -- Classification
 
 -----------------------------------
@@ -3518,10 +3712,6 @@ define FConv > FMV_D_X(rd::reg, rs::reg) =
 
 define FConv > FCLASS_D(rd::reg, rs::reg) =
     #INTERNAL_ERROR("not implemented")
-
--- TODO:
--- Sign injections
--- Compare
 
 ---------------------------------------------------------------------------
 -- System Instructions
@@ -3796,6 +3986,16 @@ instruction Decode(w::word) =
      case '0001100   rs2 rs1 frm  rd 10100 11' => FArith(   FDIV_S(rd, rs1, rs2, frm))
      case '0101100 00000 rs1 frm  rd 10100 11' => FArith(  FSQRT_S(rd, rs1, frm))
 
+     case '0010100   rs2 rs1 000  rd 10100 11' => FArith(  FMIN_S(rd,  rs1, rs2))
+     case '0010100   rs2 rs1 001  rd 10100 11' => FArith(  FMAX_S(rd,  rs1, rs2))
+     case '1010000   rs2 rs1 010  rd 10100 11' => FArith(   FEQ_S(rd,  rs1, rs2))
+     case '1010000   rs2 rs1 001  rd 10100 11' => FArith(   FLT_S(rd,  rs1, rs2))
+     case '1010000   rs2 rs1 000  rd 10100 11' => FArith(   FLE_S(rd,  rs1, rs2))
+
+     case '0010000   rs2 rs1 000  rd 10100 11' => FConv (  FSGNJ_S(rd,  rs1, rs2))
+     case '0010000   rs2 rs1 001  rd 10100 11' => FConv ( FSGNJN_S(rd,  rs1, rs2))
+     case '0010000   rs2 rs1 010  rd 10100 11' => FConv ( FSGNJX_S(rd,  rs1, rs2))
+
      case '1100000 00000 rs1 frm  rd 10100 11' => FConv(  FCVT_W_S(rd, rs1, frm))
      case '1100000 00001 rs1 frm  rd 10100 11' => FConv( FCVT_WU_S(rd, rs1, frm))
      case '1110000 00000 rs1 000  rd 10100 11' => FConv(   FMV_X_S(rd, rs1))
@@ -3814,6 +4014,16 @@ instruction Decode(w::word) =
      case '0001001   rs2 rs1 frm  rd 10100 11' => FArith(   FMUL_D(rd, rs1, rs2, frm))
      case '0001101   rs2 rs1 frm  rd 10100 11' => FArith(   FDIV_D(rd, rs1, rs2, frm))
      case '0101101 00000 rs1 frm  rd 10100 11' => FArith(  FSQRT_D(rd, rs1, frm))
+
+     case '0010101   rs2 rs1 000  rd 10100 11' => FArith(  FMIN_D(rd,  rs1, rs2))
+     case '0010101   rs2 rs1 001  rd 10100 11' => FArith(  FMAX_D(rd,  rs1, rs2))
+     case '1010001   rs2 rs1 010  rd 10100 11' => FArith(   FEQ_D(rd,  rs1, rs2))
+     case '1010001   rs2 rs1 001  rd 10100 11' => FArith(   FLT_D(rd,  rs1, rs2))
+     case '1010001   rs2 rs1 000  rd 10100 11' => FArith(   FLE_D(rd,  rs1, rs2))
+
+     case '0010001   rs2 rs1 000  rd 10100 11' => FConv (  FSGNJ_D(rd,  rs1, rs2))
+     case '0010001   rs2 rs1 001  rd 10100 11' => FConv ( FSGNJN_D(rd,  rs1, rs2))
+     case '0010001   rs2 rs1 010  rd 10100 11' => FConv ( FSGNJX_D(rd,  rs1, rs2))
 
      case '1100001 00000 rs1 frm  rd 10100 11' => FConv(  FCVT_W_D(rd, rs1, frm))
      case '1100001 00001 rs1 frm  rd 10100 11' => FConv( FCVT_WU_D(rd, rs1, frm))
@@ -4036,7 +4246,12 @@ string instructionToString(i::instruction) =
      case FArith(  FDIV_S(rd, rs1, rs2, frm)) => pFRtype("FDIV.S", rd, rs1, rs2)
 
      case FArith( FSQRT_S(rd, rs, frm))       => pFR1type("FSQRT.S", rd, rs)
-     case FArith( FSQRT_D(rd, rs, frm))       => pFR1type("FSQRT.D", rd, rs)
+
+     case FArith(  FMIN_S(rd, rs1, rs2))      => pFRtype("FMIN.S", rd, rs1, rs2)
+     case FArith(  FMAX_S(rd, rs1, rs2))      => pFRtype("FMAX.S", rd, rs1, rs2)
+     case FArith(   FEQ_S(rd, rs1, rs2))      => pFRtype("FEQ.S",  rd, rs1, rs2)
+     case FArith(   FLT_S(rd, rs1, rs2))      => pFRtype("FLT.S",  rd, rs1, rs2)
+     case FArith(   FLE_S(rd, rs1, rs2))      => pFRtype("FLE.S",  rd, rs1, rs2)
 
      case FArith( FMADD_S(rd, rs1, rs2, rs3, frm)) => pFR3type("FMADD.S",  rd, rs1, rs2, rs3)
      case FArith( FMSUB_S(rd, rs1, rs2, rs3, frm)) => pFR3type("FMSUB.S",  rd, rs1, rs2, rs3)
@@ -4048,10 +4263,22 @@ string instructionToString(i::instruction) =
      case FArith(  FMUL_D(rd, rs1, rs2, frm)) => pFRtype("FMUL.D", rd, rs1, rs2)
      case FArith(  FDIV_D(rd, rs1, rs2, frm)) => pFRtype("FDIV.D", rd, rs1, rs2)
 
+     case FArith( FSQRT_D(rd, rs, frm))       => pFR1type("FSQRT.D", rd, rs)
+
+     case FArith(  FMIN_D(rd, rs1, rs2))      => pFRtype("FMIN.D", rd, rs1, rs2)
+     case FArith(  FMAX_D(rd, rs1, rs2))      => pFRtype("FMAX.D", rd, rs1, rs2)
+     case FArith(   FEQ_D(rd, rs1, rs2))      => pFRtype("FEQ.D",  rd, rs1, rs2)
+     case FArith(   FLT_D(rd, rs1, rs2))      => pFRtype("FLT.D",  rd, rs1, rs2)
+     case FArith(   FLE_D(rd, rs1, rs2))      => pFRtype("FLE.D",  rd, rs1, rs2)
+
      case FArith( FMADD_D(rd, rs1, rs2, rs3, frm)) => pFR3type("FMADD.D",  rd, rs1, rs2, rs3)
      case FArith( FMSUB_D(rd, rs1, rs2, rs3, frm)) => pFR3type("FMSUB.D",  rd, rs1, rs2, rs3)
      case FArith(FNMADD_D(rd, rs1, rs2, rs3, frm)) => pFR3type("FNMADD.D", rd, rs1, rs2, rs3)
      case FArith(FNMSUB_D(rd, rs1, rs2, rs3, frm)) => pFR3type("FNMSUB.D", rd, rs1, rs2, rs3)
+
+     case FConv(  FSGNJ_S(rd, rs1, rs2))      => pFRtype("FSGNJ.S",    rd, rs1, rs2)
+     case FConv( FSGNJN_S(rd, rs1, rs2))      => pFRtype("FSGNJN.S",   rd, rs1, rs2)
+     case FConv( FSGNJX_S(rd, rs1, rs2))      => pFRtype("FSGNJX.S",   rd, rs1, rs2)
 
      case FConv( FCVT_W_S(rd, rs, frm))       => pCIFtype("FCVT.W.S",  rd, rs)
      case FConv(FCVT_WU_S(rd, rs, frm))       => pCIFtype("FCVT.WU.S", rd, rs)
@@ -4060,6 +4287,10 @@ string instructionToString(i::instruction) =
      case FConv( FCVT_S_W(rd, rs, frm))       => pCFItype("FCVT.S.W",  rd, rs)
      case FConv(FCVT_S_WU(rd, rs, frm))       => pCFItype("FCVT.S.WU", rd, rs)
      case FConv(  FMV_S_X(rd, rs))            => pCFItype("FMV.S.X",   rd, rs)
+
+     case FConv(  FSGNJ_D(rd, rs1, rs2))      => pFRtype("FSGNJ.D",    rd, rs1, rs2)
+     case FConv( FSGNJN_D(rd, rs1, rs2))      => pFRtype("FSGNJN.D",   rd, rs1, rs2)
+     case FConv( FSGNJX_D(rd, rs1, rs2))      => pFRtype("FSGNJX.D",   rd, rs1, rs2)
 
      case FConv( FCVT_W_D(rd, rs, frm))       => pCIFtype("FCVT.W.D",  rd, rs)
      case FConv(FCVT_WU_D(rd, rs, frm))       => pCIFtype("FCVT.WU.D", rd, rs)
@@ -4182,13 +4413,13 @@ word Encode(i::instruction) =
      case ArithI( ANDI(rd, rs1, imm))       =>  Itype(opc(0x04), 7, rd, rs1, imm)
 
      case ArithR(  ADD(rd, rs1, rs2))       =>  Rtype(opc(0x0C), 0, rd, rs1, rs2, 0)
-     case ArithR(  SUB(rd, rs1, rs2))       =>  Rtype(opc(0x0C), 0, rd, rs1, rs2, 32)
+     case ArithR(  SUB(rd, rs1, rs2))       =>  Rtype(opc(0x0C), 0, rd, rs1, rs2, 0x20)
      case  Shift(  SLL(rd, rs1, rs2))       =>  Rtype(opc(0x0C), 1, rd, rs1, rs2, 0)
      case ArithR(  SLT(rd, rs1, rs2))       =>  Rtype(opc(0x0C), 2, rd, rs1, rs2, 0)
      case ArithR( SLTU(rd, rs1, rs2))       =>  Rtype(opc(0x0C), 3, rd, rs1, rs2, 0)
      case ArithR(  XOR(rd, rs1, rs2))       =>  Rtype(opc(0x0C), 4, rd, rs1, rs2, 0)
      case  Shift(  SRL(rd, rs1, rs2))       =>  Rtype(opc(0x0C), 5, rd, rs1, rs2, 0)
-     case  Shift(  SRA(rd, rs1, rs2))       =>  Rtype(opc(0x0C), 5, rd, rs1, rs2, 32)
+     case  Shift(  SRA(rd, rs1, rs2))       =>  Rtype(opc(0x0C), 5, rd, rs1, rs2, 0x20)
      case ArithR(   OR(rd, rs1, rs2))       =>  Rtype(opc(0x0C), 6, rd, rs1, rs2, 0)
      case ArithR(  AND(rd, rs1, rs2))       =>  Rtype(opc(0x0C), 7, rd, rs1, rs2, 0)
 
@@ -4234,17 +4465,27 @@ word Encode(i::instruction) =
      case   FENCE(rd, rs1, pred, succ)      =>  Itype(opc(0x03), 0, rd, rs1, '0000' : pred : succ)
      case FENCE_I(rd, rs1, imm)             =>  Itype(opc(0x03), 1, rd, rs1, imm)
 
-     case FArith(  FADD_S(rd, rs1, rs2, frm)) => Rtype(opc(0x14), frm, rd, rs1, rs2, 0)
-     case FArith(  FSUB_S(rd, rs1, rs2, frm)) => Rtype(opc(0x14), frm, rd, rs1, rs2, 4)
-     case FArith(  FMUL_S(rd, rs1, rs2, frm)) => Rtype(opc(0x14), frm, rd, rs1, rs2, 8)
-     case FArith(  FDIV_S(rd, rs1, rs2, frm)) => Rtype(opc(0x14), frm, rd, rs1, rs2, 12)
-     case FArith( FSQRT_S(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs,    0, 48)
+     case FArith(  FADD_S(rd, rs1, rs2, frm)) => Rtype(opc(0x14), frm, rd, rs1, rs2, 0x00)
+     case FArith(  FSUB_S(rd, rs1, rs2, frm)) => Rtype(opc(0x14), frm, rd, rs1, rs2, 0x04)
+     case FArith(  FMUL_S(rd, rs1, rs2, frm)) => Rtype(opc(0x14), frm, rd, rs1, rs2, 0x08)
+     case FArith(  FDIV_S(rd, rs1, rs2, frm)) => Rtype(opc(0x14), frm, rd, rs1, rs2, 0x0c)
+     case FArith( FSQRT_S(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs,    0, 0x2c)
+     case FArith(  FMIN_S(rd, rs1, rs2))      => Rtype(opc(0x14), 0,   rd, rs1, rs2, 0x14)
+     case FArith(  FMAX_S(rd, rs1, rs2))      => Rtype(opc(0x14), 1,   rd, rs1, rs2, 0x14)
+     case FArith(   FEQ_S(rd, rs1, rs2))      => Rtype(opc(0x14), 2,   rd, rs1, rs2, 0x50)
+     case FArith(   FLT_S(rd, rs1, rs2))      => Rtype(opc(0x14), 1,   rd, rs1, rs2, 0x50)
+     case FArith(   FLE_S(rd, rs1, rs2))      => Rtype(opc(0x14), 0,   rd, rs1, rs2, 0x50)
 
-     case FArith(  FADD_D(rd, rs1, rs2, frm)) => Rtype(opc(0x14), frm, rd, rs1, rs2, 1)
-     case FArith(  FSUB_D(rd, rs1, rs2, frm)) => Rtype(opc(0x14), frm, rd, rs1, rs2, 5)
-     case FArith(  FMUL_D(rd, rs1, rs2, frm)) => Rtype(opc(0x14), frm, rd, rs1, rs2, 9)
-     case FArith(  FDIV_D(rd, rs1, rs2, frm)) => Rtype(opc(0x14), frm, rd, rs1, rs2, 13)
-     case FArith( FSQRT_D(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs,    0, 49)
+     case FArith(  FADD_D(rd, rs1, rs2, frm)) => Rtype(opc(0x14), frm, rd, rs1, rs2, 0x01)
+     case FArith(  FSUB_D(rd, rs1, rs2, frm)) => Rtype(opc(0x14), frm, rd, rs1, rs2, 0x05)
+     case FArith(  FMUL_D(rd, rs1, rs2, frm)) => Rtype(opc(0x14), frm, rd, rs1, rs2, 0x09)
+     case FArith(  FDIV_D(rd, rs1, rs2, frm)) => Rtype(opc(0x14), frm, rd, rs1, rs2, 0x0d)
+     case FArith( FSQRT_D(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs,    0, 0x2d)
+     case FArith(  FMIN_D(rd, rs1, rs2))      => Rtype(opc(0x14), 0,   rd, rs1, rs2, 0x15)
+     case FArith(  FMAX_D(rd, rs1, rs2))      => Rtype(opc(0x14), 1,   rd, rs1, rs2, 0x15)
+     case FArith(   FEQ_D(rd, rs1, rs2))      => Rtype(opc(0x14), 2,   rd, rs1, rs2, 0x51)
+     case FArith(   FLT_D(rd, rs1, rs2))      => Rtype(opc(0x14), 1,   rd, rs1, rs2, 0x51)
+     case FArith(   FLE_D(rd, rs1, rs2))      => Rtype(opc(0x14), 0,   rd, rs1, rs2, 0x51)
 
      case FPLoad(  FLW(rd, rs1, imm))         => Itype(opc(0x01), 2, rd, rs1, imm)
      case FPLoad(  FLD(rd, rs1, imm))         => Itype(opc(0x01), 3, rd, rs1, imm)
@@ -4261,6 +4502,10 @@ word Encode(i::instruction) =
      case FArith(FNMSUB_D(rd, rs1, rs2, rs3, frm)) => R4type(opc(0x12), frm, rd, rs1, rs2, rs3, 1)
      case FArith(FNMADD_D(rd, rs1, rs2, rs3, frm)) => R4type(opc(0x13), frm, rd, rs1, rs2, rs3, 1)
 
+     case FConv(  FSGNJ_S(rd, rs1, rs2))      => Rtype(opc(0x14), 0, rd, rs1, rs2, 0x10)
+     case FConv( FSGNJN_S(rd, rs1, rs2))      => Rtype(opc(0x14), 1, rd, rs1, rs2, 0x10)
+     case FConv( FSGNJX_S(rd, rs1, rs2))      => Rtype(opc(0x14), 2, rd, rs1, rs2, 0x10)
+
      case FConv( FCVT_W_S(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs, 0, 0x60)
      case FConv(FCVT_WU_S(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs, 1, 0x60)
      case FConv(  FMV_X_S(rd, rs))            => Rtype(opc(0x14), 0,   rd, rs, 0, 0x70)
@@ -4268,6 +4513,10 @@ word Encode(i::instruction) =
      case FConv( FCVT_S_W(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs, 0, 0x68)
      case FConv(FCVT_S_WU(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs, 1, 0x68)
      case FConv(  FMV_S_X(rd, rs))            => Rtype(opc(0x14), 0,   rd, rs, 0, 0x78)
+
+     case FConv(  FSGNJ_D(rd, rs1, rs2))      => Rtype(opc(0x14), 0, rd, rs1, rs2, 0x11)
+     case FConv( FSGNJN_D(rd, rs1, rs2))      => Rtype(opc(0x14), 1, rd, rs1, rs2, 0x11)
+     case FConv( FSGNJX_D(rd, rs1, rs2))      => Rtype(opc(0x14), 2, rd, rs1, rs2, 0x11)
 
      case FConv( FCVT_W_D(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs, 0, 0x61)
      case FConv(FCVT_WU_D(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs, 1, 0x61)
