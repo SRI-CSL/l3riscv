@@ -3171,19 +3171,18 @@ define FArith > FSQRT_S(rd::reg, rs::reg, fprnd::fprnd) =
 -- FMIN.S    rd, rs1, rs2
 -----------------------------------
 define FArith > FMIN_S(rd::reg, rs1::reg, rs2::reg) =
-{ var res
-; f1 = FPRS(rs1)
-; f2 = FPRS(rs2)
-; match FP32_Compare(f1, f2)
-  { case FP_LT   => res <- f1
-    case FP_EQ   => res <- f1
-    case FP_GT   => res <- f2
-    case FP_UN   => if (   (FP32_IsSignalingNan(f1) or FP32_IsSignalingNan(f2))
-                        or (f1 == RV32_CanonicalNan and f2 == RV32_CanonicalNan))
-                    then res <- RV32_CanonicalNan
-                    else -- either f1 or f2 should be a quiet NaN
-                        if f1 == RV32_CanonicalNan then res <- f2 else res <- f1
-  }
+{ f1  = FPRS(rs1)
+; f2  = FPRS(rs2)
+; res = match FP32_Compare(f1, f2)
+        { case FP_LT   => f1
+          case FP_EQ   => f1
+          case FP_GT   => f2
+          case FP_UN   => if (   (FP32_IsSignalingNan(f1) or FP32_IsSignalingNan(f2))
+                              or (f1 == RV32_CanonicalNan and f2 == RV32_CanonicalNan))
+                          then RV32_CanonicalNan
+                          else -- either f1 or f2 should be a quiet NaN
+                              if f1 == RV32_CanonicalNan then f2 else f1
+        }
 ; writeFPRS(rd, res)
 }
 
@@ -3191,19 +3190,19 @@ define FArith > FMIN_S(rd::reg, rs1::reg, rs2::reg) =
 -- FMAX.S    rd, rs1, rs2
 -----------------------------------
 define FArith > FMAX_S(rd::reg, rs1::reg, rs2::reg) =
-{ var res
-; f1 = FPRS(rs1)
-; f2 = FPRS(rs2)
-; match FP32_Compare(f1, f2)
-  { case FP_LT   => writeFPRS(rd, f2)
-    case FP_EQ   => writeFPRS(rd, f2)
-    case FP_GT   => writeFPRS(rd, f1)
-    case FP_UN   => if (   (FP32_IsSignalingNan(f1) or FP32_IsSignalingNan(f2))
-                        or (f1 == RV32_CanonicalNan and f2 == RV32_CanonicalNan))
-                    then res <- RV32_CanonicalNan
-                    else -- either f1 or f2 should be a quiet NaN
-                        if f1 == RV32_CanonicalNan then res <- f2 else res <- f1
-  }
+{ f1  = FPRS(rs1)
+; f2  = FPRS(rs2)
+; res = match FP32_Compare(f1, f2)
+        { case FP_LT   => f2
+          case FP_EQ   => f2
+          case FP_GT   => f1
+          case FP_UN   => if (   (FP32_IsSignalingNan(f1) or FP32_IsSignalingNan(f2))
+                              or (f1 == RV32_CanonicalNan and f2 == RV32_CanonicalNan))
+                          then RV32_CanonicalNan
+                          else -- either f1 or f2 should be a quiet NaN
+                              if f1 == RV32_CanonicalNan then f2 else f1
+        }
+; writeFPRS(rd, res)
 }
 
 -----------------------------------
@@ -3253,10 +3252,8 @@ define FArith > FNMSUB_S(rd::reg, rs1::reg, rs2::reg, rs3::reg, fprnd::fprnd) =
 -- Conversions
 
 -----------------------------------
--- FCVT.S   rd, rs
+-- FCVT.S.W   rd, rs
 -----------------------------------
-
--- TODO: handle signed/unsigned conversion
 
 define FConv > FCVT_S_W(rd::reg, rs::reg, fprnd::fprnd) =
 { match round(fprnd)
@@ -3265,32 +3262,127 @@ define FConv > FCVT_S_W(rd::reg, rs::reg, fprnd::fprnd) =
   }
 }
 
+-----------------------------------
+-- FCVT.S.WU  rd, rs
+-----------------------------------
+
 define FConv > FCVT_S_WU(rd::reg, rs::reg, fprnd::fprnd) =
 { match round(fprnd)
-  { case Some(r) => writeFPRS(rd, FP32_FromInt(r, [GPR(rs)<31:0>]::int))
+  { case Some(r) => writeFPRS(rd, FP32_FromInt(r, [0`1 : GPR(rs)<31:0>]::int))
     case None    => signalException(Illegal_Instr)
   }
 }
 
--- TODO: handle out-of-range / infinities ; signed/unsigned
+-----------------------------------
+-- FCVT.W.S   rd, rs
+-----------------------------------
+
 define FConv > FCVT_W_S(rd::reg, rs::reg, fprnd::fprnd) =
 { match round(fprnd)
-  { case Some(r) =>
-         match FP32_ToInt(r, FPRS(rs))
-         { case Some(i) => GPR(rd) <- SignExtend([i]::bits(32))
-           case None    => GPR(rd) <- 0 -- FIXME: need info on conv failure from L3
-         }
+  { case Some(r) => { inp = FPRS(rs)
+                    ; val = ValOf(FP32_ToInt(r, inp))
+                    ; res = if   FP32_IsNan(inp) or inp == FP32_PosInf
+                            then [0n2 ** 31 - 1]
+                            else if inp == FP32_NegInf
+                            then -[0n2 ** 31]
+                            else if val > 2 ** 31 - 1
+                            then [0n2 ** 31 - 1]
+                            else if val < -2 ** 31
+                            then -[0n2 ** 31]
+                            else [val]
+                    ; writeRD(rd, res)
+                    }
     case None    => signalException(Illegal_Instr)
   }
 }
+
+-----------------------------------
+-- FCVT.WU.S  rd, rs
+-----------------------------------
 
 define FConv > FCVT_WU_S(rd::reg, rs::reg, fprnd::fprnd) =
 { match round(fprnd)
-  { case Some(r) =>
-         match FP32_ToInt(r, FPRS(rs))
-         { case Some(i) => GPR(rd) <- SignExtend([i]::bits(32))
-           case None    => GPR(rd) <- 0 -- FIXME: need info on conv failure from L3
-         }
+  { case Some(r) => { inp = FPRS(rs)
+                    ; val = ValOf(FP32_ToInt(r, inp))
+                    ; res = if   FP32_IsNan(inp) or inp == FP32_PosInf
+                            then [0n2 ** 32 - 1]
+                            else if inp == FP32_NegInf
+                            then 0x0
+                            else if val > 2 ** 32 - 1
+                            then [0n2 ** 32 - 1]
+                            else if val < 0
+                            then 0x0
+                            else [val]
+                    ; writeRD(rd, res)
+                    }
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+-----------------------------------
+-- FCVT.S.L   rd, rs
+-----------------------------------
+
+define FConv > FCVT_S_L(rd::reg, rs::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRS(rd, FP32_FromInt(r, [GPR(rs)]::int))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+-----------------------------------
+-- FCVT.S.LU  rd, rs
+-----------------------------------
+
+define FConv > FCVT_S_LU(rd::reg, rs::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRS(rd, FP32_FromInt(r, [0`1 : GPR(rs)]::int))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+-----------------------------------
+-- FCVT.L.S   rd, rs
+-----------------------------------
+
+define FConv > FCVT_L_S(rd::reg, rs::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => { inp = FPRS(rs)
+                    ; val = ValOf(FP32_ToInt(r, inp))
+                    ; res = if   FP32_IsNan(inp) or inp == FP32_PosInf
+                            then [0n2 ** 63 - 1]
+                            else if inp == FP32_NegInf
+                            then -[0n2 ** 63]
+                            else if val > 2 ** 63 - 1
+                            then [0n2 ** 63 - 1]
+                            else if val < -2 ** 63
+                            then -[0n2 ** 63]
+                            else [val]
+                    ; writeRD(rd, res)
+                    }
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+-----------------------------------
+-- FCVT.LU.S  rd, rs
+-----------------------------------
+
+define FConv > FCVT_LU_S(rd::reg, rs::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => { inp = FPRS(rs)
+                    ; val = ValOf(FP32_ToInt(r, inp))
+                    ; res = if   FP32_IsNan(inp) or inp == FP32_PosInf
+                            then [0n2 ** 64 - 1]
+                            else if inp == FP32_NegInf
+                            then 0x0
+                            else if val > 2 ** 64 - 1
+                            then [0n2 ** 64 - 1]
+                            else if val < 0
+                            then 0x0
+                            else [val]
+                    ; writeRD(rd, res)
+                    }
     case None    => signalException(Illegal_Instr)
   }
 }
@@ -3298,7 +3390,7 @@ define FConv > FCVT_WU_S(rd::reg, rs::reg, fprnd::fprnd) =
 -- Sign injection
 
 -----------------------------------
--- FSGNJ.S  rd, rs
+-- FSGNJ.S   rd, rs
 -----------------------------------
 
 define FConv > FSGNJ_S(rd::reg, rs1::reg, rs2::reg) =
@@ -3351,14 +3443,15 @@ define FConv > FMV_S_X(rd::reg, rs::reg) =
 
 define FArith > FEQ_S(rd::reg, rs1::reg, rs2::reg) =
 { -- TODO: check for signalling NaN inputs
-  f1 = FPRS(rs1)
-; f2 = FPRS(rs2)
-; match FP32_Compare(f1, f2)
-  { case FP_LT   => writeRD(rd, 0x0)
-    case FP_EQ   => writeRD(rd, 0x1)
-    case FP_GT   => writeRD(rd, 0x0)
-    case FP_UN   => writeRD(rd, 0x0)
-  }
+  f1  = FPRS(rs1)
+; f2  = FPRS(rs2)
+; res = match FP32_Compare(f1, f2)
+        { case FP_LT => 0x0
+          case FP_EQ => 0x1
+          case FP_GT => 0x0
+          case FP_UN => 0x0
+        }
+; writeRD(rd, res)
 }
 
 -----------------------------------
@@ -3367,14 +3460,15 @@ define FArith > FEQ_S(rd::reg, rs1::reg, rs2::reg) =
 
 define FArith > FLT_S(rd::reg, rs1::reg, rs2::reg) =
 { -- TODO: check for signalling NaN inputs
-  f1 = FPRS(rs1)
-; f2 = FPRS(rs2)
-; match FP32_Compare(f1, f2)
-  { case FP_LT   => writeRD(rd, 0x1)
-    case FP_EQ   => writeRD(rd, 0x0)
-    case FP_GT   => writeRD(rd, 0x0)
-    case FP_UN   => writeRD(rd, 0x0)
-  }
+  f1  = FPRS(rs1)
+; f2  = FPRS(rs2)
+; res = match FP32_Compare(f1, f2)
+        { case FP_LT => 0x1
+          case FP_EQ => 0x0
+          case FP_GT => 0x0
+          case FP_UN => 0x0
+        }
+; writeRD(rd, res)
 }
 
 -----------------------------------
@@ -3383,14 +3477,15 @@ define FArith > FLT_S(rd::reg, rs1::reg, rs2::reg) =
 
 define FArith > FLE_S(rd::reg, rs1::reg, rs2::reg) =
 { -- TODO: check for signalling NaN inputs
-  f1 = FPRS(rs1)
-; f2 = FPRS(rs2)
-; match FP32_Compare(f1, f2)
-  { case FP_LT   => writeRD(rd, 0x1)
-    case FP_EQ   => writeRD(rd, 0x1)
-    case FP_GT   => writeRD(rd, 0x0)
-    case FP_UN   => writeRD(rd, 0x0)
-  }
+  f1  = FPRS(rs1)
+; f2  = FPRS(rs2)
+; res = match FP32_Compare(f1, f2)
+        { case FP_LT => 0x1
+          case FP_EQ => 0x1
+          case FP_GT => 0x0
+          case FP_UN => 0x0
+        }
+; writeRD(rd, res)
 }
 
 -- Classification
@@ -3514,39 +3609,39 @@ define FArith > FSQRT_D(rd::reg, rs::reg, fprnd::fprnd) =
 -- FMIN.D    rd, rs1, rs2
 -----------------------------------
 define FArith > FMIN_D(rd::reg, rs1::reg, rs2::reg) =
-{ var res
-; f1 = FPRD(rs1)
+{ f1 = FPRD(rs1)
 ; f2 = FPRD(rs2)
-; match FP64_Compare(f1, f2)
-  { case FP_LT   => writeFPRD(rd, f1)
-    case FP_EQ   => writeFPRD(rd, f1)
-    case FP_GT   => writeFPRD(rd, f2)
-    case FP_UN   => if (   (FP64_IsSignalingNan(f1) or FP64_IsSignalingNan(f2))
-                        or (f1 == RV64_CanonicalNan and f2 == RV64_CanonicalNan))
-                    then res <- RV64_CanonicalNan
-                    else -- either f1 or f2 should be a quiet NaN
-                        if f1 == RV64_CanonicalNan then res <- f2 else res <- f1
+; res = match FP64_Compare(f1, f2)
+        { case FP_LT => f1
+          case FP_EQ => f1
+          case FP_GT => f2
+          case FP_UN => if (   (FP64_IsSignalingNan(f1) or FP64_IsSignalingNan(f2))
+                            or (f1 == RV64_CanonicalNan and f2 == RV64_CanonicalNan))
+                        then RV64_CanonicalNan
+                        else -- either f1 or f2 should be a quiet NaN
+                            if f1 == RV64_CanonicalNan then f2 else f1
 
-  }
+        }
+; writeFPRD(rd, res)
 }
 
 -----------------------------------
 -- FMAX.D    rd, rs1, rs2
 -----------------------------------
 define FArith > FMAX_D(rd::reg, rs1::reg, rs2::reg) =
-{ var res
-; f1 = FPRD(rs1)
+{ f1 = FPRD(rs1)
 ; f2 = FPRD(rs2)
-; match FP64_Compare(f1, f2)
-  { case FP_LT   => writeFPRD(rd, f2)
-    case FP_EQ   => writeFPRD(rd, f2)
-    case FP_GT   => writeFPRD(rd, f1)
-    case FP_UN   => if (   (FP64_IsSignalingNan(f1) or FP64_IsSignalingNan(f2))
-                        or (f1 == RV64_CanonicalNan and f2 == RV64_CanonicalNan))
-                    then res <- RV64_CanonicalNan
-                    else -- either f1 or f2 should be a quiet NaN
-                        if f1 == RV64_CanonicalNan then res <- f2 else res <- f1
+; res = match FP64_Compare(f1, f2)
+        { case FP_LT => f2
+          case FP_EQ => f2
+          case FP_GT => f1
+          case FP_UN => if (   (FP64_IsSignalingNan(f1) or FP64_IsSignalingNan(f2))
+                            or (f1 == RV64_CanonicalNan and f2 == RV64_CanonicalNan))
+                        then RV64_CanonicalNan
+                        else -- either f1 or f2 should be a quiet NaN
+                            if f1 == RV64_CanonicalNan then f2 else f1
   }
+; writeFPRD(rd, res)
 }
 
 -----------------------------------
@@ -3596,31 +3691,8 @@ define FArith > FNMSUB_D(rd::reg, rs1::reg, rs2::reg, rs3::reg, fprnd::fprnd) =
 -- Conversions
 
 -----------------------------------
--- FCVT.D   rd, rs
+-- FCVT.D.W   rd, rs
 -----------------------------------
-
--- TODO: handle signed/unsigned conversion
--- TODO: check storage of singles in 64-bit regs
-
-define FConv > FCVT_S_L(rd::reg, rs::reg, fprnd::fprnd) =
-{ match round(fprnd)
-  { case Some(r) => writeFPRD(rd, ZeroExtend(FP32_FromInt(r, [GPR(rs)]::int)))
-    case None    => signalException(Illegal_Instr)
-  }
-}
-
-define FConv > FCVT_S_LU(rd::reg, rs::reg, fprnd::fprnd) =
-{ match round(fprnd)
-  { case Some(r) => writeFPRD(rd, ZeroExtend(FP32_FromInt(r, [GPR(rs)]::int)))
-    case None    => signalException(Illegal_Instr)
-  }
-}
-
-define FConv > FCVT_L_S(rd::reg, rs::reg, fprnd::fprnd) =
-    #INTERNAL_ERROR("not implemented")
-
-define FConv > FCVT_LU_S(rd::reg, rs::reg, fprnd::fprnd) =
-    #INTERNAL_ERROR("not implemented")
 
 define FConv > FCVT_D_W(rd::reg, rs::reg, fprnd::fprnd) =
 { match round(fprnd)
@@ -3629,18 +3701,66 @@ define FConv > FCVT_D_W(rd::reg, rs::reg, fprnd::fprnd) =
   }
 }
 
+-----------------------------------
+-- FCVT.D.WU  rd, rs
+-----------------------------------
+
 define FConv > FCVT_D_WU(rd::reg, rs::reg, fprnd::fprnd) =
 { match round(fprnd)
-  { case Some(r) => writeFPRD(rd, FP64_FromInt(r, [GPR(rs)<31:0>]::int))
+  { case Some(r) => writeFPRD(rd, FP64_FromInt(r, [0`1 : GPR(rs)<31:0>]::int))
     case None    => signalException(Illegal_Instr)
   }
 }
 
+-----------------------------------
+-- FCVT.W.D   rd, rs
+-----------------------------------
+
 define FConv > FCVT_W_D(rd::reg, rs::reg, fprnd::fprnd) =
-    #INTERNAL_ERROR("not implemented")
+{ match round(fprnd)
+  { case Some(r) => { inp = FPRD(rs)
+                    ; val = ValOf(FP64_ToInt(r, inp))
+                    ; res = if   FP64_IsNan(inp) or inp == FP64_PosInf
+                            then [0n2 ** 31 - 1]
+                            else if inp == FP64_NegInf
+                            then -[0n2 ** 31]
+                            else if val > 2 ** 31 - 1
+                            then [0n2 ** 31 - 1]
+                            else if val < -2 ** 31
+                            then -[0n2 ** 31]
+                            else [val]
+                    ; writeRD(rd, res)
+                    }
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+-----------------------------------
+-- FCVT.WU.D  rd, rs
+-----------------------------------
 
 define FConv > FCVT_WU_D(rd::reg, rs::reg, fprnd::fprnd) =
-    #INTERNAL_ERROR("not implemented")
+{ match round(fprnd)
+  { case Some(r) => { inp = FPRD(rs)
+                    ; val = ValOf(FP64_ToInt(r, inp))
+                    ; res = if   FP64_IsNan(inp) or inp == FP64_PosInf
+                            then [0n2 ** 32 - 1]
+                            else if inp == FP64_NegInf
+                            then 0x0
+                            else if val > 2 ** 32 - 1
+                            then [0n2 ** 32 - 1]
+                            else if val < 0
+                            then 0x0
+                            else [val]
+                    ; writeRD(rd, res)
+                    }
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+-----------------------------------
+-- FCVT.D.L   rd, rs
+-----------------------------------
 
 define FConv > FCVT_D_L(rd::reg, rs::reg, fprnd::fprnd) =
 { match round(fprnd)
@@ -3649,32 +3769,59 @@ define FConv > FCVT_D_L(rd::reg, rs::reg, fprnd::fprnd) =
   }
 }
 
+-----------------------------------
+-- FCVT.D.LU  rd, rs
+-----------------------------------
+
 define FConv > FCVT_D_LU(rd::reg, rs::reg, fprnd::fprnd) =
 { match round(fprnd)
-  { case Some(r) => writeFPRD(rd, FP64_FromInt(r, [GPR(rs)]::int))
+  { case Some(r) => writeFPRD(rd, FP64_FromInt(r, [0`1 : GPR(rs)]::int))
     case None    => signalException(Illegal_Instr)
   }
 }
 
--- TODO: handle out-of-range / infinities ; signed/unsigned
+-----------------------------------
+-- FCVT.L.D   rd, rs
+-----------------------------------
+
 define FConv > FCVT_L_D(rd::reg, rs::reg, fprnd::fprnd) =
 { match round(fprnd)
-  { case Some(r) =>
-         match FP64_ToInt(r, FPRD(rs))
-         { case Some(i) => GPR(rd) <- SignExtend([i]::bits(64))
-           case None    => GPR(rd) <- 0 -- FIXME: need info on conv failure from L3
-         }
+  { case Some(r) => { inp = FPRD(rs)
+                    ; val = ValOf(FP64_ToInt(r, inp))
+                    ; res = if   FP64_IsNan(inp) or inp == FP64_PosInf
+                            then [0n2 ** 63 - 1]
+                            else if inp == FP64_NegInf
+                            then -[0n2 ** 63]
+                            else if val > 2 ** 63 - 1
+                            then [0n2 ** 63 - 1]
+                            else if val < -2 ** 63
+                            then -[0n2 ** 63]
+                            else [val]
+                    ; writeRD(rd, res)
+                    }
     case None    => signalException(Illegal_Instr)
   }
 }
+
+-----------------------------------
+-- FCVT.LU.D  rd, rs
+-----------------------------------
 
 define FConv > FCVT_LU_D(rd::reg, rs::reg, fprnd::fprnd) =
 { match round(fprnd)
-  { case Some(r) =>
-         match FP64_ToInt(r, FPRD(rs))
-         { case Some(i) => GPR(rd) <- SignExtend([i]::bits(64))
-           case None    => GPR(rd) <- 0 -- FIXME: need info on conv failure from L3
-         }
+  { case Some(r) => { inp = FPRD(rs)
+                    ; val = ValOf(FP64_ToInt(r, inp))
+                    ; res = if   FP64_IsNan(inp) or inp == FP64_PosInf
+                            then [0n2 ** 64 - 1]
+                            else if inp == FP64_NegInf
+                            then 0x0
+                            else if val > 2 ** 64 - 1
+                            then [0n2 ** 64 - 1]
+                            else if val < 0
+                            then 0x0
+                            else [val]
+                    ; writeRD(rd, res)
+                    }
     case None    => signalException(Illegal_Instr)
   }
 }
