@@ -822,6 +822,22 @@ ieee_rounding option round(rnd::fprnd) =
       case None       => None
     }
 
+-- NaNs
+
+bits(32) RV32_CanonicalNan = 0x7fc00000
+bits(64) RV64_CanonicalNan = 0x7ff8000000000000
+
+-- Classification
+
+bool FP32_IsSignalingNan(x::bits(32)) =
+    (x<30:23> == 0xff`8)   and x<22> == false and (x<21:0> != 0x0`22)
+
+bool FP64_IsSignalingNan(x::bits(64)) =
+    (x<62:52> == 0x7ff`11) and x<51> == false and (x<50:0> != 0x0`51)
+
+bool FP32_Sign(x::bits(32)) = x<31>
+bool FP64_Sign(x::bits(64)) = x<63>
+
 ---------------------------------------------------------------------------
 -- CSR Register address map
 ---------------------------------------------------------------------------
@@ -3094,6 +3110,8 @@ define FPStore > FSW(rs1::reg, rs2::reg, offs::imm12) =
 
 -- Computational
 
+-- TODO: Check for underflow after all rounding
+
 -----------------------------------
 -- FADD.S   rd, rs1, rs2
 -----------------------------------
@@ -3153,27 +3171,38 @@ define FArith > FSQRT_S(rd::reg, rs::reg, fprnd::fprnd) =
 -- FMIN.S    rd, rs1, rs2
 -----------------------------------
 define FArith > FMIN_S(rd::reg, rs1::reg, rs2::reg) =
-{ f1 = FPRS(rs1)
+{ var res
+; f1 = FPRS(rs1)
 ; f2 = FPRS(rs2)
 ; match FP32_Compare(f1, f2)
-  { case FP_LT   => writeFPRS(rd, f1)
-    case FP_EQ   => writeFPRS(rd, f1)
-    case FP_GT   => writeFPRS(rd, f2)
-    case FP_UN   => #INTERNAL_ERROR("NaN generation unsupported")
+  { case FP_LT   => res <- f1
+    case FP_EQ   => res <- f1
+    case FP_GT   => res <- f2
+    case FP_UN   => if (   (FP32_IsSignalingNan(f1) or FP32_IsSignalingNan(f2))
+                        or (f1 == RV32_CanonicalNan and f2 == RV32_CanonicalNan))
+                    then res <- RV32_CanonicalNan
+                    else -- either f1 or f2 should be a quiet NaN
+                        if f1 == RV32_CanonicalNan then res <- f2 else res <- f1
   }
+; writeFPRS(rd, res)
 }
 
 -----------------------------------
 -- FMAX.S    rd, rs1, rs2
 -----------------------------------
 define FArith > FMAX_S(rd::reg, rs1::reg, rs2::reg) =
-{ f1 = FPRS(rs1)
+{ var res
+; f1 = FPRS(rs1)
 ; f2 = FPRS(rs2)
 ; match FP32_Compare(f1, f2)
   { case FP_LT   => writeFPRS(rd, f2)
     case FP_EQ   => writeFPRS(rd, f2)
     case FP_GT   => writeFPRS(rd, f1)
-    case FP_UN   => #INTERNAL_ERROR("NaN generation unsupported")
+    case FP_UN   => if (   (FP32_IsSignalingNan(f1) or FP32_IsSignalingNan(f2))
+                        or (f1 == RV32_CanonicalNan and f2 == RV32_CanonicalNan))
+                    then res <- RV32_CanonicalNan
+                    else -- either f1 or f2 should be a quiet NaN
+                        if f1 == RV32_CanonicalNan then res <- f2 else res <- f1
   }
 }
 
@@ -3273,21 +3302,30 @@ define FConv > FCVT_WU_S(rd::reg, rs::reg, fprnd::fprnd) =
 -----------------------------------
 
 define FConv > FSGNJ_S(rd::reg, rs1::reg, rs2::reg) =
-    #INTERNAL_ERROR("not implemented")
+{ f1 = FPRS(rs1)
+; f2 = FPRS(rs2)
+; writeFPRS(rd, ([FP32_Sign(f2)]::bits(1)):f1<30:0>)
+}
 
 -----------------------------------
 -- FSGNJN.S  rd, rs
 -----------------------------------
 
 define FConv > FSGNJN_S(rd::reg, rs1::reg, rs2::reg) =
-    #INTERNAL_ERROR("not implemented")
+{ f1 = FPRS(rs1)
+; f2 = FPRS(rs2)
+; writeFPRS(rd, ([!FP32_Sign(f2)]::bits(1)):f1<30:0>)
+}
 
 -----------------------------------
 -- FSGNJX.S  rd, rs
 -----------------------------------
 
 define FConv > FSGNJX_S(rd::reg, rs1::reg, rs2::reg) =
-    #INTERNAL_ERROR("not implemented")
+{ f1 = FPRS(rs1)
+; f2 = FPRS(rs2)
+; writeFPRS(rd, ([FP32_Sign(f2)]::bits(1) ?? [FP32_Sign(f1)]::bits(1)) : f1<30:0>)
+}
 
 -- Movement
 
@@ -3362,7 +3400,20 @@ define FArith > FLE_S(rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 
 define FConv > FCLASS_S(rd::reg, rs::reg) =
-    #INTERNAL_ERROR("not implemented")
+{ var ret = 0x0`10
+; val = FPRS(rs)
+; ret<0> <- val == FP32_NegInf
+; ret<1> <- FP32_Sign(val) and FP32_IsNormal(val)
+; ret<2> <- FP32_Sign(val) and FP32_IsSubnormal(val)
+; ret<3> <- val == FP32_NegZero
+; ret<4> <- val == FP32_PosZero
+; ret<5> <- !FP32_Sign(val) and FP32_IsSubnormal(val)
+; ret<6> <- !FP32_Sign(val) and FP32_IsNormal(val)
+; ret<7> <- val == FP32_PosInf
+; ret<8> <- FP32_IsSignalingNan(val)
+; ret<9> <- val == RV32_CanonicalNan
+; writeRD(rd, ZeroExtend(ret))
+}
 
 ---------------------------------------------------------------------------
 -- Floating Point Instructions (Double Precision)
@@ -3401,6 +3452,8 @@ define FPStore > FSD(rs1::reg, rs2::reg, offs::imm12) =
 }
 
 -- Computational
+
+-- TODO: Check for underflow after all rounding
 
 -----------------------------------
 -- FADD.D   rd, rs1, rs2
@@ -3461,13 +3514,19 @@ define FArith > FSQRT_D(rd::reg, rs::reg, fprnd::fprnd) =
 -- FMIN.D    rd, rs1, rs2
 -----------------------------------
 define FArith > FMIN_D(rd::reg, rs1::reg, rs2::reg) =
-{ f1 = FPRD(rs1)
+{ var res
+; f1 = FPRD(rs1)
 ; f2 = FPRD(rs2)
 ; match FP64_Compare(f1, f2)
   { case FP_LT   => writeFPRD(rd, f1)
     case FP_EQ   => writeFPRD(rd, f1)
     case FP_GT   => writeFPRD(rd, f2)
-    case FP_UN   => #INTERNAL_ERROR("NaN generation unsupported")
+    case FP_UN   => if (   (FP64_IsSignalingNan(f1) or FP64_IsSignalingNan(f2))
+                        or (f1 == RV64_CanonicalNan and f2 == RV64_CanonicalNan))
+                    then res <- RV64_CanonicalNan
+                    else -- either f1 or f2 should be a quiet NaN
+                        if f1 == RV64_CanonicalNan then res <- f2 else res <- f1
+
   }
 }
 
@@ -3475,13 +3534,18 @@ define FArith > FMIN_D(rd::reg, rs1::reg, rs2::reg) =
 -- FMAX.D    rd, rs1, rs2
 -----------------------------------
 define FArith > FMAX_D(rd::reg, rs1::reg, rs2::reg) =
-{ f1 = FPRD(rs1)
+{ var res
+; f1 = FPRD(rs1)
 ; f2 = FPRD(rs2)
 ; match FP64_Compare(f1, f2)
   { case FP_LT   => writeFPRD(rd, f2)
     case FP_EQ   => writeFPRD(rd, f2)
     case FP_GT   => writeFPRD(rd, f1)
-    case FP_UN   => #INTERNAL_ERROR("NaN generation unsupported")
+    case FP_UN   => if (   (FP64_IsSignalingNan(f1) or FP64_IsSignalingNan(f2))
+                        or (f1 == RV64_CanonicalNan and f2 == RV64_CanonicalNan))
+                    then res <- RV64_CanonicalNan
+                    else -- either f1 or f2 should be a quiet NaN
+                        if f1 == RV64_CanonicalNan then res <- f2 else res <- f1
   }
 }
 
@@ -3622,21 +3686,30 @@ define FConv > FCVT_LU_D(rd::reg, rs::reg, fprnd::fprnd) =
 -----------------------------------
 
 define FConv > FSGNJ_D(rd::reg, rs1::reg, rs2::reg) =
-    #INTERNAL_ERROR("not implemented")
+{ f1 = FPRD(rs1)
+; f2 = FPRD(rs2)
+; writeFPRD(rd, ([FP64_Sign(f2)]::bits(1)):f1<62:0>)
+}
 
 -----------------------------------
 -- FSGNJN.D  rd, rs
 -----------------------------------
 
 define FConv > FSGNJN_D(rd::reg, rs1::reg, rs2::reg) =
-    #INTERNAL_ERROR("not implemented")
+{ f1 = FPRD(rs1)
+; f2 = FPRD(rs2)
+; writeFPRD(rd, ([!FP64_Sign(f2)]::bits(1)):f1<62:0>)
+}
 
 -----------------------------------
 -- FSGNJX.D  rd, rs
 -----------------------------------
 
 define FConv > FSGNJX_D(rd::reg, rs1::reg, rs2::reg) =
-    #INTERNAL_ERROR("not implemented")
+{ f1 = FPRD(rs1)
+; f2 = FPRD(rs2)
+; writeFPRD(rd, ([FP64_Sign(f2)]::bits(1) ?? [FP64_Sign(f1)]::bits(1)) : f1<62:0>)
+}
 
 -- Movement
 
@@ -3711,7 +3784,20 @@ define FArith > FLE_D(rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 
 define FConv > FCLASS_D(rd::reg, rs::reg) =
-    #INTERNAL_ERROR("not implemented")
+{ var ret = 0x0`10
+; val = FPRD(rs)
+; ret<0> <- val == FP64_NegInf
+; ret<1> <- FP64_Sign(val) and FP64_IsNormal(val)
+; ret<2> <- FP64_Sign(val) and FP64_IsSubnormal(val)
+; ret<3> <- val == FP64_NegZero
+; ret<4> <- val == FP64_PosZero
+; ret<5> <- !FP64_Sign(val) and FP64_IsSubnormal(val)
+; ret<6> <- !FP64_Sign(val) and FP64_IsNormal(val)
+; ret<7> <- val == FP64_PosInf
+; ret<8> <- FP64_IsSignalingNan(val)
+; ret<9> <- val == RV64_CanonicalNan
+; writeRD(rd, ZeroExtend(ret))
+}
 
 ---------------------------------------------------------------------------
 -- System Instructions
