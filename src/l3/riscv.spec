@@ -838,6 +838,23 @@ bool FP64_IsSignalingNan(x::bits(64)) =
 bool FP32_Sign(x::bits(32)) = x<31>
 bool FP64_Sign(x::bits(64)) = x<63>
 
+-- setting exception flags
+
+unit setFP_Invalid() =
+    fcsr.NV <- true
+
+unit setFP_DivZero() =
+    fcsr.DZ <- true
+
+unit setFP_Overflow() =
+    fcsr.OF <- true
+
+unit setFP_Underflow() =
+    fcsr.OF <- true
+
+unit setFP_Inexact() =
+    fcsr.OF <- true
+
 ---------------------------------------------------------------------------
 -- CSR Register address map
 ---------------------------------------------------------------------------
@@ -3442,16 +3459,20 @@ define FConv > FMV_S_X(rd::reg, rs::reg) =
 -----------------------------------
 
 define FArith > FEQ_S(rd::reg, rs1::reg, rs2::reg) =
-{ -- TODO: check for signalling NaN inputs
-  f1  = FPRS(rs1)
+{ f1  = FPRS(rs1)
 ; f2  = FPRS(rs2)
-; res = match FP32_Compare(f1, f2)
-        { case FP_LT => 0x0
-          case FP_EQ => 0x1
-          case FP_GT => 0x0
-          case FP_UN => 0x0
-        }
-; writeRD(rd, res)
+; if FP32_IsSignalingNan(f1) or FP32_IsSignalingNan(f2)
+  then { writeRD(rd, 0x0)
+       ; setFP_Invalid()
+       }
+  else { res = match FP32_Compare(f1, f2)
+               { case FP_LT => 0x0
+                 case FP_EQ => 0x1
+                 case FP_GT => 0x0
+                 case FP_UN => 0x0
+               }
+       ; writeRD(rd, res)
+       }
 }
 
 -----------------------------------
@@ -3459,33 +3480,41 @@ define FArith > FEQ_S(rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 
 define FArith > FLT_S(rd::reg, rs1::reg, rs2::reg) =
-{ -- TODO: check for signalling NaN inputs
-  f1  = FPRS(rs1)
+{ f1  = FPRS(rs1)
 ; f2  = FPRS(rs2)
-; res = match FP32_Compare(f1, f2)
-        { case FP_LT => 0x1
-          case FP_EQ => 0x0
-          case FP_GT => 0x0
-          case FP_UN => 0x0
-        }
-; writeRD(rd, res)
-}
+; if   FP32_IsNan(f1) or FP32_IsNan(f2)
+  then { writeRD(rd, 0x0)
+       ; setFP_Invalid()
+       }
+  else { res = match FP32_Compare(f1, f2)
+               { case FP_LT => 0x1
+                 case FP_EQ => 0x0
+                 case FP_GT => 0x0
+                 case FP_UN => 0x0
+               }
+       ; writeRD(rd, res)
+       }
+  }
 
 -----------------------------------
 -- FLE.S   rd, rs
 -----------------------------------
 
 define FArith > FLE_S(rd::reg, rs1::reg, rs2::reg) =
-{ -- TODO: check for signalling NaN inputs
-  f1  = FPRS(rs1)
+{ f1  = FPRS(rs1)
 ; f2  = FPRS(rs2)
-; res = match FP32_Compare(f1, f2)
-        { case FP_LT => 0x1
-          case FP_EQ => 0x1
-          case FP_GT => 0x0
-          case FP_UN => 0x0
-        }
-; writeRD(rd, res)
+; if   FP32_IsNan(f1) or FP32_IsNan(f2)
+  then { writeRD(rd, 0x0)
+       ; setFP_Invalid()
+       }
+  else { res = match FP32_Compare(f1, f2)
+               { case FP_LT => 0x1
+                 case FP_EQ => 0x1
+                 case FP_GT => 0x0
+                 case FP_UN => 0x0
+               }
+       ; writeRD(rd, res)
+       }
 }
 
 -- Classification
@@ -3881,15 +3910,20 @@ define FConv > FMV_D_X(rd::reg, rs::reg) =
 -----------------------------------
 
 define FArith > FEQ_D(rd::reg, rs1::reg, rs2::reg) =
-{ -- TODO: check for signalling NaN inputs
-  f1 = FPRD(rs1)
-; f2 = FPRD(rs2)
-; match FP64_Compare(f1, f2)
-  { case FP_LT   => writeRD(rd, 0x0)
-    case FP_EQ   => writeRD(rd, 0x1)
-    case FP_GT   => writeRD(rd, 0x0)
-    case FP_UN   => writeRD(rd, 0x0)
-  }
+{ f1  = FPRD(rs1)
+; f2  = FPRD(rs2)
+; if FP64_IsSignalingNan(f1) or FP64_IsSignalingNan(f2)
+  then { writeRD(rd, 0x0)
+       ; setFP_Invalid()
+       }
+  else { res = match FP64_Compare(f1, f2)
+               { case FP_LT => 0x0
+                 case FP_EQ => 0x1
+                 case FP_GT => 0x0
+                 case FP_UN => 0x0
+               }
+       ; writeRD(rd, res)
+       }
 }
 
 -----------------------------------
@@ -3897,15 +3931,20 @@ define FArith > FEQ_D(rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 
 define FArith > FLT_D(rd::reg, rs1::reg, rs2::reg) =
-{ -- TODO: check for signalling NaN inputs
-  f1 = FPRD(rs1)
-; f2 = FPRD(rs2)
-; match FP64_Compare(f1, f2)
-  { case FP_LT   => writeRD(rd, 0x1)
-    case FP_EQ   => writeRD(rd, 0x0)
-    case FP_GT   => writeRD(rd, 0x0)
-    case FP_UN   => writeRD(rd, 0x0)
-  }
+{ f1  = FPRD(rs1)
+; f2  = FPRD(rs2)
+; if   FP64_IsNan(f1) or FP64_IsNan(f2)
+  then { writeRD(rd, 0x0)
+       ; setFP_Invalid()
+       }
+  else { res = match FP64_Compare(f1, f2)
+               { case FP_LT => 0x1
+                 case FP_EQ => 0x0
+                 case FP_GT => 0x0
+                 case FP_UN => 0x0
+               }
+       ; writeRD(rd, res)
+       }
 }
 
 -----------------------------------
@@ -3913,15 +3952,20 @@ define FArith > FLT_D(rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 
 define FArith > FLE_D(rd::reg, rs1::reg, rs2::reg) =
-{ -- TODO: check for signalling NaN inputs
-  f1 = FPRD(rs1)
-; f2 = FPRD(rs2)
-; match FP64_Compare(f1, f2)
-  { case FP_LT   => writeRD(rd, 0x1)
-    case FP_EQ   => writeRD(rd, 0x1)
-    case FP_GT   => writeRD(rd, 0x0)
-    case FP_UN   => writeRD(rd, 0x0)
-  }
+{ f1  = FPRD(rs1)
+; f2  = FPRD(rs2)
+; if   FP64_IsNan(f1) or FP64_IsNan(f2)
+  then { writeRD(rd, 0x0)
+       ; setFP_Invalid()
+       }
+  else { res = match FP64_Compare(f1, f2)
+               { case FP_LT => 0x1
+                 case FP_EQ => 0x1
+                 case FP_GT => 0x0
+                 case FP_UN => 0x0
+               }
+       ; writeRD(rd, res)
+       }
 }
 
 -- Classification
