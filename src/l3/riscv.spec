@@ -2377,10 +2377,6 @@ define MulDiv > REMUW(rd::reg, rs1::reg, rs2::reg) =
 -- Control Transfer Instructions
 ---------------------------------------------------------------------------
 
--- XXX: Perform the check for misaligned PC here, in order to pass the
--- ma_fetch test.  The test requires the error to be detected before
--- rd is modified; this is not mentioned in the spec.
-
 -- Unconditional jumps
 
 -----------------------------------
