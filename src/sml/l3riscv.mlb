@@ -17,6 +17,8 @@ $(L3LIBDIR)/FP.sig
 $(L3LIBDIR)/FP.sml
 $(L3LIBDIR)/FP32.sml
 $(L3LIBDIR)/FP64.sml
+$(L3LIBDIR)/FPConvert.sig
+$(L3LIBDIR)/FPConvert.sml
 $(L3LIBDIR)/Ptree.sig
 $(L3LIBDIR)/Ptree.sml
 $(L3LIBDIR)/MutableMap.sig

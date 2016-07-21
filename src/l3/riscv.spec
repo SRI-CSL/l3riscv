@@ -3855,6 +3855,28 @@ define FConv > FCVT_LU_D(rd::reg, rs::reg, fprnd::fprnd) =
   }
 }
 
+-----------------------------------
+-- FCVT.S.D  rd, rs
+-----------------------------------
+
+define FConv > FCVT_S_D(rd::reg, rs::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRS(rd, FP64_ToFP32(r, FPRD(rs)))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
+-----------------------------------
+-- FCVT.D.S  rd, rs
+-----------------------------------
+
+define FConv > FCVT_D_S(rd::reg, rs::reg, fprnd::fprnd) =
+{ match round(fprnd)
+  { case Some(r) => writeFPRD(rd, FP32_ToFP64(FPRS(rs)))
+    case None    => signalException(Illegal_Instr)
+  }
+}
+
 -- Sign injection
 
 -----------------------------------
@@ -4317,8 +4339,11 @@ instruction Decode(w::word) =
      case '1100001 00011 rs1 frm  rd 10100 11' => FConv( FCVT_LU_D(rd, rs1, frm))
      case '1101001 00010 rs1 frm  rd 10100 11' => FConv(  FCVT_D_L(rd, rs1, frm))
      case '1101001 00011 rs1 frm  rd 10100 11' => FConv( FCVT_D_LU(rd, rs1, frm))
-     case '1110001 00000 rs1 000  rd 10100 11' => FConv(  FMV_X_D(rd, rs1))
-     case '1111001 00000 rs1 000  rd 10100 11' => FConv(  FMV_D_X(rd, rs1))
+     case '1110001 00000 rs1 000  rd 10100 11' => FConv(   FMV_X_D(rd, rs1))
+     case '1111001 00000 rs1 000  rd 10100 11' => FConv(   FMV_D_X(rd, rs1))
+
+     case '0100000 00001 rs1 frm  rd 10100 11' => FConv(  FCVT_S_D(rd, rs1, frm))
+     case '0100001 00000 rs1 frm  rd 10100 11' => FConv(  FCVT_D_S(rd, rs1, frm))
 
      case 'imm           rs1 010  rd 00001 11' => FPLoad(  FLW(rd, rs1, imm))
      case 'imm           rs1 011  rd 00001 11' => FPLoad(  FLD(rd, rs1, imm))
@@ -4585,6 +4610,8 @@ string instructionToString(i::instruction) =
      case FConv( FCVT_D_L(rd, rs, frm))       => pCFItype("FCVT.D.L",  rd, rs)
      case FConv(FCVT_D_LU(rd, rs, frm))       => pCFItype("FCVT.D.LU", rd, rs)
      case FConv(  FMV_D_X(rd, rs))            => pCFItype("FMV.D.X",   rd, rs)
+     case FConv( FCVT_D_S(rd, rs, frm))       => pCFItype("FCVT.D.S",  rd, rs)
+     case FConv( FCVT_S_D(rd, rs, frm))       => pCFItype("FCVT.S.D",  rd, rs)
 
      case FPLoad(  FLW(rd, rs1, imm))         => pFItype("FLW",    rd, rs1, imm)
      case FPLoad(  FLD(rd, rs1, imm))         => pFItype("FLD",    rd, rs1, imm)
@@ -4800,6 +4827,8 @@ word Encode(i::instruction) =
      case FConv( FCLASS_D(rd, rs))            => Rtype(opc(0x14), 1,   rd, rs, 0, 0x71)
      case FConv( FCVT_D_W(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs, 0, 0x69)
      case FConv(FCVT_D_WU(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs, 1, 0x69)
+     case FConv( FCVT_S_D(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs, 1, 0x20)
+     case FConv( FCVT_D_S(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs, 0, 0x21)
 
      case FConv( FCVT_L_S(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs, 2, 0x60)
      case FConv(FCVT_LU_S(rd, rs, frm))       => Rtype(opc(0x14), frm, rd, rs, 3, 0x60)
