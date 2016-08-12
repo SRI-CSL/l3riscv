@@ -45,16 +45,11 @@ type amo      = bits(1)
 
 -- memory and caches
 
-construct accessType { Read, Write }
+construct accessType { Read, Write, ReadWrite, Execute }
 construct fetchType  { Instruction, Data }
 
-type permType = bits(4)         -- memory permissions
-
-nat ASID_SIZE       = 6
-nat PAGESIZE_BITS   = 12
-nat LEVEL_BITS      = 9
-
-type asidType       = bits(6)
+type asid32   = bits(10)
+type asid64   = bits(26)
 
 -- RV64* base.
 
@@ -251,168 +246,249 @@ string extStatusName(e::ExtStatus) =
 -- Exceptions and Interrupts
 ---------------------------------------------------------------------------
 
-construct Interrupt
-{ Software
-, Timer
+construct InterruptType
+{ I_U_Software
+, I_S_Software
+, I_H_Software
+, I_M_Software
+, I_U_Timer
+, I_S_Timer
+, I_H_Timer
+, I_M_Timer
+, I_U_External
+, I_S_External
+, I_H_External
+, I_M_External
 }
 
-exc_code interruptIndex(i::Interrupt) =
+exc_code interruptIndex(i::InterruptType) =
     match i
-    { case Software     => 0
-      case Timer        => 1
+    { case I_U_Software => 0x0
+      case I_S_Software => 0x1
+      case I_H_Software => 0x2
+      case I_M_Software => 0x3
+
+      case I_U_Timer    => 0x4
+      case I_S_Timer    => 0x5
+      case I_H_Timer    => 0x6
+      case I_M_Timer    => 0x7
+
+      case I_U_External => 0x8
+      case I_S_External => 0x9
+      case I_H_External => 0xa
+      case I_M_External => 0xb
     }
 
 construct ExceptionType
-{ Fetch_Misaligned
-, Fetch_Fault
-, Illegal_Instr
-, Breakpoint
-, Load_Fault
-, AMO_Misaligned
-, Store_AMO_Fault
-, UMode_Env_Call
-, SMode_Env_Call
-, HMode_Env_Call
-, MMode_Env_Call
+{ E_Fetch_Misaligned
+, E_Fetch_Fault
+, E_Illegal_Instr
+, E_Breakpoint
+, E_Load_Fault
+, E_AMO_Misaligned
+, E_Store_AMO_Fault
+, E_Env_Call
 }
 
 exc_code excCode(e::ExceptionType) =
     match e
-    { case Fetch_Misaligned   => 0x0
-      case Fetch_Fault        => 0x1
-      case Illegal_Instr      => 0x2
-      case Breakpoint         => 0x3
+    { case E_Fetch_Misaligned   => 0x0
+      case E_Fetch_Fault        => 0x1
+      case E_Illegal_Instr      => 0x2
+      case E_Breakpoint         => 0x3
+      -- an implementation could use 0x4 for E_Load_Access if needed
+      case E_Load_Fault         => 0x5
+      case E_AMO_Misaligned     => 0x6
+      case E_Store_AMO_Fault    => 0x7
 
-      case Load_Fault         => 0x5
-      case AMO_Misaligned     => 0x6
-      case Store_AMO_Fault    => 0x7
-
-      case UMode_Env_Call     => 0x8
-      case SMode_Env_Call     => 0x9
-      case HMode_Env_Call     => 0xA
-      case MMode_Env_Call     => 0xB
+      case E_Env_Call           => 0x8
     }
 
 ExceptionType excType(e::exc_code) =
     match e
-    { case 0x0 => Fetch_Misaligned
-      case 0x1 => Fetch_Fault
-      case 0x2 => Illegal_Instr
-      case 0x3 => Breakpoint
+    { case 0x0 => E_Fetch_Misaligned
+      case 0x1 => E_Fetch_Fault
+      case 0x2 => E_Illegal_Instr
+      case 0x3 => E_Breakpoint
 
-      case 0x5 => Load_Fault
-      case 0x6 => AMO_Misaligned
-      case 0x7 => Store_AMO_Fault
+      case 0x5 => E_Load_Fault
+      case 0x6 => E_AMO_Misaligned
+      case 0x7 => E_Store_AMO_Fault
 
-      case 0x8 => UMode_Env_Call
-      case 0x9 => SMode_Env_Call
-      case 0xA => HMode_Env_Call
-      case 0xB => MMode_Env_Call
+      case 0x8 => E_Env_Call
 
       case _   => #UNDEFINED("Unknown exception: " : [[e]::nat])
     }
 
 string excName(e::ExceptionType) =
     match e
-    { case Fetch_Misaligned   => "MISALIGNED_FETCH"
-      case Fetch_Fault        => "FAULT_FETCH"
-      case Illegal_Instr      => "ILLEGAL_INSTRUCTION"
-      case Breakpoint         => "BREAKPOINT"
+    { case E_Fetch_Misaligned   => "MISALIGNED_FETCH"
+      case E_Fetch_Fault        => "FAULT_FETCH"
+      case E_Illegal_Instr      => "ILLEGAL_INSTRUCTION"
+      case E_Breakpoint         => "BREAKPOINT"
 
-      case Load_Fault         => "FAULT_LOAD"
-      case AMO_Misaligned     => "MISALIGNED_AMO"
-      case Store_AMO_Fault    => "FAULT_STORE_AMO"
+      case E_Load_Fault         => "FAULT_LOAD"
+      case E_AMO_Misaligned     => "MISALIGNED_AMO"
+      case E_Store_AMO_Fault    => "FAULT_STORE_AMO"
 
-      case UMode_Env_Call     => "U-EnvCall"
-      case SMode_Env_Call     => "S-EnvCall"
-      case HMode_Env_Call     => "H-EnvCall"
-      case MMode_Env_Call     => "M-EnvCall"
+      case E_Env_Call           => "EnvCall"
     }
 
 ---------------------------------------------------------------------------
 -- Control and Status Registers (CSRs)
 ---------------------------------------------------------------------------
 
+-- Machine state projections
+--
+-- There are two kinds of projections needed: (i) from machine-level
+-- views to views from lower privilege levels, and (ii) from the
+-- 64-bit implementation width to 32-bit views.  We implement views as
+-- a projection of kind (i) followed by that of kind (ii).
+--
+-- Each register definition is followed by any custom projections
+-- needed.
+
+-- TODO: writes to WPRI fields are not currently checked for
+-- preservation; adding checks would provide useful diagnostics.
+
 -- Machine-Level CSRs
 
-register mcpuid :: regType
+register misa :: regType        -- Machine ISA
 { 63-62 : ArchBase  -- base architecture, machine mode on reset
-,    20 : U         -- user-mode support
-,    18 : S         -- supervisor-mode support
-,    12 : M         -- integer multiply/divide support
-,     8 : I         -- integer base ISA support (XXX: this seems unnecessary)
+,    23 : X         -- non-standard extensions
+,    20 : U         -- user-mode
+,    18 : S         -- supervisor-mode
+,    13 : N         -- user-level interrupts
+,    12 : M         -- integer multiply/divide
+,     8 : I         -- integer base ISA support
+,     5 : F         -- single-precision floating-point
+,     3 : D         -- double-precision floating-point
+,     0 : A         -- atomics
 }
 
-register mimpid :: regType
-{ 63-16 : RVImpl
-,  15-0 : RVSource
+word  isa_to_32(v::dword) = [v<63:62> : 0x0`4  : v<25:0>]
+dword isa_of_32(v::word)  = [v<31:30> : 0x0`36 : v<25:0>]
+
+regType MVENDORID = 0
+regType MARCHID   = 0
+regType MIMPID    = 0
+
+register mstatus :: regType     -- Machine Status
+{    63 : M_SD      -- extended context dirty status
+, 28-24 : M_VM      -- memory management and virtualization
+,    19 : M_MXR     -- make executable readable
+,    18 : M_PUM     -- protect user memory
+,    17 : M_MPRV    -- load/store memory privilege
+, 16-15 : M_XS      -- extension context status
+, 14-13 : M_FS      -- floating-point context status
+, 12-11 : M_MPP     -- per-privilege pre-trap privilege modes
+,  10-9 : M_HPP
+,     8 : M_SPP
+,     7 : M_MPIE    -- per-privilege pre-trap interrupt enables
+,     6 : M_HPIE
+,     5 : M_SPIE
+,     4 : M_UPIE
+,     3 : M_MIE     -- per-privilege interrupt enables
+,     2 : M_HIE
+,     1 : M_SIE
+,     0 : M_UIE
 }
 
-register mstatus :: regType
-{    63 : MSD       -- extended context dirty status
-, 21-17 : VM        -- memory management and virtualization
-,    16 : MMPRV     -- load/store memory privilege
-, 15-14 : MXS       -- extension context status
-, 13-12 : MFS       -- floating-point context status
-            -- privilege and global interrupt-enable stack
-, 11-10 : MPRV3
-,     9 : MIE3
-,   8-7 : MPRV2
-,     6 : MIE2
-,   5-4 : MPRV1
-,     3 : MIE1
-,   2-1 : MPRV
-,     0 : MIE
+word  status_to_32(v::dword) = [v<63>]::bits(1) : 0x0`2  : v<28:0>
+dword status_of_32(v::word)  = [v<31>]::bits(1) : 0x0`32 : v<30:0>
+
+register medeleg :: regType     -- Exception Trap Delegation
+{    11 : M_MEnvCall
+,    10 : M_HEnvCall
+,     9 : M_SEnvCall
+,     8 : M_UEnvCall
+,     7 : M_SAMO_Access
+,     6 : M_SAMO_Addr
+,     5 : M_Load_Access
+,     4 : M_Load_Addr_Align
+,     3 : M_Breakpoint
+,     2 : M_Illegal_Instr
+,     1 : M_Fetch_Fault
+,     0 : M_Fetch_Addr_Align
 }
 
-register mtdeleg :: regType
-{ 63-16 : Intr_deleg
-, 15-0  : Exc_deleg
+register mideleg :: regType     -- Interrupt Trap Delegation
+{    11 : M_MEIP   -- external interrupts
+,    10 : M_HEIP
+,     9 : M_SEIP
+,     8 : M_UEIP
+,     7 : M_MTIP   -- timer interrupts
+,     6 : M_HTIP
+,     5 : M_STIP
+,     4 : M_UTIP
+,     3 : M_MSIP   -- software interrupts
+,     2 : M_HSIP
+,     1 : M_SSIP
+,     0 : M_USIP
 }
 
-register mip :: regType
-{           -- pending timer interrupts (read-only)
-      7 : MTIP
-,     6 : HTIP
-,     5 : STIP
-            -- pending software interrupts (read/write)
-,     3 : MSIP
-,     2 : HSIP
-,     1 : SSIP
+register mip :: regType         -- Interrupt Pending
+{    11 : M_MEIP   -- external interrupts
+,    10 : M_HEIP
+,     9 : M_SEIP
+,     8 : M_UEIP
+,     7 : M_MTIP   -- timer interrupts
+,     6 : M_HTIP
+,     5 : M_STIP
+,     4 : M_UTIP
+,     3 : M_MSIP   -- software interrupts
+,     2 : M_HSIP
+,     1 : M_SSIP
+,     0 : M_USIP
 }
 
-register mie :: regType
-{           -- enable timer interrupts (read-only)
-      7 : MTIE
-,     6 : HTIE
-,     5 : STIE
-            -- enable software interrupts (read/write)
-,     3 : MSIE
-,     2 : HSIE
-,     1 : SSIE
+word  ip_to_32(v::dword) = v<31:0>
+dword ip_of_32(v::word)  = ZeroExtend(v<11:0>)
+
+register mie :: regType         -- Interrupt Enable
+{    11 : M_MEIE    -- external interrupts
+,    10 : M_HEIE
+,     9 : M_SEIE
+,     8 : M_UEIE
+,     7 : M_MTIE    -- timer interrupts
+,     6 : M_HTIE
+,     5 : M_STIE
+,     4 : M_UTIE
+,     3 : M_MSIE    -- software interrupts
+,     2 : M_HSIE
+,     1 : M_SSIE
+,     0 : M_USIE
 }
 
-register mcause :: regType
-{    63 : Int   -- Interrupt
-    3-0 : EC    -- Exception Code
+word  ie_to_32(v::dword) = v<31:0>
+dword ie_of_32(v::word)  = ZeroExtend(v<31:0>)
+
+register mcounteren :: regType  -- Machine Counter-Enable
+{     2 : M_IR      -- instructions retired
+,     1 : M_TM      -- time
+,     0 : M_CY      -- cycles
 }
 
--- Timers and counters are stored as deltas from their system-values
--- at each privilege level; the hardware motivation is explained in
--- the specification.
+register mcause :: regType      -- Trap Cause
+{    63 : M_Intr
+,  62-0 : M_ExcCause
+}
+
+word  cause_to_32(v::dword) = [v<63>]::bits(1) : v<30:0>
+dword cause_of_32(v::word)  = [v<31>]::bits(1) : 0x0`32 : v<30:0>
 
 record MachineCSR
-{ mcpuid        :: mcpuid       -- information registers
-  mimpid        :: mimpid
+{ misa          :: misa         -- information registers
+  mvendorid     :: regType
+  marchid       :: regType
+  mimpid        :: regType
   mhartid       :: regType
 
   mstatus       :: mstatus      -- trap setup
-  mtvec         :: regType
-  mtdeleg       :: mtdeleg
+  medeleg       :: medeleg
+  mideleg       :: mideleg
   mie           :: mie
-  mtimecmp      :: regType
-
-  mtime_delta   :: regType      -- time wrt global clock
+  mtvec         :: regType
 
   mscratch      :: regType      -- trap handling
   mepc          :: regType
@@ -427,6 +503,22 @@ record MachineCSR
   mdbase        :: regType
   mdbound       :: regType
 
+  mcycle        :: regType      -- timers and counters
+  mtime         :: regType
+  minstret      :: regType
+
+  mucounteren   :: mcounteren   -- counter setup
+  mscounteren   :: mcounteren
+  mhcounteren   :: mcounteren
+
+  mucycle_delta     :: regType  -- counter-deltas
+  mutime_delta      :: regType
+  muinstret_delta   :: regType
+
+  mscycle_delta     :: regType
+  mstime_delta      :: regType
+  msinstret_delta   :: regType
+
                    -- host-target interface (berkeley extensions)
   mtohost       :: regType      -- output register to host
   mfromhost     :: regType      -- input register from host
@@ -436,11 +528,10 @@ record MachineCSR
 
 record HypervisorCSR
 { hstatus       :: mstatus      -- trap setup
+  hedeleg       :: regType
+  hideleg       :: regType
+  hie           :: regType
   htvec         :: regType
-  htdeleg       :: mtdeleg
-  htimecmp      :: regType
-
-  htime_delta   :: regType      -- time wrt to global clock
 
   hscratch      :: regType      -- trap handling
   hepc          :: regType
@@ -451,41 +542,155 @@ record HypervisorCSR
 -- Supervisor-Level CSRs
 
 register sstatus :: regType
-{    63 : SSD       -- extended context dirty status
-,    16 : SMPRV     -- load/store memory privilege
-, 15-14 : SXS       -- extension context status
-, 13-12 : SFS       -- floating-point context status
-,     4 : SPS       -- previous privilege level before entering supervisor mode
-,     3 : SPIE      -- interrupt-enable before entering supervisor mode
-,     0 : SIE       -- supervisor-level interrupt-enable
+{    63 : S_SD      -- extended context dirty status
+,    18 : S_PUM     -- protect user memory
+, 16-15 : S_XS      -- extension context status
+, 14-13 : S_FS      -- floating-point context status
+,     8 : S_SPP     -- pre-trap privilege modes
+,     5 : S_SPIE    -- pre-trap interrupt enables
+,     4 : S_UPIE
+,     1 : S_SIE     -- interrupt-enables
+,     0 : S_UIE
 }
 
-register sip :: regType
-{     5 : STIP      -- pending timer interrupt
-,     1 : SSIP      -- pending software interrupt
+sstatus to_sstatus(v::mstatus) =
+{ var s = sstatus(0)
+; s.S_SD    <- v.M_SD
+; s.S_PUM   <- v.M_PUM
+; s.S_XS    <- v.M_XS
+; s.S_FS    <- v.M_FS
+; s.S_SPP   <- v.M_SPP
+; s.S_SPIE  <- v.M_SPIE
+; s.S_UPIE  <- v.M_UPIE
+; s.S_SIE   <- v.M_SIE
+; s.S_UIE   <- v.M_UIE
+; s
 }
 
-register sie :: regType
-{     5 : STIE      -- enable timer interrupt
-,     1 : SSIE      -- enable software interrupt
+mstatus of_sstatus(v::sstatus, orig::mstatus) =
+{ var m = mstatus(&orig)
+; m.M_SD    <- v.S_SD
+; m.M_PUM   <- v.S_PUM
+; m.M_XS    <- v.S_XS
+; m.M_FS    <- v.S_FS
+; m.M_SPP   <- v.S_SPP
+; m.M_SPIE  <- v.S_SPIE
+; m.M_UPIE  <- v.S_UPIE
+; m.M_SIE   <- v.S_SIE
+; m.M_UIE   <- v.S_UIE
+; m
+}
+
+register sedeleg :: regType     -- Exception Trap Delegation
+{     9 : S_SEnvCall
+,     8 : S_UEnvCall
+,     7 : S_SAMO_Access
+,     6 : S_SAMO_Addr
+,     5 : S_Load_Access
+,     4 : S_Load_Addr_Align
+,     3 : S_Breakpoint
+,     2 : S_Illegal_Instr
+,     1 : S_Fetch_Fault
+,     0 : S_Fetch_Addr_Align
+}
+
+register sideleg :: regType     -- Interrupt Trap Delegation
+{     9 : S_SEIP   -- external interrupts
+,     8 : S_UEIP
+,     5 : S_STIP   -- timer interrupts
+,     4 : S_UTIP
+,     1 : S_SSIP   -- software interrupts
+,     0 : S_USIP
+}
+
+register sip :: regType         -- Interrupt Pending
+{     9 : S_SEIP   -- external interrupts
+,     8 : S_UEIP
+,     5 : S_STIP   -- timer interrupts
+,     4 : S_UTIP
+,     1 : S_SSIP   -- software interrupts
+,     0 : S_USIP
+}
+
+-- TODO: expose other interrupt bits in sip/sie via checking for
+-- delegation in mideleg.
+
+sip to_sip(v::mip) =
+{ var s = sip(0)
+; s.S_SEIP  <- v.M_SEIP
+; s.S_UEIP  <- v.M_UEIP
+; s.S_STIP  <- v.M_STIP
+; s.S_UTIP  <- v.M_UTIP
+; s.S_SSIP  <- v.M_SSIP
+; s.S_USIP  <- v.M_USIP
+; s
+}
+
+mip of_sip(v::sip, orig::mip) =
+{ var m = mip(&orig)
+; m.M_SEIP  <- v.S_SEIP
+; m.M_UEIP  <- v.S_UEIP
+; m.M_STIP  <- v.S_STIP
+; m.M_UTIP  <- v.S_UTIP
+; m.M_SSIP  <- v.S_SSIP
+; m.M_USIP  <- v.S_USIP
+; m
+}
+
+register sie :: regType         -- Interrupt Enable
+{     9 : S_SEIE    -- external interrupts
+,     8 : S_UEIE
+,     5 : S_STIE    -- timer interrupts
+,     4 : S_UTIE
+,     1 : S_SSIE    -- software interrupts
+,     0 : S_USIE
+}
+
+sie to_sie(v::mie) =
+{ var s = sie(0)
+; s.S_SEIE  <- v.M_SEIE
+; s.S_UEIE  <- v.M_UEIE
+; s.S_STIE  <- v.M_STIE
+; s.S_UTIE  <- v.M_UTIE
+; s.S_SSIE  <- v.M_SSIE
+; s.S_USIE  <- v.M_USIE
+; s
+}
+
+mie of_sie(v::sie, orig::mie) =
+{ var m = mie(&orig)
+; m.M_SEIE  <- v.S_SEIE
+; m.M_UEIE  <- v.S_UEIE
+; m.M_STIE  <- v.S_STIE
+; m.M_UTIE  <- v.S_UTIE
+; m.M_SSIE  <- v.S_SSIE
+; m.M_USIE  <- v.S_USIE
+; m
+}
+
+register sptbr32 :: word
+{ 31-22 : ASID_32
+, 21-0  : PPN_32
+}
+
+register sptbr64 :: regType
+{ 63-38 : ASID_64
+, 37-0  : PPN_64
 }
 
 record SupervisorCSR
-{ -- sstatus :: sstatus is a projection of mstatus :: mstatus
-  stvec         :: regType      -- trap setup
-  -- sie :: sie is a projection of mie :: mie
-  stimecmp      :: regType
-
-  stime_delta   :: regType      -- time wrt global clock
+{ sstatus       :: sstatus      -- trap setup
+  sedeleg       :: sedeleg
+  sideleg       :: sideleg
+  stvec         :: regType
 
   sscratch      :: regType      -- trap handling
   sepc          :: regType
   scause        :: mcause
   sbadaddr      :: regType
-  -- sip :: sip is a projection of mip :: mip
+  sip           :: sip
 
   sptbr         :: regType      -- memory protection and translation
-  sasid         :: regType
 }
 
 -- User-Level CSRs
@@ -502,137 +707,240 @@ register FPCSR :: word          -- 32-bit control register
 ,   0 : NX          --     inexact
 }
 
+-- FIXME: These fields are not specified in the 1.9 privileged spec.
+-- SD, XS, FS, if exposed, could enable user-level threads.  But their
+-- handling will be complicated due to distinguishing user-updates
+-- from physical-register updates.
+
+register ustatus :: regType     -- Status
+{     4 : U_PIE     -- pre-trap interrupt enable
+,     0 : U_IE      -- interrupt-enable
+}
+
+ustatus to_ustatus(v::mstatus) =
+{ var u = ustatus(0)
+; u.U_PIE   <- v.M_UPIE
+; u.U_IE    <- v.M_UIE
+; u
+}
+
+mstatus of_ustatus(v::ustatus, orig::mstatus) =
+{ var m = mstatus(&orig)
+; m.M_UPIE  <- v.U_PIE
+; m.M_UIE   <- v.U_IE
+; m
+}
+
+register uip :: regType         -- Interrupt Pending
+{     8 : U_EIP     -- external interrupts
+,     4 : U_TIP     -- timer interrupts
+,     0 : U_SIP     -- software interrupts
+}
+
+uip to_uip(v::mip) =
+{ var s = uip(0)
+; s.U_EIP   <- v.M_UEIP
+; s.U_TIP   <- v.M_UTIP
+; s.U_SIP   <- v.M_USIP
+; s
+}
+
+mip of_uip(v::uip, orig::mip) =
+{ var m = mip(&orig)
+; m.M_UEIP  <- v.U_EIP
+; m.M_UTIP  <- v.U_TIP
+; m.M_USIP  <- v.U_SIP
+; m
+}
+
+register uie :: regType         -- Interrupt Enable
+{     8 : U_EIE     -- external interrupts
+,     4 : U_TIE     -- timer interrupts
+,     0 : U_SIE     -- software interrupts
+}
+
+uie to_uie(v::mie) =
+{ var s = uie(0)
+; s.U_EIE   <- v.M_UEIE
+; s.U_TIE   <- v.M_UTIE
+; s.U_SIE   <- v.M_USIE
+; s
+}
+
+mie of_uie(v::uie, orig::mie) =
+{ var m = mie(&orig)
+; m.M_UEIE  <- v.U_EIE
+; m.M_UTIE  <- v.U_TIE
+; m.M_USIE  <- v.U_SIE
+; m
+}
+
 record UserCSR
-{ cycle_delta   :: regType      -- timers and counters wrt base values
-  time_delta    :: regType
-  instret_delta :: regType
-  fpcsr         :: FPCSR
+{ utvec         :: regType      -- trap setup
+
+  uscratch      :: regType      -- trap handling
+  uepc          :: regType
+  ucause        :: mcause
+  ubadaddr      :: regType
+
+  fpcsr         :: FPCSR        -- floating-point
 }
 
--- Machine state projections
+-- update utilities
 
-sip lift_mip_sip(mip::mip) =
-{ var sip = sip(0)
-; sip.STIP  <- mip.STIP
-; sip.SSIP  <- mip.SSIP
-; sip
-}
-
-sie lift_mie_sie(mie::mie) =
-{ var sie = sie(0)
-; sie.STIE  <- mie.STIE
-; sie.SSIE  <- mie.SSIE
-; sie
-}
-
-mip lower_sip_mip(sip::sip, mip::mip) =
-{ var m = mip
-; m.STIP    <- sip.STIP
-; m.SSIP    <- sip.SSIP
-; m
-}
-
-mie lower_sie_mie(sie::sie, mie::mie) =
-{ var m = mie
-; m.STIE    <- sie.STIE
-; m.SSIE    <- sie.SSIE
-; m
-}
+bool isValidHPP(p::bits(2)) = privilege(p) != Machine
 
 mstatus update_mstatus(orig::mstatus, v::mstatus) =
-{ var mt = orig
--- update privilege stack
-; mt.MIE   <- v.MIE
-; mt.MPRV  <- v.MPRV
-; mt.MIE1  <- v.MIE1
-; mt.MPRV1 <- v.MPRV1
-; mt.MIE2  <- v.MIE2
-; mt.MPRV2 <- v.MPRV2
-; mt.MIE3  <- v.MIE3
-; mt.MPRV3 <- v.MPRV3
-
--- ensure a valid address translation mode
-; when isValidVM(v.VM)
-  do mt.VM <- v.VM
-; mt.MMPRV <- v.MMPRV
+{ var m = orig
+-- interrupt enables
+; m.M_UIE   <- v.M_UIE
+; m.M_SIE   <- v.M_SIE
+; m.M_HIE   <- v.M_HIE
+; m.M_MIE   <- v.M_MIE
+-- pre-trap interrupt enables
+; m.M_UPIE  <- v.M_UPIE
+; m.M_SPIE  <- v.M_SPIE
+; m.M_HPIE  <- v.M_HPIE
+; m.M_MPIE  <- v.M_MPIE
+-- pre-trap privilege modes
+; m.M_SPP   <- v.M_SPP
+; m.M_HPP   <- if isValidHPP(v.M_HPP) then v.M_HPP else orig.M_HPP
+; m.M_MPP   <- v.M_MPP
 
 -- update extension context status
-; mt.MFS   <- v.MFS
-; mt.MXS   <- v.MXS
-; mt.MSD   <- extStatus(v.MXS) == Dirty or extStatus(v.MFS) == Dirty
+; m.M_FS    <- v.M_FS
+; m.M_XS    <- v.M_XS
+-- update read-only field appropriately
+; m.M_SD    <- extStatus(v.M_XS) == Dirty or extStatus(v.M_FS) == Dirty
 
-; mt
+-- memory privilege settings
+; m.M_MPRV  <- v.M_MPRV
+; m.M_PUM   <- v.M_PUM
+; m.M_MXR   <- v.M_MXR
+
+-- ensure a valid address translation mode
+; when isValidVM(v.M_VM)
+  do m.M_VM <- v.M_VM
+
+; m
 }
 
-sstatus lift_mstatus_sstatus(mst::mstatus) =
-{ var st = sstatus(0)
-; st.SMPRV  <- mst.MMPRV
+-- utilities for privilege transitions
 
--- shared state
-; st.SXS    <- mst.MXS
-; st.SFS    <- mst.MFS
-; st.SSD    <- extStatus(mst.MXS) == Dirty or extStatus(mst.MFS) == Dirty
-
--- projected state
-; st.SPS    <- not (privilege(mst.MPRV1) == User)
-; st.SPIE   <- mst.MIE1
-; st.SIE    <- mst.MIE
-
-; st
+mstatus menter(v::mstatus, p::Privilege) =
+{ var m = v
+; m.M_MPIE <- match p
+              { case User       => m.M_UIE
+                case Supervisor => m.M_SIE
+                case Hypervisor => m.M_HIE
+                case Machine    => m.M_MIE
+              }
+; m.M_MPP <- privLevel(p)
+; m.M_MIE <- false
+; m
 }
 
-mstatus lower_sstatus_mstatus(sst::sstatus, mst::mstatus) =
-{ var mt = mstatus(&mst)
-
-; mt.MMPRV  <- sst.SMPRV
-; mt.MXS    <- sst.SXS
-; mt.MFS    <- sst.SFS
-
-; mt.MPRV1  <- privLevel(if sst.SPS then Supervisor else User)
-; mt.MIE1   <- sst.SPIE
-; mt.MIE    <- sst.SIE
-
-; update_mstatus(mst, mt)
+mstatus henter(v::mstatus, p::Privilege) =
+{ var m = v
+; m.M_HPIE <- match p
+              { case User       => m.M_UIE
+                case Supervisor => m.M_SIE
+                case Hypervisor => m.M_HIE
+                case Machine    => #INTERNAL_ERROR("Invalid privilege for henter")
+              }
+; m.M_HPP <- privLevel(p)
+; m.M_HIE <- false
+; m
 }
 
--- pop the privilege stack for ERET
-mstatus popPrivilegeStack(mst::mstatus) =
-{ var st = mst
-; st.MIE    <- mst.MIE1
-; st.MPRV   <- mst.MPRV1
-; st.MIE1   <- mst.MIE2
-; st.MPRV1  <- mst.MPRV2
-; st.MIE2   <- true
-; st.MPRV2  <- privLevel(User)
-; st
+mstatus senter(v::mstatus, p::Privilege) =
+{ var m = v
+; match p
+  { case User       => { m.M_SPIE <- m.M_UIE
+                       ; m.M_SPP  <- false
+                       }
+    case Supervisor => { m.M_SPIE <- m.M_SIE
+                       ; m.M_SPP  <- true
+                       }
+    case _          => #INTERNAL_ERROR("Invalid privilege for senter")
+  }
+; m.M_SIE <- false
+; m
 }
 
-mstatus pushPrivilegeStack(mst::mstatus, p::Privilege) =
-{ var st = mst
-; st.MIE2   <- mst.MIE1
-; st.MPRV2  <- mst.MPRV1
-; st.MIE1   <- mst.MIE
-; st.MPRV1  <- mst.MPRV
-; st.MIE    <- false
-; st.MPRV   <- privLevel(p)
-; st
+mstatus uenter(v::mstatus, p::Privilege) =
+{ var m = v
+; m.M_UPIE <- match p
+              { case User       => m.M_UIE
+                case _          => #INTERNAL_ERROR("Invalid privilege for uenter")
+              }
+; m.M_UIE <- false
+; m
+}
+
+mstatus mret(v::mstatus) =
+{ var m = v
+; match privilege(m.M_MPP)
+  { case User       => m.M_UIE  <- m.M_MPIE
+    case Supervisor => m.M_SIE  <- m.M_MPIE
+    case Hypervisor => m.M_HIE  <- m.M_MPIE
+    case Machine    => m.M_MIE  <- m.M_MPIE
+  }
+; m.M_MPP  <- privLevel(User)
+; m.M_MPIE <- true
+; m
+}
+
+mstatus hret(v::mstatus) =
+{ var m = v
+; match privilege(m.M_HPP)
+  { case User       => m.M_UIE  <- m.M_HPIE
+    case Supervisor => m.M_SIE  <- m.M_HPIE
+    case Hypervisor => m.M_HIE  <- m.M_HPIE
+    case _          => #INTERNAL_ERROR("Invalid mstatus for HRET")
+  }
+; m.M_HPP  <- privLevel(User)
+; m.M_HPIE <- true
+; m
+}
+
+mstatus sret(v::mstatus) =
+{ var m = v
+; match m.M_SPP
+  { case false      => m.M_UIE  <- m.M_SPIE
+    case true       => m.M_SIE  <- m.M_SPIE
+  }
+; m.M_SPP  <- false
+; m.M_SPIE <- true
+; m
+}
+
+mstatus uret(v::mstatus) =
+{ var m = v
+; m.M_UIE  <- m.M_UPIE
+; m.M_UPIE <- true
+; m
 }
 
 ---------------------------------------------------------------------------
--- Instruction fetch control
+-- Instruction fetch state
 ---------------------------------------------------------------------------
 
-record SynchronousTrap
+record SynchronousException
 { trap            :: ExceptionType
   badaddr         :: vAddr option
 }
 
-construct TransferControl
-{ Trap            :: SynchronousTrap
+construct instrResult
+{ Trap            :: SynchronousException
+, Uret
+, Sret
+, Hret
+, Mret
 , BranchTo        :: regType
-, Ereturn
-, Mrts
 }
+
+type FetchState = instrResult option
 
 ---------------------------------------------------------------------------
 -- Register state space
@@ -658,8 +966,10 @@ declare
   c_HCSR        :: id -> HypervisorCSR          -- hypervisor-level CSRs
   c_MCSR        :: id -> MachineCSR             -- machine-level CSRs
 
+  c_privilege   :: id -> Privilege              -- current execution context privilege
+
   -- interpreter execution context
-  c_NextFetch   :: id -> TransferControl option
+  c_NextFetch   :: id -> FetchState
   c_ReserveLoad :: id -> vAddr option           -- load reservation for LL/SC
   c_ExitCode    :: id -> regType                -- derived from Berkeley HTIF
 }
@@ -688,9 +998,9 @@ component gpr(n::reg) :: regType
 
 component fcsr :: FPCSR
 { value        = c_UCSR(procID).fpcsr
-  assign value = { c_UCSR(procID).fpcsr       <- value
-                 ; c_MCSR(procID).mstatus.MFS <- ext_status(Dirty)
-                 ; c_MCSR(procID).mstatus.MSD <- true
+  assign value = { c_UCSR(procID).fpcsr         <- value
+                 ; c_MCSR(procID).mstatus.M_FS  <- ext_status(Dirty)
+                 ; c_MCSR(procID).mstatus.M_SD  <- true
                  }
 }
 
@@ -727,7 +1037,7 @@ component MCSR :: MachineCSR
   assign value = c_MCSR(procID) <- value
 }
 
-component NextFetch :: TransferControl option
+component NextFetch :: FetchState
 { value        = c_NextFetch(procID)
   assign value = c_NextFetch(procID) <- value
 }
@@ -742,35 +1052,31 @@ component ExitCode :: regType
   assign value = c_ExitCode(procID) <- value
 }
 
+component curPrivilege :: Privilege
+{ value        = c_privilege(procID)
+  assign value = c_privilege(procID) <- value
+}
+
 -- machine state utilities
 
 Architecture curArch() =
-    architecture(MCSR.mcpuid.ArchBase)
+    architecture(MCSR.misa.ArchBase)
 
 bool in32BitMode() =
     curArch() == RV32I
 
-Privilege curPrivilege() =
-    privilege(MCSR.mstatus.MPRV)
+bool isFPEnabled() =
+    MCSR.misa.F
 
-regType curEPC() =
-    match curPrivilege()
-    { case User         => #INTERNAL_ERROR("No EPC in U-mode")
-      case Supervisor   => SCSR.sepc
-      case Hypervisor   => HCSR.hepc
-      case Machine      => MCSR.mepc
-    }
+asid32 curAsid32() =
+    sptbr32(SCSR.sptbr<31:0>).ASID_32
 
-unit sendIPI(core::regType) =
-{ id = [core]::id
-; when [id]::nat < totalCore
-  do c_MCSR(id).mip.MSIP <- true
-}
+asid64 curAsid64() =
+    sptbr64(SCSR.sptbr).ASID_64
 
 ---------------------------------------------------------------------------
 -- Floating Point
 ---------------------------------------------------------------------------
-
 
 -- Rounding
 
@@ -872,249 +1178,320 @@ csrPR csrPR(csr::creg)  = csr<9:8>
 bool check_CSR_access(rw::csrRW, pr::csrPR, p::Privilege, a::accessType) =
     (a == Read or rw != 0b11) and (privLevel(p) >=+ pr)
 
--- XXX: Revise this to handle absence of counter regs in RV32E.
 bool is_CSR_defined(csr::creg) =
     -- user-mode
-    (csr >= 0x001 and csr <= 0x003)
- or (csr >= 0xC00 and csr <= 0xC02)
- or (csr >= 0xC80 and csr <= 0xC82 and in32BitMode())
+    csr == 0x000  or  csr == 0x004 or csr == 0x005
+ or (csr >= 0x001 and csr <= 0x003 and isFPEnabled())
+ or (csr >= 0x040 and csr <= 0x044)
+ or (csr == 0xC00 and c_MCSR(procID).mucounteren.M_CY)
+ or (csr == 0xC01 and c_MCSR(procID).mucounteren.M_TM)
+ or (csr == 0xC02 and c_MCSR(procID).mucounteren.M_IR)
+ or ((   (csr == 0xC80 and c_MCSR(procID).mucounteren.M_CY)
+      or (csr == 0xC81 and c_MCSR(procID).mucounteren.M_TM)
+      or (csr == 0xC82 and c_MCSR(procID).mucounteren.M_IR)) and in32BitMode())
 
     -- supervisor-mode
- or (csr >= 0x100 and csr <= 0x101)
- or  csr == 0x104 or  csr == 0x121
-
- or  csr == 0xD01 or (csr == 0xD81 and in32BitMode())
-
- or (csr >= 0x140 and csr <= 0x141) or csr == 0x144
- or (csr >= 0xD42 and csr <= 0xD43)
-
- or (csr >= 0x180 and csr <= 0x181)
-
- or (csr >= 0x900 and csr <= 0x902)
- or (csr >= 0x980 and csr <= 0x982 and in32BitMode())
+ or (csr >= 0x100 and csr <= 0x105 and csr != 0x101)
+ or (csr >= 0x140 and csr <= 0x144)
+ or (csr == 0x180)
+ or (csr == 0xD00 and c_MCSR(procID).mscounteren.M_CY)
+ or (csr == 0xD01 and c_MCSR(procID).mscounteren.M_TM)
+ or (csr == 0xD02 and c_MCSR(procID).mscounteren.M_IR)
+ or ((   (csr == 0xD80 and c_MCSR(procID).mucounteren.M_CY)
+      or (csr == 0xD81 and c_MCSR(procID).mucounteren.M_TM)
+      or (csr == 0xD82 and c_MCSR(procID).mucounteren.M_IR)) and in32BitMode())
 
     -- machine-mode
- or (csr >= 0xF00 and csr <= 0xF01) or csr == 0xF10
- or (csr >= 0x300 and csr <= 0x302) or csr == 0x304 or csr == 0x321
- or  csr == 0x701 or (csr == 0x741 and in32BitMode())
+ or (csr >= 0x300 and csr <= 0x305 and csr != 0x301)
+ or (csr >= 0x310 and csr <= 0x312)
  or (csr >= 0x340 and csr <= 0x344)
  or (csr >= 0x380 and csr <= 0x385)
- or  csr >= 0xB01 or (csr == 0xB81 and in32BitMode())
- or (csr >= 0x780 and csr <= 0x783 and csr != 0x782)
+ or (csr >= 0xF00 and csr <= 0xF02)
+ or (csr >= 0xF10 and csr <= 0xF14)
+ or (csr >= 0xF80 and csr <= 0xF82 and in32BitMode())
 
---- XXX: the CSRMap below is broken in 32-bit mode, since we need to
---- convert from 64-bit regType to 32-bit XLEN.
+ or (csr >= 0x700 and csr <= 0x702)
+ or (csr >= 0x704 and csr <= 0x706)
+ or (csr >= 0x708 and csr <= 0x70A)
+
+ or ((   (csr >= 0x780 and csr <= 0x782)
+      or (csr >= 0x784 and csr <= 0x786)
+      or (csr >= 0x788 and csr <= 0x78A)) and in32BitMode())
+
 component CSRMap(csr::creg) :: regType
-{
-  value =
-      match csr
-      { -- user floating-point context
-        case 0x001  => ZeroExtend(c_UCSR(procID).&fpcsr<4:0>)
-        case 0x002  => ZeroExtend(c_UCSR(procID).fpcsr.FRM)
-        case 0x003  => ZeroExtend(c_UCSR(procID).&fpcsr<7:0>)
+{ value =
+  -- Implementation note: in 32-bit mode, 32-bit CSR values are
+  -- sign-extended so that the sign-bit is preserved.
+      match csr, in32BitMode()
+      { -- user trap setup
+        case 0x000, false   => &to_ustatus(c_MCSR(procID).mstatus)
+        case 0x000, true    => SignExtend(status_to_32(&to_ustatus(c_MCSR(procID).mstatus)))
+        case 0x004, false   => &to_uie(c_MCSR(procID).mie)
+        case 0x004, true    => SignExtend(ie_to_32(&to_uie(c_MCSR(procID).mie)))
+        case 0x005, _       => c_UCSR(procID).utvec
+
+        -- user trap handling
+        case 0x040, _       => c_UCSR(procID).uscratch
+        case 0x041, _       => c_UCSR(procID).uepc
+        case 0x042, false   => c_UCSR(procID).&ucause
+        case 0x042, true    => SignExtend(cause_to_32(c_UCSR(procID).&ucause))
+        case 0x043, _       => c_UCSR(procID).ubadaddr
+        case 0x044, false   => &to_uip(c_MCSR(procID).mip)
+        case 0x044, true    => SignExtend(&to_uip(c_MCSR(procID).mip))
+
+        -- user floating-point context
+        case 0x001, _       => ZeroExtend(c_UCSR(procID).&fpcsr<4:0>)
+        case 0x002, _       => ZeroExtend(c_UCSR(procID).fpcsr.FRM)
+        case 0x003, _       => ZeroExtend(c_UCSR(procID).&fpcsr<7:0>)
 
         -- user counter/timers
-        case 0xC00  => c_cycles(procID)  + c_UCSR(procID).cycle_delta
-        case 0xC01  => clock             + c_UCSR(procID).time_delta
-        case 0xC02  => c_instret(procID) + c_UCSR(procID).instret_delta
-        case 0xC80  => SignExtend((c_cycles(procID)  + c_UCSR(procID).cycle_delta)<63:32>)
-        case 0xC81  => SignExtend((clock             + c_UCSR(procID).time_delta)<63:32>)
-        case 0xC82  => SignExtend((c_instret(procID) + c_UCSR(procID).instret_delta)<63:32>)
+        case 0xC00, false   =>             c_MCSR(procID).mcycle   + c_MCSR(procID).mucycle_delta
+        case 0xC00, true    => SignExtend((c_MCSR(procID).mcycle   + c_MCSR(procID).mucycle_delta)<31:0>)
+        case 0xC01, false   =>             c_MCSR(procID).mtime    + c_MCSR(procID).mutime_delta
+        case 0xC01, true    => SignExtend((c_MCSR(procID).mtime    + c_MCSR(procID).mutime_delta)<31:0>)
+        case 0xC02, false   =>             c_MCSR(procID).minstret + c_MCSR(procID).muinstret_delta
+        case 0xC02, true    => SignExtend((c_MCSR(procID).minstret + c_MCSR(procID).muinstret_delta)<31:0>)
+        case 0xC80, true    => SignExtend((c_MCSR(procID).mcycle   + c_MCSR(procID).mucycle_delta)<63:32>)
+        case 0xC81, true    => SignExtend((c_MCSR(procID).mtime    + c_MCSR(procID).mutime_delta)<63:32>)
+        case 0xC82, true    => SignExtend((c_MCSR(procID).minstret + c_MCSR(procID).muinstret_delta)<63:32>)
 
         -- supervisor trap setup
-        case 0x100  => &lift_mstatus_sstatus(c_MCSR(procID).mstatus)
-        case 0x101  => c_SCSR(procID).stvec
-        case 0x104  => &lift_mie_sie(c_MCSR(procID).mie)
-        case 0x121  => c_SCSR(procID).stimecmp
-
-        -- supervisor timer
-        case 0xD01  => clock + c_SCSR(procID).stime_delta
-        case 0xD81  => SignExtend((clock + c_SCSR(procID).stime_delta)<63:32>)
+        case 0x100, false   => &to_sstatus(c_MCSR(procID).mstatus)
+        case 0x100, true    => SignExtend(status_to_32(&to_sstatus(c_MCSR(procID).mstatus)))
+        case 0x102, _       => c_SCSR(procID).&sedeleg
+        case 0x103, _       => c_SCSR(procID).&sideleg
+        case 0x104, false   => &to_sie(c_MCSR(procID).mie)
+        case 0x104, true    => SignExtend(ie_to_32(&to_uie(c_MCSR(procID).mie)))
+        case 0x105, _       => c_SCSR(procID).stvec
 
         -- supervisor trap handling
-        case 0x140  => c_SCSR(procID).sscratch
-        case 0x141  => c_SCSR(procID).sepc
-        case 0xD42  => c_SCSR(procID).&scause
-        case 0xD43  => c_SCSR(procID).sbadaddr
-        case 0x144  => &lift_mip_sip(c_MCSR(procID).mip)
+        case 0x140, _       => c_SCSR(procID).sscratch
+        case 0x141, _       => c_SCSR(procID).sepc
+        case 0x142, false   => c_SCSR(procID).&scause
+        case 0x142, true    => SignExtend(cause_to_32(c_SCSR(procID).&scause))
+        case 0x143, _       => c_SCSR(procID).sbadaddr
+        case 0x144, false   => &to_sip(c_MCSR(procID).mip)
+        case 0x144, true    => SignExtend(ip_to_32(&to_sip(c_MCSR(procID).mip)))
 
         -- supervisor protection and translation
-        case 0x180  => c_SCSR(procID).sptbr
-        case 0x181  => c_SCSR(procID).sasid
+        case 0x180, _       => c_SCSR(procID).sptbr
 
-        -- supervisor read/write shadow of user read-only registers
-        case 0x900  => c_cycles(procID)  + c_UCSR(procID).cycle_delta
-        case 0x901  => clock             + c_UCSR(procID).time_delta
-        case 0x902  => c_instret(procID) + c_UCSR(procID).instret_delta
-        case 0x980  => SignExtend((c_cycles(procID)  + c_UCSR(procID).cycle_delta)<63:32>)
-        case 0x981  => SignExtend((clock             + c_UCSR(procID).time_delta)<63:32>)
-        case 0x982  => SignExtend((c_instret(procID) + c_UCSR(procID).instret_delta)<63:32>)
+        -- supervisor counter/timers
+        case 0xD00, false   =>             c_MCSR(procID).mcycle   + c_MCSR(procID).mscycle_delta
+        case 0xD00, true    => SignExtend((c_MCSR(procID).mcycle   + c_MCSR(procID).mscycle_delta)<31:0>)
+        case 0xD01, false   =>             c_MCSR(procID).mtime    + c_MCSR(procID).mstime_delta
+        case 0xD01, true    => SignExtend((c_MCSR(procID).mtime    + c_MCSR(procID).mstime_delta)<31:0>)
+        case 0xD02, false   =>             c_MCSR(procID).minstret + c_MCSR(procID).msinstret_delta
+        case 0xD02, true    => SignExtend((c_MCSR(procID).minstret + c_MCSR(procID).msinstret_delta)<31:0>)
+        case 0xD80, true    => SignExtend((c_MCSR(procID).mcycle   + c_MCSR(procID).mscycle_delta)<63:32>)
+        case 0xD81, true    => SignExtend((c_MCSR(procID).mtime    + c_MCSR(procID).mstime_delta)<63:32>)
+        case 0xD82, true    => SignExtend((c_MCSR(procID).minstret + c_MCSR(procID).msinstret_delta)<63:32>)
 
-        -- hypervisor trap setup
-        case 0x200  => c_HCSR(procID).&hstatus
-        case 0x201  => c_HCSR(procID).htvec
-        case 0x202  => c_HCSR(procID).&htdeleg
-        case 0x221  => c_HCSR(procID).htimecmp
-
-        -- hypervisor timer
-        case 0xE01  => clock + c_HCSR(procID).htime_delta
-        case 0xE81  => SignExtend((clock + c_HCSR(procID).htime_delta)<63:32>)
-
-        -- hypervisor trap handling
-        case 0x240  => c_HCSR(procID).hscratch
-        case 0x241  => c_HCSR(procID).hepc
-        case 0x242  => c_HCSR(procID).&hcause
-        case 0x243  => c_HCSR(procID).hbadaddr
-
-        -- hypervisor read/write shadow of supervisor read-only registers
-        case 0xA01  => clock + c_SCSR(procID).stime_delta
-        case 0xA81  => SignExtend((clock + c_SCSR(procID).stime_delta)<63:32>)
+        -- Leave hypervisor CSRs for later.
 
         -- machine information registers
-        case 0xF00  => c_MCSR(procID).&mcpuid
-        case 0xF01  => c_MCSR(procID).&mimpid
-        case 0xF10  => c_MCSR(procID).mhartid
+        case 0xF10, false   => c_MCSR(procID).&misa
+        case 0xF10, true    => SignExtend(isa_to_32(c_MCSR(procID).&misa))
+        case 0xF11, _       => c_MCSR(procID).mvendorid
+        case 0xF12, _       => c_MCSR(procID).marchid
+        case 0xF13, _       => c_MCSR(procID).mimpid
+        case 0xF14, _       => c_MCSR(procID).mhartid
 
         -- machine trap setup
-        case 0x300  => c_MCSR(procID).&mstatus
-        case 0x301  => c_MCSR(procID).mtvec
-        case 0x302  => c_MCSR(procID).&mtdeleg
-        case 0x304  => c_MCSR(procID).&mie
-        case 0x321  => c_MCSR(procID).mtimecmp
-
-        -- machine timers and counters
-        case 0x701  => clock + c_MCSR(procID).mtime_delta
-        case 0x741  => SignExtend((clock + c_MCSR(procID).mtime_delta)<63:32>)
+        case 0x300, false   => c_MCSR(procID).&mstatus
+        case 0x300, true    => SignExtend(status_to_32(c_MCSR(procID).&mstatus))
+        case 0x302, _       => c_MCSR(procID).&medeleg
+        case 0x303, _       => c_MCSR(procID).&mideleg
+        case 0x304, false   => c_MCSR(procID).&mie
+        case 0x304, true    => SignExtend(ie_to_32(c_MCSR(procID).&mie))
+        case 0x305, _       => c_MCSR(procID).mtvec
 
         -- machine trap handling
-        case 0x340  => c_MCSR(procID).mscratch
-        case 0x341  => c_MCSR(procID).mepc
-        case 0x342  => c_MCSR(procID).&mcause
-        case 0x343  => c_MCSR(procID).mbadaddr
-        case 0x344  => c_MCSR(procID).&mip
+        case 0x340, _       => c_MCSR(procID).mscratch
+        case 0x341, _       => c_MCSR(procID).mepc
+        case 0x342, false   => c_MCSR(procID).&mcause
+        case 0x342, true    => SignExtend(cause_to_32(c_MCSR(procID).&mcause))
+        case 0x343, _       => c_MCSR(procID).mbadaddr
+        case 0x344, false   => c_MCSR(procID).&mip
+        case 0x344, true    => SignExtend(ip_to_32(c_MCSR(procID).&mip))
 
         -- machine protection and translation
-        case 0x380  => c_MCSR(procID).mbase
-        case 0x381  => c_MCSR(procID).mbound
-        case 0x382  => c_MCSR(procID).mibase
-        case 0x383  => c_MCSR(procID).mibound
-        case 0x384  => c_MCSR(procID).mdbase
-        case 0x385  => c_MCSR(procID).mdbound
+        case 0x380, _       => c_MCSR(procID).mbase
+        case 0x381, _       => c_MCSR(procID).mbound
+        case 0x382, _       => c_MCSR(procID).mibase
+        case 0x383, _       => c_MCSR(procID).mibound
+        case 0x384, _       => c_MCSR(procID).mdbase
+        case 0x385, _       => c_MCSR(procID).mdbound
 
-        -- machine read-write shadow of hypervisor read-only registers
-        case 0xB01  => clock + c_HCSR(procID).htime_delta
-        case 0xB81  => SignExtend((clock + c_HCSR(procID).htime_delta)<63:32>)
+        -- machine counter/timers
+        case 0xF00, false   => c_MCSR(procID).mcycle
+        case 0xF00, true    => SignExtend(c_MCSR(procID).mcycle<31:0>)
+        case 0xF01, false   => c_MCSR(procID).mtime
+        case 0xF01, true    => SignExtend(c_MCSR(procID).mtime<31:0>)
+        case 0xF02, false   => c_MCSR(procID).minstret
+        case 0xF02, true    => SignExtend(c_MCSR(procID).minstret<31:0>)
+        case 0xF80, true    => SignExtend(c_MCSR(procID).mcycle<63:32>)
+        case 0xF81, true    => SignExtend(c_MCSR(procID).mtime<63:32>)
+        case 0xF82, true    => SignExtend(c_MCSR(procID).minstret<63:32>)
 
-        -- machine host-target interface (berkeley extension)
-        case 0x780  => c_MCSR(procID).mtohost
-        case 0x781  => c_MCSR(procID).mfromhost
-        case 0x783  => 0
+        -- machine counter-enables
+        case 0x310, _       => c_MCSR(procID).&mucounteren
+        case 0x311, _       => c_MCSR(procID).&mscounteren
+        case 0x312, _       => c_MCSR(procID).&mhcounteren
 
-        case _      => #UNDEFINED("unexpected CSR read at " : [csr])
+        -- machine counter-deltas
+        case 0x700, false   => c_MCSR(procID).mucycle_delta
+        case 0x700, true    => SignExtend(c_MCSR(procID).mucycle_delta<31:0>)
+        case 0x701, false   => c_MCSR(procID).mutime_delta
+        case 0x701, true    => SignExtend(c_MCSR(procID).mutime_delta<31:0>)
+        case 0x702, false   => c_MCSR(procID).muinstret_delta
+        case 0x702, true    => SignExtend(c_MCSR(procID).muinstret_delta<31:0>)
+
+        case 0x704, false   => c_MCSR(procID).mscycle_delta
+        case 0x704, true    => SignExtend(c_MCSR(procID).mscycle_delta<31:0>)
+        case 0x705, false   => c_MCSR(procID).mstime_delta
+        case 0x705, true    => SignExtend(c_MCSR(procID).mstime_delta<31:0>)
+        case 0x706, false   => c_MCSR(procID).msinstret_delta
+        case 0x706, true    => SignExtend(c_MCSR(procID).msinstret_delta<31:0>)
+
+        case 0x780, true    => SignExtend(c_MCSR(procID).mucycle_delta<63:32>)
+        case 0x781, true    => SignExtend(c_MCSR(procID).mutime_delta<63:32>)
+        case 0x782, true    => SignExtend(c_MCSR(procID).muinstret_delta<63:32>)
+
+        case 0x784, true    => SignExtend(c_MCSR(procID).mscycle_delta<63:32>)
+        case 0x785, true    => SignExtend(c_MCSR(procID).mstime_delta<63:32>)
+        case 0x786, true    => SignExtend(c_MCSR(procID).msinstret_delta<63:32>)
+
+        case _              => #UNDEFINED("unexpected CSR read at " : [csr])
       }
 
   assign value =
-      match csr
-      { -- user floating-point context
-        case 0x001  => { c_UCSR(procID).&fpcsr<4:0>     <- value<4:0>
-                       ; c_MCSR(procID).mstatus.MFS     <- ext_status(Dirty)
-                       ; c_MCSR(procID).mstatus.MSD     <- true
-                       }
-        case 0x002  => { c_UCSR(procID).fpcsr.FRM       <- value<2:0>
-                       ; c_MCSR(procID).mstatus.MFS     <- ext_status(Dirty)
-                       ; c_MCSR(procID).mstatus.MSD     <- true
-                       }
-        case 0x003  => { c_UCSR(procID).&fpcsr          <- value<31:0>
-                       ; c_MCSR(procID).mstatus.MFS     <- ext_status(Dirty)
-                       ; c_MCSR(procID).mstatus.MSD     <- true
-                       }
+      match csr, in32BitMode()
+      { -- user trap setup
+        case 0x000, false   => c_MCSR(procID).mstatus   <- of_ustatus(ustatus(value), c_MCSR(procID).mstatus)
+        case 0x000, true    => c_MCSR(procID).mstatus   <- of_ustatus(ustatus(status_of_32(value<31:0>)), c_MCSR(procID).mstatus)
+        case 0x004, false   => c_MCSR(procID).mie       <- of_uie(uie(value), c_MCSR(procID).mie)
+        case 0x004, true    => c_MCSR(procID).mie       <- of_uie(uie(ie_of_32(value<31:0>)), c_MCSR(procID).mie)
+        case 0x005, _       => c_UCSR(procID).utvec     <- value
+
+        -- user trap handling
+        case 0x040, _       => c_UCSR(procID).uscratch  <- value
+        case 0x041, _       => c_UCSR(procID).uepc      <- (value && SignExtend(0b100`3)) -- no 16-bit instr support
+        case 0x042, false   => c_UCSR(procID).&ucause   <- value
+        case 0x042, true    => c_UCSR(procID).&ucause   <- cause_of_32(value<31:0>)
+        case 0x043, _       => c_UCSR(procID).ubadaddr  <- value
+        case 0x044, false   => c_MCSR(procID).mip       <- of_uip(uip(value), c_MCSR(procID).mip)
+        case 0x044, true    => c_MCSR(procID).mip       <- of_uip(uip(ip_of_32(value<31:0>)), c_MCSR(procID).mip)
+
+        -- user floating-point context
+        case 0x001, _       => { c_UCSR(procID).&fpcsr<4:0>     <- value<4:0>
+                               ; c_MCSR(procID).mstatus.M_FS    <- ext_status(Dirty)
+                               ; c_MCSR(procID).mstatus.M_SD    <- true
+                               }
+        case 0x002, _       => { c_UCSR(procID).fpcsr.FRM       <- value<2:0>
+                               ; c_MCSR(procID).mstatus.M_FS    <- ext_status(Dirty)
+                               ; c_MCSR(procID).mstatus.M_SD    <- true
+                               }
+        case 0x003, _       => { c_UCSR(procID).&fpcsr          <- value<31:0>
+                               ; c_MCSR(procID).mstatus.M_FS    <- ext_status(Dirty)
+                               ; c_MCSR(procID).mstatus.M_SD    <- true
+                               }
+
         -- user counters/timers are URO
 
         -- supervisor trap setup
-        case 0x100  => c_MCSR(procID).mstatus           <- lower_sstatus_mstatus(sstatus(value),
-                                                                                 c_MCSR(procID).mstatus)
-
-        case 0x101  => c_SCSR(procID).stvec             <- value
-        -- sie back-projects to mie
-        case 0x104  => c_MCSR(procID).mie               <- lower_sie_mie(sie(value), c_MCSR(procID).mie)
-        case 0x121  =>
-        { c_SCSR(procID).stimecmp <- value
-        ; c_MCSR(procID).mip.STIP <- false
-        }
+        case 0x100, false   => c_MCSR(procID).mstatus   <- of_sstatus(sstatus(value), c_MCSR(procID).mstatus)
+        case 0x100, true    => c_MCSR(procID).mstatus   <- of_sstatus(sstatus(status_of_32(value<31:0>)), c_MCSR(procID).mstatus)
+        case 0x102, _       => c_SCSR(procID).&sedeleg  <- value
+        case 0x103, _       => c_SCSR(procID).&sideleg  <- value
+        case 0x104, false   => c_MCSR(procID).mie       <- of_sie(sie(value), c_MCSR(procID).mie)
+        case 0x104, true    => c_MCSR(procID).mie       <- of_sie(sie(ie_of_32(value<31:0>)), c_MCSR(procID).mie)
+        case 0x105, _       => c_SCSR(procID).stvec     <- value
 
         -- supervisor trap handling
-        case 0x140  => c_SCSR(procID).sscratch          <- value
-        case 0x141  => c_SCSR(procID).sepc              <- (value && SignExtend(0b100`3))  -- no 16-bit instr support
-        -- scause, sbadaddr are SRO
-        -- sip back-projects to mip
-        case 0x144  => c_MCSR(procID).mip               <- lower_sip_mip(sip(value), c_MCSR(procID).mip)
+        case 0x140, _       => c_SCSR(procID).sscratch  <- value
+        case 0x141, _       => c_SCSR(procID).sepc      <- (value && SignExtend(0b100`3)) -- no 16-bit instr support
+        case 0x142, false   => c_SCSR(procID).&scause   <- value
+        case 0x142, true    => c_SCSR(procID).&scause   <- cause_of_32(value<31:0>)
+        case 0x143, _       => c_SCSR(procID).sbadaddr  <- value
+        case 0x144, false   => c_MCSR(procID).mip       <- of_sip(sip(value), c_MCSR(procID).mip)
+        case 0x144, true    => c_MCSR(procID).mip       <- of_sip(sip(ip_of_32(value<31:0>)), c_MCSR(procID).mip)
 
         -- supervisor protection and translation
-        case 0x180  => c_SCSR(procID).sptbr             <- value
-        case 0x181  => c_SCSR(procID).sasid             <- value
+        -- TODO: does this update flush the TLB cache?  does it flush the data cache?
+        case 0x180, false   => c_SCSR(procID).sptbr     <- &sptbr64(value)
+        case 0x180, true    => c_SCSR(procID).sptbr     <- SignExtend(&sptbr32(value<31:0>))
 
-        -- supervisor read/write shadow of user read-only registers
-        case 0x900  => c_UCSR(procID).cycle_delta       <- value - c_cycles(procID)
-        case 0x901  => c_UCSR(procID).time_delta        <- value - clock
-        case 0x902  => c_UCSR(procID).instret_delta     <- value - c_instret(procID)
-
-        case 0x980  => c_UCSR(procID).cycle_delta<63:32>    <- (value<31:0> - c_cycles(procID)<63:32>)  << 32
-        case 0x981  => c_UCSR(procID).time_delta<63:32>     <- (value<31:0> - clock<63:32>)             << 32
-        case 0x982  => c_UCSR(procID).instret_delta<63:32>  <- (value<31:0> - c_instret(procID)<63:32>) << 32
+        -- supervisor counters/timers are SRO
 
         -- TODO: hypervisor register write support
 
         -- machine information registers are MRO
 
         -- machine trap setup
-        case 0x300  => c_MCSR(procID).mstatus           <- update_mstatus(c_MCSR(procID).mstatus, mstatus(value))
-        case 0x301  => c_MCSR(procID).mtvec             <- value
-        case 0x302  => c_MCSR(procID).mtdeleg           <- mtdeleg(value)
-        case 0x304  => c_MCSR(procID).mie               <- mie(value)
-        case 0x321  =>
-        { c_MCSR(procID).mtimecmp <- value
-        ; c_MCSR(procID).mip.MTIP <- false
-        }
-
-        -- machine timers and counters
-        case 0x701  => c_MCSR(procID).mtime_delta           <- value - clock
-        case 0x741  => c_MCSR(procID).mtime_delta<63:32>    <- (value<31:0> - clock<63:32>) << 32
+        --  these assignments are done with machine-level privilege;
+        --  for now, we don't check for valid values.
+        case 0x300, false   => c_MCSR(procID).&mstatus  <- value
+        case 0x300, true    => c_MCSR(procID).&mstatus  <- status_of_32(value<31:0>)
+        case 0x302, _       => c_MCSR(procID).&medeleg  <- value
+        case 0x303, _       => c_MCSR(procID).&mideleg  <- value
+        case 0x304, false   => c_MCSR(procID).&mie      <- value
+        case 0x304, true    => c_MCSR(procID).&mie      <- ie_of_32(value<31:0>)
+        case 0x305, _       => c_MCSR(procID).mtvec     <- value
 
         -- machine trap handling
-        case 0x340  => c_MCSR(procID).mscratch          <- value
-        case 0x341  => c_MCSR(procID).mepc              <- (value && SignExtend(0b100`3))  -- no 16-bit instr support
-        case 0x342  => c_MCSR(procID).mcause            <- mcause(value)
-        case 0x343  => c_MCSR(procID).mbadaddr          <- value
-        case 0x344  => c_MCSR(procID).mip               <- mip(value)
+        case 0x340, _       => c_MCSR(procID).mscratch  <- value
+        case 0x341, _       => c_MCSR(procID).mepc      <- (value && SignExtend(0b100`3))  -- no 16-bit instr support
+        case 0x342, false   => c_MCSR(procID).&mcause   <- value
+        case 0x342, true    => c_MCSR(procID).&mcause   <- cause_of_32(value<31:0>)
+        case 0x343, _       => c_MCSR(procID).mbadaddr  <- value
+        case 0x344, false   => c_MCSR(procID).&mip      <- value
+        case 0x344, true    => c_MCSR(procID).&mip      <- ip_of_32(value<31:0>)
 
         -- machine protection and translation
-        case 0x380  => c_MCSR(procID).mbase             <- value
-        case 0x381  => c_MCSR(procID).mbound            <- value
-        case 0x382  => c_MCSR(procID).mibase            <- value
-        case 0x383  => c_MCSR(procID).mibound           <- value
-        case 0x384  => c_MCSR(procID).mdbase            <- value
-        case 0x385  => c_MCSR(procID).mdbound           <- value
+        case 0x380, _       => c_MCSR(procID).mbase     <- value
+        case 0x381, _       => c_MCSR(procID).mbound    <- value
+        case 0x382, _       => c_MCSR(procID).mibase    <- value
+        case 0x383, _       => c_MCSR(procID).mibound   <- value
+        case 0x384, _       => c_MCSR(procID).mdbase    <- value
+        case 0x385, _       => c_MCSR(procID).mdbound   <- value
 
-        -- machine read-write shadow of hypervisor read-only registers
-        case 0xB01  => c_HCSR(procID).htime_delta           <- value - clock
-        case 0xB81  => c_HCSR(procID).htime_delta<63:32>    <- (value<31:0> - clock<63:32>) << 32
+        -- machine counters/timers are MRO
 
-        -- machine host-target interface (berkeley extension)
-        -- TODO: XXX: set I/O pending bit
-        case 0x780  =>
-        { c_MCSR(procID).mtohost    <- value }
-        case 0x781  =>
-        { c_MCSR(procID).mfromhost  <- value }
-        case 0x783  =>
-        { sendIPI(value) }
+        -- machine counter-enables
+        case 0x310, _       => c_MCSR(procID).&mucounteren            <- value
+        case 0x311, _       => c_MCSR(procID).&mscounteren            <- value
+        case 0x312, _       => c_MCSR(procID).&mhcounteren            <- value
 
-        case _      => #INTERNAL_ERROR("unexpected CSR write to " : [csr])
+        -- machine counter-deltas
+        case 0x700, _       => c_MCSR(procID).mucycle_delta           <- value
+        case 0x701, _       => c_MCSR(procID).mutime_delta            <- value
+        case 0x702, _       => c_MCSR(procID).muinstret_delta         <- value
+
+        case 0x704, _       => c_MCSR(procID).mscycle_delta           <- value
+        case 0x705, _       => c_MCSR(procID).mstime_delta            <- value
+        case 0x706, _       => c_MCSR(procID).msinstret_delta         <- value
+
+        case 0x780, true    => c_MCSR(procID).mucycle_delta<63:32>    <- value<31:0>
+        case 0x781, true    => c_MCSR(procID).mutime_delta<63:32>     <- value<31:0>
+        case 0x782, true    => c_MCSR(procID).muinstret_delta<63:32>  <- value<31:0>
+
+        case 0x784, true    => c_MCSR(procID).mscycle_delta<63:32>    <- value<31:0>
+        case 0x785, true    => c_MCSR(procID).mstime_delta<63:32>     <- value<31:0>
+        case 0x786, true    => c_MCSR(procID).msinstret_delta<63:32>  <- value<31:0>
+
+        case _, _           => #INTERNAL_ERROR("unexpected CSR write to " : [csr])
       }
 }
 
 string csrName(csr::creg) =
     match csr
-    { -- user floating-point context
+    { -- user trap setup
+      case 0x000  => "ustatus"
+      case 0x004  => "uie"
+      case 0x005  => "utvec"
+
+      -- user floating-point context
       case 0x001  => "fflags"
       case 0x002  => "frm"
       case 0x003  => "fcsr"
@@ -1129,42 +1506,35 @@ string csrName(csr::creg) =
 
       -- supervisor trap setup
       case 0x100  => "sstatus"
-      case 0x101  => "stvec"
+      case 0x102  => "sedeleg"
+      case 0x103  => "sideleg"
       case 0x104  => "sie"
-      case 0x121  => "stimecmp"
-
-      -- supervisor timer
-      case 0xD01  => "stime"
-      case 0xD81  => "stimeh"
+      case 0x105  => "stvec"
 
       -- supervisor trap handling
       case 0x140  => "sscratch"
       case 0x141  => "sepc"
-      case 0xD42  => "scause"
-      case 0xD43  => "sbadaddr"
-      case 0x144  => "mip"
+      case 0x142  => "scause"
+      case 0x143  => "sbadaddr"
+      case 0x144  => "sip"
 
       -- supervisor protection and translation
       case 0x180  => "sptbr"
-      case 0x181  => "sasid"
 
-      -- supervisor read/write shadow of user read-only registers
-      case 0x900  => "cycle"
-      case 0x901  => "time"
-      case 0x902  => "instret"
-      case 0x980  => "cycleh"
-      case 0x981  => "timeh"
-      case 0x982  => "instreth"
+      -- supervisor counters/timers
+      case 0xD00  => "scycle"
+      case 0xD01  => "stime"
+      case 0xD02  => "sinstret"
+      case 0xD80  => "scycleh"
+      case 0xD81  => "stimeh"
+      case 0xD82  => "sinstreth"
 
       -- hypervisor trap setup
       case 0x200  => "hstatus"
-      case 0x201  => "htvec"
-      case 0x202  => "htdeleg"
-      case 0x221  => "htimecmp"
-
-      -- hypervisor timer
-      case 0xE01  => "htime"
-      case 0xE81  => "htimeh"
+      case 0x202  => "hedeleg"
+      case 0x203  => "hideleg"
+      case 0x204  => "hie"
+      case 0x205  => "htvec"
 
       -- hypervisor trap handling
       case 0x240  => "hscratch"
@@ -1172,25 +1542,27 @@ string csrName(csr::creg) =
       case 0x242  => "hcause"
       case 0x243  => "hbadaddr"
 
-      -- hypervisor read/write shadow of supervisor read-only registers
-      case 0xA01  => "stime"
-      case 0xA81  => "stimeh"
+      -- hypervisor counters/timers
+      case 0xE00  => "hcycle"
+      case 0xE01  => "htime"
+      case 0xE02  => "hinstret"
+      case 0xE80  => "hcycleh"
+      case 0xE81  => "htimeh"
+      case 0xE82  => "hinstreth"
 
       -- machine information registers
-      case 0xF00  => "mcpuid"
-      case 0xF01  => "mimpid"
-      case 0xF10  => "mhartid"
+      case 0xF10  => "misa"
+      case 0xF11  => "mvendorid"
+      case 0xF12  => "marchid"
+      case 0xF13  => "mimpid"
+      case 0xF14  => "mhartid"
 
       -- machine trap setup
       case 0x300  => "mstatus"
-      case 0x301  => "mtvec"
-      case 0x302  => "mtdeleg"
+      case 0x302  => "medeleg"
+      case 0x303  => "mideleg"
       case 0x304  => "mie"
-      case 0x321  => "mtimecmp"
-
-      -- machine timers and counters
-      case 0x701  => "mtime"
-      case 0x741  => "mtimeh"
+      case 0x305  => "mtvec"
 
       -- machine trap handling
       case 0x340  => "mscratch"
@@ -1207,15 +1579,43 @@ string csrName(csr::creg) =
       case 0x384  => "mdbase"
       case 0x385  => "mdbound"
 
-      -- machine read-write shadow of hypervisor read-only registers
-      case 0xB01  => "htime"
-      case 0xB81  => "htimeh"
+      -- machine counters/timers
+      case 0xF00  => "mcycle"
+      case 0xF01  => "mtime"
+      case 0xF02  => "minstret"
+      case 0xF80  => "mcycleh"
+      case 0xF81  => "mtimeh"
+      case 0xF82  => "minstreth"
 
-      -- machine host-target interface (berkeley extension)
-      case 0x780  => "mtohost"
-      case 0x781  => "mfromhost"
+      -- machine counter-enables
+      case 0x310  => "mucounteren"
+      case 0x311  => "mscounteren"
+      case 0x312  => "mhcounteren"
 
-      case 0x783  => "send_ipi"
+      -- machine counter-deltas
+      case 0x700  => "mucycle_delta"
+      case 0x701  => "mutime_delta"
+      case 0x702  => "muinstret_delta"
+
+      case 0x704  => "mscycle_delta"
+      case 0x705  => "mstime_delta"
+      case 0x706  => "msinstret_delta"
+
+      case 0x708  => "mhcycle_delta"
+      case 0x709  => "mhtime_delta"
+      case 0x70A  => "mhinstret_delta"
+
+      case 0x780  => "mucycle_deltah"
+      case 0x781  => "mutime_deltah"
+      case 0x782  => "muinstret_deltah"
+
+      case 0x784  => "mscycle_deltah"
+      case 0x785  => "mstime_deltah"
+      case 0x786  => "msinstret_deltah"
+
+      case 0x788  => "mhcycle_deltah"
+      case 0x789  => "mhtime_deltah"
+      case 0x78A  => "mhinstret_deltah"
 
       case _      => "UNKNOWN"
     }
@@ -1425,9 +1825,9 @@ unit clear_logs()                   = log <- Nil
 
 unit setTrap(e::ExceptionType, badaddr::vAddr option) =
 { var trap
-; trap.trap        <- e
-; trap.badaddr     <- badaddr
-; NextFetch        <- Some(Trap(trap))
+; trap.trap             <- e
+; trap.badaddr          <- badaddr
+; NextFetch             <- Some(Trap(trap))
 }
 
 unit signalException(e::ExceptionType) =
@@ -1443,123 +1843,142 @@ unit signalAddressException(e::ExceptionType, vAddr::vAddr) =
 }
 
 unit signalEnvCall() =
-{ e = match privilege(MCSR.mstatus.MPRV)
-      { case User       => UMode_Env_Call
-        case Supervisor => SMode_Env_Call
-        case Hypervisor => HMode_Env_Call
-        case Machine    => MMode_Env_Call
-      }
-; signalException(e)
-}
+  signalException(E_Env_Call)
+
 
 -- Delegation logic.
 
-Privilege checkDelegation(curPriv::Privilege, intr::bool, ec::exc_code) =
-{ e = [ec]::nat
-; match curPriv
-  { case User       => #INTERNAL_ERROR("No user-level delegation!")
-    case Supervisor => #INTERNAL_ERROR("No supervisor-level delegation!")
-    case Hypervisor =>
-         if ((intr and HCSR.htdeleg.Intr_deleg<e>)
-             or (!intr and HCSR.htdeleg.Exc_deleg<e>))
-         then Supervisor else curPriv
-    case Machine    =>
-         if ((intr and MCSR.mtdeleg.Intr_deleg<e>)
-             or (!intr and MCSR.mtdeleg.Exc_deleg<e>))
-         then checkDelegation(Hypervisor, intr, ec) else curPriv
+Privilege excHandlerDelegate(delegate::Privilege, ec_idx::nat) =
+{ match delegate
+  { case Machine    => if MCSR.&medeleg<ec_idx>
+                       then excHandlerDelegate(Hypervisor, ec_idx)
+                       else Machine
+    case Hypervisor => if HCSR.hedeleg<ec_idx>
+                       then excHandlerDelegate(Supervisor, ec_idx)
+                       else Hypervisor
+    case Supervisor => if SCSR.&sedeleg<ec_idx>
+                       then User
+                       else Supervisor
+    case User       => #INTERNAL_ERROR("Exception delegation failure")
   }
 }
 
--- The spec doesn't define a priority between a timer interrupt and a
--- software interrupt.  We treat timer interrupts at higher priority.
-
-(Interrupt * Privilege) option checkPrivInterrupt(curPriv::Privilege) =
-{ ip = MCSR.mip
-; ie = MCSR.mie
-; match curPriv
-  { case User       => #INTERNAL_ERROR("No user-level interrupts!")
-    case Supervisor => if ip.STIP and ie.STIE then Some(Timer, curPriv)
-                       else if ip.SSIP and ie.SSIE then Some(Software, curPriv)
-                       else None
-    case Hypervisor => if ip.HTIP and ie.HTIE then Some(Timer, curPriv)
-                       else if ip.HSIP and ie.HSIE then Some(Software, curPriv)
-                       else None
-    case Machine    => if ip.MTIP and ie.MTIE then Some(Timer, curPriv)
-                       else if ip.MSIP and ie.MSIE then Some(Software, curPriv)
-                       else None
+Privilege intHandlerDelegate(delegate::Privilege, int_idx::nat) =
+{ match delegate
+  { case Machine    => if MCSR.&mideleg<int_idx>
+                       then intHandlerDelegate(Hypervisor, int_idx)
+                       else Machine
+    case Hypervisor => if HCSR.hideleg<int_idx>
+                       then intHandlerDelegate(Supervisor, int_idx)
+                       else Hypervisor
+    case Supervisor => if SCSR.&sideleg<int_idx>
+                       then User
+                       else Supervisor
+    case User       => #INTERNAL_ERROR("Interrupt delegation failure")
   }
 }
 
--- The spec says:
---
---    When a hart is running in a given privileged mode, interrupts
---    for higher privileged modes are always enabled while interrupts
---    for lower privileged modes are always disabled.
---    Higher-privilege-level code can use separate per-interrupt
---    enable bits to disable selected interrupts before ceding control
---    to a lower privilege level.
---
--- This is critical to ensuring the monotonically non-decreasing
--- privilege levels in the privilege stack.
+-- Handling logic.
 
-(Interrupt * Privilege) option checkInterrupts() =
-{ curIE = MCSR.mstatus.MIE  -- if interrupts are enabled at curPrivilege
-; p     = curPrivilege()
-; match p
-  { case User or Supervisor =>
-         match checkPrivInterrupt(Machine)
-         { case None =>
-           { match checkPrivInterrupt(Hypervisor)
-             { case None => -- Always check S-mode interrupts in U-mode
-                            if p == User or curIE
-                            then checkPrivInterrupt(Supervisor) else None
-               case i    => i
-             }
-           }
-           case i    => i
-         }
-    case Hypervisor =>
-         match checkPrivInterrupt(Machine)
-         { case None => if curIE then checkPrivInterrupt(Hypervisor) else None
-           case i    => i
-         }
-    case Machine =>
-         if curIE then checkPrivInterrupt(Machine) else None
-  }
-}
-
-unit takeTrap(intr::bool, ec::exc_code, epc::regType, badaddr::vAddr option, toPriv::Privilege) =
-{ fromP = curPrivilege()
-; mark_log(LOG_INSN, ["trapping from " : privName(fromP) : " to " : privName(toPriv) :
-                      " at pc " : [epc] : (if intr then " [intr] " else " [exc] ") : [[ec]::nat]])
-
-; ReserveLoad        <- None        -- cancel any load reservation
-; MCSR.mstatus.MMPRV <- false       -- unset MPRV in each privilege level
-
-; MCSR.mstatus       <- pushPrivilegeStack(MCSR.mstatus, toPriv)
-
+unit excHandler(intr::bool, ec::exc_code, fromPriv::Privilege, toPriv::Privilege,
+                epc::regType, badaddr::vAddr option) =
+{ mark_log(LOG_INSN, ["trapping from " : privName(fromPriv) : " to " : privName(toPriv) :
+                      " at pc " : [epc] : (if intr then " intr:" else " exc:") : [[ec]::nat] :
+                      [if IsSome(badaddr) then [" baddaddr:" : [ValOf(badaddr)]] else ""]])
 ; match toPriv
-  { case User       => #INTERNAL_ERROR("Illegal trap to U-mode")
-    case Supervisor =>
-    { SCSR.scause.Int   <- intr
-    ; SCSR.scause.EC    <- ec
-    ; SCSR.sepc         <- epc
-    ; when IsSome(badaddr)
-      do SCSR.sbadaddr  <- ValOf(badaddr)
-
-    ; PC    <- SCSR.stvec
-    }
-    case Hypervisor => #INTERNAL_ERROR("Unsupported trap to H-mode")
-    case Machine    =>
-    { MCSR.mcause.Int   <- intr
-    ; MCSR.mcause.EC    <- ec
-    ; MCSR.mepc         <- epc
-    ; when IsSome(badaddr)
-      do MCSR.mbadaddr  <- ValOf(badaddr)
-
-    ; PC    <- MCSR.mtvec + ([privLevel(fromP)]::regType) * 0x40
-    }
+  { case Machine    => { MCSR.mstatus           <- menter(MCSR.mstatus, fromPriv)
+                       ; MCSR.mepc              <- epc
+                       ; MCSR.mcause.M_Intr     <- intr
+                       ; MCSR.mcause.M_ExcCause <- ZeroExtend(ec)
+                       ; MCSR.mbadaddr          <- if IsSome(badaddr) then ValOf(badaddr) else SignExtend(0b1`1)
+                       ; PC                     <- MCSR.mtvec
+                       }
+    case Hypervisor => { MCSR.mstatus           <- henter(MCSR.mstatus, fromPriv)
+                       ; HCSR.hepc              <- epc
+                       ; HCSR.hcause.M_Intr     <- intr
+                       ; HCSR.hcause.M_ExcCause <- ZeroExtend(ec)
+                       ; PC                     <- HCSR.htvec
+                       }
+    case Supervisor => { MCSR.mstatus           <- senter(MCSR.mstatus, fromPriv)
+                       ; SCSR.sepc              <- epc
+                       ; SCSR.scause.M_Intr     <- intr
+                       ; SCSR.scause.M_ExcCause <- ZeroExtend(ec)
+                       ; PC                     <- SCSR.stvec
+                       }
+    case User       => { MCSR.mstatus           <- uenter(MCSR.mstatus, fromPriv)
+                       ; UCSR.uepc              <- epc
+                       ; UCSR.ucause.M_Intr     <- intr
+                       ; UCSR.ucause.M_ExcCause <- ZeroExtend(ec)
+                       ; PC                     <- UCSR.utvec
+                       }
   }
+}
+
+-- Interrupts are globally enabled if the current privilege level is
+-- lower than the interrupt delegatee, or if they are the same and
+-- interrupts are enabled for that privilege in mstatus.
+bool globallyEnabled(delegate::Privilege, cur::Privilege) =
+{ match delegate, cur
+  { case Machine,    Machine    => MCSR.mstatus.M_MIE
+    case Machine,    _          => true
+
+    case Hypervisor, Machine    => false
+    case Hypervisor, Hypervisor => MCSR.mstatus.M_HIE
+    case Hypervisor, _          => true
+
+    case Supervisor, Supervisor => MCSR.mstatus.M_SIE
+    case Supervisor, User       => true
+    case Supervisor, _          => false
+
+    case User,       User       => MCSR.mstatus.M_UIE
+    case User,       _          => false
+  }
+}
+
+-- Interrupts are prioritized in privilege order, and for each
+-- privilege, in the order: external, software, timers.
+
+-- The specification would be nicer if the interrupt indices preserved
+-- the priority order, avoiding the need for this inefficient function.
+(InterruptType * Privilege) option nextInterrupt(i::InterruptType) =
+{ match i
+  { case I_M_External => Some(I_M_Software, Machine)
+    case I_M_Software => Some(I_M_Timer,    Machine)
+    case I_M_Timer    => Some(I_H_External, Hypervisor)
+
+    case I_H_External => Some(I_H_Software, Hypervisor)
+    case I_H_Software => Some(I_H_Timer,    Hypervisor)
+    case I_H_Timer    => Some(I_S_External, Supervisor)
+
+    case I_S_External => Some(I_S_Software, Supervisor)
+    case I_S_Software => Some(I_S_Timer,    Supervisor)
+    case I_S_Timer    => Some(I_U_External, User)
+
+    case I_U_External => Some(I_U_Software, User)
+    case I_U_Software => Some(I_U_Timer,    User)
+    case I_U_Timer    => None
+  }
+}
+
+(InterruptType * Privilege) option searchDispatchableIntr(i::InterruptType, p::Privilege) =
+{ int_idx = [interruptIndex(i)]::nat
+; -- An interrupt is locally enabled if the interrupt is pending and
+  -- enabled.
+  locallyEnabled = MCSR.&mie<int_idx> and MCSR.&mip<int_idx>
+; delegate = intHandlerDelegate(p, int_idx)
+; if globallyEnabled(delegate, curPrivilege) and locallyEnabled
+  then Some(i, delegate)
+  else { match nextInterrupt(i)
+         { case Some(ni, np) => searchDispatchableIntr(ni, np)
+           case None         => None
+         }
+       }
+}
+
+(InterruptType * Privilege) option curInterrupt() =
+{ m_enabled = (curPrivilege != Machine) or MCSR.mstatus.M_MIE
+; if MCSR.&mip == 0 or not m_enabled then None -- fast path
+  else searchDispatchableIntr(I_M_External, Machine)
 }
 
 ---------------------------------------------------------------------------
@@ -1615,15 +2034,15 @@ component FPRD(n::reg) :: regType
 
 unit writeFPRS(rd::reg, val::word) =
 { FPRS(rd)          <- val
-; MCSR.mstatus.MFS  <- ext_status(Dirty)
-; MCSR.mstatus.MSD  <- true
+; MCSR.mstatus.M_FS <- ext_status(Dirty)
+; MCSR.mstatus.M_SD <- true
 ; Delta.data1       <- Some(ZeroExtend(val))
 }
 
 unit writeFPRD(rd::reg, val::regType) =
 { FPRD(rd)          <- val
-; MCSR.mstatus.MFS  <- ext_status(Dirty)
-; MCSR.mstatus.MSD  <- true
+; MCSR.mstatus.M_FS <- ext_status(Dirty)
+; MCSR.mstatus.M_SD <- true
 ; Delta.data1       <- Some(val)
 }
 
@@ -1703,100 +2122,142 @@ unit rawWriteMem(pAddr::pAddr, data::regType) =
 -- Address Translation
 ---------------------------------------------------------------------------
 
+nat PAGESIZE_BITS     = 12
+
+-- internal defines for TLB implementation
+nat  TLBEntries       = 16
+type tlbIdx           = bits(4)
+
 -- memory permissions
 
-bool checkMemPermission(ft::fetchType, ac::accessType, priv::Privilege, perm::permType) =
-    match perm
-    { case  0   => #INTERNAL_ERROR("Checking perm on Page-Table pointer!")
-      case  1   => #INTERNAL_ERROR("Checking perm on Page-Table pointer!")
-      case  2   => if priv == User then ac != Write else (ac == Read and ft == Data)
-      case  3   => if priv == User then true else ft != Instruction
-      case  4   => ac == Read and ft == Data
-      case  5   => ft != Instruction
-      case  6   => ac != Write
-      case  7   => true
-      case  8   => priv != User and ac == Read and ft == Data
-      case  9   => priv != User and ft != Instruction
-      case 10   => priv != User and ac != Write
-      case 11   => priv != User
-      case 12   => priv != User and ac == Read and ft == Data
-      case 13   => priv != User and ft != Instruction
-      case 14   => priv != User and ac != Write
-      case 15   => priv != User
-    }
+type permType = bits(4)
 
-bool isGlobal(perm::permType) =
-    perm<3:2> == 3
-
--- page table walking (currently 64-bit only)
-
-register SV_PTE :: regType
-{ 47-10 : PTE_PPNi  -- PPN[2,1,0]
-    9-7 : PTE_SW    -- reserved for software
-      6 : PTE_D     -- dirty bit
-      5 : PTE_R     -- referenced bit
-    4-1 : PTE_T     -- PTE type
-      0 : PTE_V     -- valid bit
+register memPerm :: permType
+{ 3 : Mem_U
+, 2 : Mem_X
+, 1 : Mem_W
+, 0 : Mem_R
 }
 
-register SV_Vaddr :: regType
-{ 47-12 : Sv_VPNi
-  11-0  : Sv_PgOfs
+bool checkMemPermission(ac::accessType, priv::Privilege, mxr::bool, pum::bool, p::memPerm) =
+{ match ac, priv
+  { case Read,      User        => (p.Mem_R or (mxr and p.Mem_X)) and p.Mem_U
+    case Write,     User        => p.Mem_W and p.Mem_U
+    case ReadWrite, User        => (p.Mem_R or (mxr and p.Mem_X)) and p.Mem_W and p.Mem_U
+    case Execute,   User        => p.Mem_X and p.Mem_U
+    case Read,      Supervisor  => (p.Mem_R or (mxr and p.Mem_X)) and !(p.Mem_U and pum)
+    case Write,     Supervisor  => p.Mem_W and !(p.Mem_U and pum)
+    case ReadWrite, Supervisor  => (p.Mem_R or (mxr and p.Mem_X)) and p.Mem_W and !(p.Mem_U and pum)
+    case Execute,   Supervisor  => p.Mem_X and !(p.Mem_U and pum)
+    case _,         Hypervisor  => #INTERNAL_ERROR("hypervisor 32-bit mem perm check") -- should not happen
+    case _,         Machine     => #INTERNAL_ERROR("machine 32-bit mem perm check")    -- should not happen
+  }
 }
 
-(pAddr * SV_PTE * nat * bool * pAddr) option
- walk64(vAddr::vAddr, ft::fetchType, ac::accessType, priv::Privilege, ptb::regType, level::nat) =
-{ va        = SV_Vaddr(vAddr)
-; pt_ofs    = ZeroExtend((va.Sv_VPNi >>+ (level * LEVEL_BITS))<(LEVEL_BITS-1):0>) << 3
+bool isPTEPtr(perm::permType) = perm<2:0> == 0
+
+-- Sv32 memory translation
+--------------------------
+
+nat VPN32_LEVEL_BITS  = 10
+nat PPN32_LEVEL_BITS  = 10
+nat PTE32_LOG_SIZE    =  2
+nat SV32_LEVELS       =  2
+
+type vaddr32  = bits(32)
+type paddr32  = bits(34)
+type pte32    = bits(32)
+
+register SV32_Vaddr :: vaddr32
+{ 31-12 : VA32_VPNi    -- VPN[1,0]
+, 11-0  : VA32_PgOfs   -- page offset
+}
+
+register SV32_Paddr :: paddr32
+{ 33-12 : PA32_PPNi    -- PPN[1,0]
+, 11-0  : PA32_PgOfs   -- page offset
+}
+
+register SV32_PTE   :: pte32
+{ 31-10 : PTE32_PPNi   -- PPN[1,0]
+,     7 : PTE32_D      -- dirty
+,     6 : PTE32_A      -- accessed
+,     5 : PTE32_G      -- global
+,   4-1 : PTE32_PERM   -- permissions
+,     0 : PTE32_V      -- valid
+}
+
+paddr32 curPTB32() =
+    (ZeroExtend(sptbr32(SCSR.sptbr<31:0>).PPN_32) << PAGESIZE_BITS)
+
+-- 32-bit page table walker.  This returns the physical address for
+-- the input vaddr32 as the first element of the returned tuple.  The
+-- remaining elements are for the TLB implementation: the PTE entry
+-- itself, the address of the PTE in memory (so that it can be
+-- updated) by the TLB, the level of the PTE entry, and whether the
+-- mapping is marked as a global mapping.
+
+(paddr32 * SV32_PTE * paddr32 * nat * bool) option
+walk32(vaddr::vaddr32, ac::accessType, priv::Privilege, mxr::bool, pum::bool,
+       ptb::paddr32, level::nat, global::bool) =
+{ va        = SV32_Vaddr(vaddr)
+; pt_ofs    = ZeroExtend((va.VA32_VPNi >>+ (level * VPN32_LEVEL_BITS))<(VPN32_LEVEL_BITS-1):0>) << PTE32_LOG_SIZE
 ; pte_addr  = ptb + pt_ofs
-; pte       = SV_PTE(rawReadData(pte_addr))
-; mark_log(LOG_ADDRTR, ["translate(vaddr=0x" : PadLeft(#"0", 16, [vAddr]) : "): level=" : [level]
+; pte       = SV32_PTE(rawReadData(ZeroExtend(pte_addr))<31:0>)
+; mperm     = memPerm(pte.PTE32_PERM)
+; mark_log(LOG_ADDRTR, ["walk32(vaddr=0x" : PadLeft(#"0", 16, [&va]) : "): level=" : [level]
                         : " pt_base=0x" : PadLeft(#"0", 16, [ptb])
                         : " pt_ofs=" : [[pt_ofs]::nat]
                         : " pte_addr=0x" : PadLeft(#"0", 16, [pte_addr])
                         : " pte=0x" : PadLeft(#"0", 16, [&pte])])
-; if not pte.PTE_V
-  then { mark_log(LOG_ADDRTR, "addr_translate: invalid PTE")
+; if (not pte.PTE32_V) or (mperm.Mem_W and not mperm.Mem_R)
+  then { mark_log(LOG_ADDRTR, "walk32: invalid PTE")
        ; None
        }
-  else { if pte.PTE_T == 0 or pte.PTE_T == 1
-         then { -- ptr to next level table
+  else { if not (mperm.Mem_R or mperm.Mem_X)
+         then { -- ptr to next level
                 if level == 0
-                then { mark_log(LOG_ADDRTR, "last-level pt contains a pointer PTE!")
+                then { mark_log(LOG_ADDRTR, "last-level PTE contains a pointer!")
                      ; None
                      }
-                else walk64(vAddr, ft, ac, priv, ZeroExtend(pte.PTE_PPNi << PAGESIZE_BITS), level - 1)
+                else walk32(vaddr, ac, priv, mxr, pum,
+                            ZeroExtend(pte.PTE32_PPNi << PAGESIZE_BITS), level - 1, global or pte.PTE32_G)
               }
          else { -- leaf PTE
-                if not checkMemPermission(ft, ac, priv, pte.PTE_T)
+                if not checkMemPermission(ac, priv, mxr, pum, mperm)
                 then { mark_log(LOG_ADDRTR, "PTE permission check failure!")
                      ; None
                      }
-                else { var pte_w = pte
-                     -- update referenced and dirty bits
-                     ; old_r = pte.PTE_R
-                     ; old_d = pte.PTE_D
-                     ; pte_w.PTE_R <- true
-                     ; when ac == Write
-                       do pte_w.PTE_D <- true
-                     ; when old_r !=  pte_w.PTE_R or old_d !=  pte_w.PTE_D
-                       do rawWriteData(pte_addr, &pte_w, 8)
-                     -- compute translated address
-                     ; ppn = if level > 0
-                             then ((ZeroExtend((pte.PTE_PPNi >>+ (level * LEVEL_BITS)) << (level * LEVEL_BITS)))
-                                   || ZeroExtend(va.Sv_VPNi && ((1 << (level * LEVEL_BITS)) - 1)))
-                             else pte.PTE_PPNi
-                     ; Some(ZeroExtend(ppn : va.Sv_PgOfs), pte_w, level, isGlobal(pte.PTE_T), pte_addr)
+                else { -- compute translated address
+                       ppn = if level > 0
+                             then ((ZeroExtend((pte.PTE32_PPNi >>+ (level * PPN32_LEVEL_BITS))
+                                               << (level * PPN32_LEVEL_BITS)))
+                                   || ZeroExtend(va.VA32_VPNi && ((1 << (level * VPN32_LEVEL_BITS)) - 1)))
+                             else pte.PTE32_PPNi
+                     ; Some(ZeroExtend(ppn : va.VA32_PgOfs), pte, pte_addr, level, global or pte.PTE32_G)
                      }
               }
        }
 }
 
--- TLB
+-- returns an updated PTE for an access, if needed
+SV32_PTE option updatePTE32(pte::SV32_PTE, ac::accessType) =
+{ d_update = (ac == Write or ac == ReadWrite) and (not pte.PTE32_D)
+; a_update = not pte.PTE32_A
+; if d_update or a_update
+  then { var pte_w = pte
+       ; pte_w.PTE32_A <- true
+       ; when d_update do pte_w.PTE32_D <- true
+       ; Some(pte_w)
+       }
+  else None
+}
+
+-- 32-bit TLB
 ---------------------------------------------------------------------------
--- We maintain an internal model of a TLB.  The spec leaves the TLB
--- unspecified, but we would like to capture the semantics of SFENCE.
--- The TLB also improves simulation speed.
+-- The spec does not mention a TLB, but we would like to capture part
+-- of the semantics of SFENCE.  The TLB also improves simulation
+-- speed.
 
 -- This implementation stores the global mapping bit from the PTE in
 -- the TLB.  This causes an asymmetry between TLB lookup and TLB
@@ -1811,49 +2272,44 @@ register SV_Vaddr :: regType
 -- Each TLBEntry also stores the full PTE and its pAddr, so that it
 -- can write back the PTE when its dirty bit needs to be updated.
 
-asidType curASID() =
-    SCSR.sasid<ASID_SIZE-1:0>
+record TLB32_Entry
+{ asid_32       :: asid32
+  global_32     :: bool
+  vAddr_32      :: vaddr32      -- VPN
+  vMatchMask_32 :: vaddr32      -- matching mask for superpages
 
-record TLBEntry
-{ asid          :: asidType
-  global        :: bool
-  vAddr         :: vAddr        -- VPN
-  vMatchMask    :: vAddr        -- matching mask for superpages
+  pAddr_32      :: paddr32      -- PPN
+  vAddrMask_32  :: vaddr32      -- selection mask for superpages
 
-  pAddr         :: pAddr        -- PPN
-  vAddrMask     :: vAddr        -- selection mask for superpages
+  pte_32        :: SV32_PTE     -- for permissions and dirty bit writeback
+  pteAddr_32    :: paddr32
 
-  pte           :: SV_PTE       -- permissions and dirty bit writeback
-  pteAddr       :: pAddr
-
-  age           :: regType      -- derived from instret
+  age_32        :: regType      -- derived from cycles
 }
 
-TLBEntry mkTLBEntry(asid::asidType, global::bool, vAddr::vAddr, pAddr::pAddr,
-                    pte::SV_PTE, i::nat, pteAddr::pAddr) =
-{ var ent :: TLBEntry
-; ent.asid          <- asid
-; ent.global        <- global
-; ent.pte           <- pte
-; ent.pteAddr       <- pteAddr
-; ent.vAddrMask     <- ((1::vAddr) << ((LEVEL_BITS*i) + PAGESIZE_BITS)) - 1
-; ent.vMatchMask    <- (SignExtend('1')::vAddr) ?? ent.vAddrMask
-; ent.vAddr         <- vAddr && ent.vMatchMask
-; ent.pAddr         <- (pAddr >> (PAGESIZE_BITS + (LEVEL_BITS*i))) << (PAGESIZE_BITS + (LEVEL_BITS*i))
-; ent.age           <- c_cycles(procID)
+TLB32_Entry mkTLB32_Entry(asid::asid32, global::bool, vAddr::vaddr32, pAddr::paddr32,
+                          pte::SV32_PTE, i::nat, pteAddr::paddr32) =
+{ var ent :: TLB32_Entry
+; ent.asid_32       <- asid
+; ent.global_32     <- global
+; ent.pte_32        <- pte
+; ent.pteAddr_32    <- pteAddr
+; ent.vAddrMask_32  <- ((1::vaddr32) << ((VPN32_LEVEL_BITS*i) + PAGESIZE_BITS)) - 1
+; ent.vMatchMask_32 <- (SignExtend('1')::vaddr32) ?? ent.vAddrMask_32
+; ent.vAddr_32      <- vAddr && ent.vMatchMask_32
+; ent.pAddr_32      <- (pAddr >> (PAGESIZE_BITS + (PPN32_LEVEL_BITS*i))) << (PAGESIZE_BITS + (PPN32_LEVEL_BITS*i))
+; ent.age_32        <- c_cycles(procID)
 ; ent
 }
 
-nat  TLBEntries = 16
-type tlbIdx     = bits(4)
-type TLBMap     = tlbIdx -> TLBEntry option
+type TLB32_Map  = tlbIdx -> TLB32_Entry option
 
-(TLBEntry * tlbIdx) option lookupTLB(asid::asidType, vAddr::vAddr, tlb::TLBMap) =
+(TLB32_Entry * tlbIdx) option lookupTLB32(asid::asid32, vAddr::vaddr32, tlb::TLB32_Map) =
 { var ent = None
 ; for i in 0 .. TLBEntries - 1 do
   { match tlb([i])
-    { case Some(e) => when ent == None and (e.global or e.asid == asid)
-                           and (e.vAddr == vAddr && e.vMatchMask)
+    { case Some(e) => when ent == None and (e.global_32 or e.asid_32 == asid)
+                           and (e.vAddr_32 == vAddr && e.vMatchMask_32)
                       do ent <- Some(e, [i])
       case None    => ()
     }
@@ -1861,23 +2317,22 @@ type TLBMap     = tlbIdx -> TLBEntry option
 ; ent
 }
 
-TLBMap addToTLB(asid::asidType, vAddr::vAddr, pAddr::pAddr, pte::SV_PTE, pteAddr::pAddr,
-                i::nat, global::bool, curTLB::TLBMap) =
-{ var ent       = mkTLBEntry(asid, global, vAddr, pAddr, pte, i, pteAddr)
+TLB32_Map addToTLB32(asid::asid32, vAddr::vaddr32, pAddr::paddr32, pte::SV32_PTE, pteAddr::paddr32,
+                     i::nat, global::bool, curTLB::TLB32_Map) =
+{ var ent       = mkTLB32_Entry(asid, global, vAddr, pAddr, pte, i, pteAddr)
 ; var tlb       = curTLB
-; var oldest    = SignExtend('1')
+; var current   = SignExtend('1')
 ; var addIdx    = 0
 ; var added     = false
 ; for i in 0 .. TLBEntries - 1 do
   { match tlb([i])
-    { case Some(e)  => when e.age <+ oldest
-                       do { oldest      <- e.age
+    { case Some(e)  => when e.age_32 <+ current
+                       do { current     <- e.age_32
                           ; addIdx      <- i
                           }
-      case None     => when not added
-                       do { tlb([i])    <- Some(ent)
-                          ; added       <- true
-                          }
+      case None     => { tlb([i])    <- Some(ent)
+                       ; added       <- true
+                       }
     }
   }
 ; when not added
@@ -1885,14 +2340,14 @@ TLBMap addToTLB(asid::asidType, vAddr::vAddr, pAddr::pAddr, pte::SV_PTE, pteAddr
 ; tlb
 }
 
-TLBMap flushTLB(asid::asidType, addr::vAddr option, curTLB::TLBMap) =
+TLB32_Map flushTLB32(asid::asid32, addr::vaddr32 option, curTLB::TLB32_Map) =
 { var tlb = curTLB
 ; for i in 0 .. TLBEntries - 1 do
   { match tlb([i]), addr
-    { case Some(e), Some(va)    => when (asid == 0 or (asid == e.asid and not e.global))
-                                        and (e.vAddr == va && e.vMatchMask)
+    { case Some(e), Some(va)    => when (asid == 0 or (asid == e.asid_32 and not e.global_32))
+                                        and (e.vAddr_32 == va && e.vMatchMask_32)
                                    do tlb([i]) <- None
-      case Some(e), None        => when asid == 0 or (asid == e.asid and not e.global)
+      case Some(e), None        => when asid == 0 or (asid == e.asid_32 and not e.global_32)
                                    do tlb([i]) <- None
       case None,    _           => ()
     }
@@ -1900,41 +2355,41 @@ TLBMap flushTLB(asid::asidType, addr::vAddr option, curTLB::TLBMap) =
 ; tlb
 }
 
-declare  c_tlb  :: id -> TLBMap
+declare  c_tlb32 :: id -> TLB32_Map
 
-component TLB :: TLBMap
-{ value        = c_tlb(procID)
-  assign value = c_tlb(procID) <- value
+component TLB32 :: TLB32_Map
+{ value        = c_tlb32(procID)
+  assign value = c_tlb32(procID) <- value
 }
 
--- address translation
+-- Sv32 address translation
 
-pAddr option translate64(vAddr::regType, ft::fetchType, ac::accessType, priv::Privilege, level::nat) =
-{ asid = curASID()
-; match lookupTLB(asid, vAddr, TLB)
-  { case Some(e, idx) =>
-    { if checkMemPermission(ft, ac, priv, e.pte.PTE_T)
-      then { mark_log(LOG_ADDRTR, "TLB hit!")
+paddr32 option translate32(vAddr::vaddr32, ac::accessType, priv::Privilege, mxr::bool, pum::bool, level::nat) =
+{ asid = curAsid32()
+; match lookupTLB32(asid, vAddr, TLB32)
+  { case Some(ent, idx) =>
+    { if checkMemPermission(ac, priv, mxr, pum, memPerm(ent.pte_32.PTE32_PERM))
+      then { mark_log(LOG_ADDRTR, "TLB32 hit!")
            -- update dirty bit in page table and TLB if needed
-           ; when ac == Write and not e.pte.PTE_D
-             do { var ent = e
-                ; ent.pte.PTE_D <- true
-                ; rawWriteData(ent.pteAddr, ent.&pte, 8)
-                ; var tlb = TLB
+           ; pte_new = updatePTE32(ent.pte_32, ac)
+           ; when IsSome(pte_new)
+             do { pte = ValOf(pte_new)
+                ; rawWriteData(ZeroExtend(ent.pteAddr_32), ZeroExtend(ent.&pte_32), 4)
+                ; var tlb = TLB32
                 ; tlb([idx]) <- Some(ent)
-                ; TLB <- tlb
+                ; TLB32 <- tlb
                 }
-           ; Some(e.pAddr || (vAddr && e.vAddrMask))
+           ; Some(ent.pAddr_32 || ZeroExtend(vAddr && ent.vAddrMask_32))
            }
-      else { mark_log(LOG_ADDRTR, "TLB permission check failure")
+      else { mark_log(LOG_ADDRTR, "TLB32 permission check failure")
            ; None
            }
     }
     case None =>
-    { mark_log(LOG_ADDRTR, "TLB miss!")
-    ; match walk64(vAddr, ft, ac, priv, SCSR.sptbr, level)
-      { case Some(pAddr, pte, i, global, pteAddr)  =>
-        { TLB <- addToTLB(asid, vAddr, pAddr, pte, pteAddr, i, global, TLB)
+    { mark_log(LOG_ADDRTR, "TLB32 miss!")
+    ; match walk32(vAddr, ac, priv, mxr, pum, curPTB32(), level, false)
+      { case Some(pAddr, pte, pteAddr, i, global)  =>
+        { TLB32 <- addToTLB32(asid, vAddr, pAddr, pte, pteAddr, i, global, TLB32)
         ; Some(pAddr)
         }
         case None   => None
@@ -1943,14 +2398,263 @@ pAddr option translate64(vAddr::regType, ft::fetchType, ac::accessType, priv::Pr
   }
 }
 
-pAddr option translateAddr(vAddr::regType, ft::fetchType, ac::accessType) =
-{ priv = privilege(if MCSR.mstatus.MMPRV and ft == Data
-                   then MCSR.mstatus.MPRV1 else MCSR.mstatus.MPRV)
-; match vmType(MCSR.mstatus.VM), priv
-  { case Mbare,          _
-    or       _,    Machine  => Some(vAddr)  -- no translation
-    case Sv39,           _  => translate64(vAddr, ft, ac, priv, 2)
-    case Sv48,           _  => translate64(vAddr, ft, ac, priv, 3)
+-- Sv39 memory translation
+--------------------------
+
+nat VPN39_LEVEL_BITS  = 9
+nat PPN39_LEVEL_BITS  = 9
+nat PTE39_LOG_SIZE    = 3
+nat SV39_LEVELS       = 3
+
+type vaddr39  = bits(39)
+type paddr39  = bits(50)
+type pte39    = dword
+
+register SV39_Vaddr :: vaddr39
+{ 38-12 : VA39_VPNi    -- VPN[1,0]
+, 11-0  : VA39_PgOfs   -- page offset
+}
+
+register SV39_Paddr :: paddr39
+{ 49-12 : PA39_PPNi    -- PPN[1,0]
+, 11-0  : PA39_PgOfs   -- page offset
+}
+
+register SV39_PTE   :: pte39
+{ 47-10 : PTE39_PPNi   -- PPN[1,0]
+,     7 : PTE39_D      -- dirty
+,     6 : PTE39_A      -- accessed
+,     5 : PTE39_G      -- global
+,   4-1 : PTE39_PERM   -- permissions
+,     0 : PTE39_V      -- valid
+}
+
+paddr39 curPTB39() =
+    (ZeroExtend(sptbr64(SCSR.sptbr).PPN_64) << PAGESIZE_BITS)
+
+-- 64-bit page table walker.  This returns the physical address for
+-- the input vaddr39 as the first element of the returned tuple.  The
+-- remaining elements are for the TLB implementation: the PTE entry
+-- itself, the address of the PTE in memory (so that it can be
+-- updated) by the TLB, the level of the PTE entry, and whether the
+-- mapping is marked as a global mapping.
+
+(paddr39 * SV39_PTE * paddr39 * nat * bool) option
+walk39(vaddr::vaddr39, ac::accessType, priv::Privilege, mxr::bool, pum::bool,
+       ptb::paddr39, level::nat, global::bool) =
+{ va        = SV39_Vaddr(vaddr)
+; pt_ofs    = ZeroExtend((va.VA39_VPNi >>+ (level * VPN39_LEVEL_BITS))<(VPN39_LEVEL_BITS-1):0>) << PTE39_LOG_SIZE
+; pte_addr  = ptb + pt_ofs
+; pte       = SV39_PTE(rawReadData(ZeroExtend(pte_addr)))
+; mperm     = memPerm(pte.PTE39_PERM)
+; mark_log(LOG_ADDRTR, ["walk32(vaddr=0x" : PadLeft(#"0", 16, [&va]) : "): level=" : [level]
+                        : " pt_base=0x" : PadLeft(#"0", 16, [ptb])
+                        : " pt_ofs=" : [[pt_ofs]::nat]
+                        : " pte_addr=0x" : PadLeft(#"0", 16, [pte_addr])
+                        : " pte=0x" : PadLeft(#"0", 16, [&pte])])
+; if (not pte.PTE39_V) or (mperm.Mem_W and not mperm.Mem_R)
+  then { mark_log(LOG_ADDRTR, "walk39: invalid PTE")
+       ; None
+       }
+  else { if not (mperm.Mem_R or mperm.Mem_X)
+         then { -- ptr to next level
+                if level == 0
+                then { mark_log(LOG_ADDRTR, "last-level PTE contains a pointer!")
+                     ; None
+                     }
+                else walk39(vaddr, ac, priv, mxr, pum,
+                            ZeroExtend(pte.PTE39_PPNi << PAGESIZE_BITS), level - 1, global or pte.PTE39_G)
+              }
+         else { -- leaf PTE
+                if not checkMemPermission(ac, priv, mxr, pum, mperm)
+                then { mark_log(LOG_ADDRTR, "PTE permission check failure!")
+                     ; None
+                     }
+                else { -- compute translated address
+                       ppn = if level > 0
+                             then ((ZeroExtend((pte.PTE39_PPNi >>+ (level * PPN39_LEVEL_BITS))
+                                               << (level * PPN39_LEVEL_BITS)))
+                                   || ZeroExtend(va.VA39_VPNi && ((1 << (level * VPN39_LEVEL_BITS)) - 1)))
+                             else pte.PTE39_PPNi
+                     ; Some(ZeroExtend(ppn : va.VA39_PgOfs), pte, pte_addr, level, global or pte.PTE39_G)
+                     }
+              }
+       }
+}
+
+-- returns an updated PTE for an access, if needed
+SV39_PTE option updatePTE39(pte::SV39_PTE, ac::accessType) =
+{ d_update = (ac == Write or ac == ReadWrite) and (not pte.PTE39_D)
+; a_update = not pte.PTE39_A
+; if d_update or a_update
+  then { var pte_w = pte
+       ; pte_w.PTE39_A <- true
+       ; when d_update do pte_w.PTE39_D <- true
+       ; Some(pte_w)
+       }
+  else None
+}
+
+-- 64-bit TLB
+---------------------------------------------------------------------------
+-- The spec does not mention a TLB, but we would like to capture part
+-- of the semantics of SFENCE.  The TLB also improves simulation
+-- speed.
+
+-- This implementation stores the global mapping bit from the PTE in
+-- the TLB.  This causes an asymmetry between TLB lookup and TLB
+-- flush, due to the spec's treatment of an ASID=0 in SFENCE.VM:
+--
+-- * in TLB lookup, the global bit is used to check for a global
+--   match, and this global bit when set overrides the input ASID.
+--
+-- * in TLB flush, an input ASID of 0 overrides the global bit when
+--   checking if a TLB entry needs to be flushed.
+
+-- Each TLBEntry also stores the full PTE and its pAddr, so that it
+-- can write back the PTE when its dirty bit needs to be updated.
+
+record TLB39_Entry
+{ asid_39       :: asid64
+  global_39     :: bool
+  vAddr_39      :: vaddr39      -- VPN
+  vMatchMask_39 :: vaddr39      -- matching mask for superpages
+
+  pAddr_39      :: paddr39      -- PPN
+  vAddrMask_39  :: vaddr39      -- selection mask for superpages
+
+  pte_39        :: SV39_PTE     -- for permissions and dirty bit writeback
+  pteAddr_39    :: paddr39
+
+  age_39        :: regType      -- derived from cycles
+}
+
+TLB39_Entry mkTLB39_Entry(asid::asid64, global::bool, vAddr::vaddr39, pAddr::paddr39,
+                          pte::SV39_PTE, i::nat, pteAddr::paddr39) =
+{ var ent :: TLB39_Entry
+; ent.asid_39       <- asid
+; ent.global_39     <- global
+; ent.pte_39        <- pte
+; ent.pteAddr_39    <- pteAddr
+; ent.vAddrMask_39  <- ((1::vaddr39) << ((VPN39_LEVEL_BITS*i) + PAGESIZE_BITS)) - 1
+; ent.vMatchMask_39 <- (SignExtend('1')::vaddr39) ?? ent.vAddrMask_39
+; ent.vAddr_39      <- vAddr && ent.vMatchMask_39
+; ent.pAddr_39      <- (pAddr >> (PAGESIZE_BITS + (PPN39_LEVEL_BITS*i))) << (PAGESIZE_BITS + (PPN39_LEVEL_BITS*i))
+; ent.age_39        <- c_cycles(procID)
+; ent
+}
+
+type TLB39_Map  = tlbIdx -> TLB39_Entry option
+
+(TLB39_Entry * tlbIdx) option lookupTLB39(asid::asid64, vAddr::vaddr39, tlb::TLB39_Map) =
+{ var ent = None
+; for i in 0 .. TLBEntries - 1 do
+  { match tlb([i])
+    { case Some(e) => when ent == None and (e.global_39 or e.asid_39 == asid)
+                           and (e.vAddr_39 == vAddr && e.vMatchMask_39)
+                      do ent <- Some(e, [i])
+      case None    => ()
+    }
+  }
+; ent
+}
+
+TLB39_Map addToTLB39(asid::asid64, vAddr::vaddr39, pAddr::paddr39, pte::SV39_PTE, pteAddr::paddr39,
+                     i::nat, global::bool, curTLB::TLB39_Map) =
+{ var ent       = mkTLB39_Entry(asid, global, vAddr, pAddr, pte, i, pteAddr)
+; var tlb       = curTLB
+; var current   = SignExtend('1')
+; var addIdx    = 0
+; var added     = false
+; for i in 0 .. TLBEntries - 1 do
+  { match tlb([i])
+    { case Some(e)  => when e.age_39 <+ current
+                       do { current     <- e.age_39
+                          ; addIdx      <- i
+                          }
+      case None     => { tlb([i])    <- Some(ent)
+                       ; added       <- true
+                       }
+    }
+  }
+; when not added
+  do tlb([addIdx]) <- Some(ent)
+; tlb
+}
+
+TLB39_Map flushTLB39(asid::asid64, addr::vaddr39 option, curTLB::TLB39_Map) =
+{ var tlb = curTLB
+; for i in 0 .. TLBEntries - 1 do
+  { match tlb([i]), addr
+    { case Some(e), Some(va)    => when (asid == 0 or (asid == e.asid_39 and not e.global_39))
+                                        and (e.vAddr_39 == va && e.vMatchMask_39)
+                                   do tlb([i]) <- None
+      case Some(e), None        => when asid == 0 or (asid == e.asid_39 and not e.global_39)
+                                   do tlb([i]) <- None
+      case None,    _           => ()
+    }
+  }
+; tlb
+}
+
+declare  c_tlb39 :: id -> TLB39_Map
+
+component TLB39 :: TLB39_Map
+{ value        = c_tlb39(procID)
+  assign value = c_tlb39(procID) <- value
+}
+
+-- Sv39 address translation
+
+paddr39 option translate39(vAddr::vaddr39, ac::accessType, priv::Privilege, mxr::bool, pum::bool, level::nat) =
+{ asid = curAsid64()
+; match lookupTLB39(asid, vAddr, TLB39)
+  { case Some(ent, idx) =>
+    { if checkMemPermission(ac, priv, mxr, pum, memPerm(ent.pte_39.PTE39_PERM))
+      then { mark_log(LOG_ADDRTR, "TLB39 hit!")
+           -- update dirty bit in page table and TLB if needed
+           ; pte_new = updatePTE39(ent.pte_39, ac)
+           ; when IsSome(pte_new)
+             do { pte = ValOf(pte_new)
+                ; rawWriteData(ZeroExtend(ent.pteAddr_39), ZeroExtend(ent.&pte_39), 8)
+                ; var tlb = TLB39
+                ; tlb([idx]) <- Some(ent)
+                ; TLB39 <- tlb
+                }
+           ; Some(ent.pAddr_39 || ZeroExtend(vAddr && ent.vAddrMask_39))
+           }
+      else { mark_log(LOG_ADDRTR, "TLB39 permission check failure")
+           ; None
+           }
+    }
+    case None =>
+    { mark_log(LOG_ADDRTR, "TLB39 miss!")
+    ; match walk39(vAddr, ac, priv, mxr, pum, curPTB39(), level, false)
+      { case Some(pAddr, pte, pteAddr, i, global)  =>
+        { TLB39 <- addToTLB39(asid, vAddr, pAddr, pte, pteAddr, i, global, TLB39)
+        ; Some(pAddr)
+        }
+        case None   => None
+      }
+    }
+  }
+}
+
+-- address translation dispatcher
+
+pAddr option translateAddr(vAddr::regType, ac::accessType, ft::fetchType) =
+{ priv = match ft
+         { case Instruction => curPrivilege
+           case Data        => if MCSR.mstatus.M_MPRV
+                               then privilege(MCSR.mstatus.M_MPP)
+                               else curPrivilege
+         }
+; mxr  = MCSR.mstatus.M_MXR
+; pum  = MCSR.mstatus.M_PUM
+; match vmType(MCSR.mstatus.M_VM), priv
+  { case Mbare, _
+    or       _,    Machine
+    or       _, Hypervisor  => Some(vAddr)  -- no translation
 
     {- Comment out base/bound modes since there are no tests for them.
 
@@ -1958,6 +2662,17 @@ pAddr option translateAddr(vAddr::regType, ft::fetchType, ac::accessType) =
     or   Mbbid, Machine     => Some(vAddr)
 
      -}
+
+    case Sv32,  _           => match translate32(vAddr<31:0>, ac, priv, mxr, pum, SV32_LEVELS)
+                               { case Some(pa32)  => Some(ZeroExtend(pa32))
+                                 case None        => None
+                               }
+    case Sv39,  _           => match translate39(vAddr<38:0>, ac, priv, mxr, pum, SV39_LEVELS)
+                               { case Some(pa39)  => Some(ZeroExtend(pa39))
+                                 case None        => None
+                               }
+
+--  case Sv48,  _           => translate64(vAddr, ft, ac, priv, 3)
 
     case     _,          _  => None
   }
@@ -1975,8 +2690,8 @@ bool matchLoadReservation(vAddr::vAddr) =
 ---------------------------------------------------------------------------
 
 unit branchTo(newPC::regType) =
-{ NextFetch  <- Some(BranchTo(newPC))
-; Delta.addr <- Some(newPC)
+{ NextFetch             <- Some(BranchTo(newPC))
+; Delta.addr            <- Some(newPC)
 }
 
 unit noBranch(nextPC::regType) =
@@ -1999,7 +2714,7 @@ define ArithI > ADDI(rd::reg, rs1::reg, imm::imm12) =
 -----------------------------------
 define ArithI > ADDIW(rd::reg, rs1::reg, imm::imm12) =
     if in32BitMode()
-    then signalException(Illegal_Instr)
+    then signalException(E_Illegal_Instr)
     else { temp = GPR(rs1) + SignExtend(imm)
          ; writeRD(rd, SignExtend(temp<31:0>))
          }
@@ -2044,7 +2759,7 @@ define ArithI > XORI(rd::reg, rs1::reg, imm::imm12) =
 -----------------------------------
 define Shift > SLLI(rd::reg, rs1::reg, imm::bits(6)) =
     if in32BitMode() and imm<5>
-    then signalException(Illegal_Instr)
+    then signalException(E_Illegal_Instr)
     else writeRD(rd, GPR(rs1) << [imm])
 
 -----------------------------------
@@ -2052,7 +2767,7 @@ define Shift > SLLI(rd::reg, rs1::reg, imm::bits(6)) =
 -----------------------------------
 define Shift > SRLI(rd::reg, rs1::reg, imm::bits(6)) =
     if in32BitMode() and imm<5>
-    then signalException(Illegal_Instr)
+    then signalException(E_Illegal_Instr)
     else { v1 = if in32BitMode() then ZeroExtend(GPR(rs1)<31:0>) else GPR(rs1)
          ; writeRD(rd, v1 >>+ [imm])
          }
@@ -2062,7 +2777,7 @@ define Shift > SRLI(rd::reg, rs1::reg, imm::bits(6)) =
 -----------------------------------
 define Shift > SRAI(rd::reg, rs1::reg, imm::bits(6)) =
     if in32BitMode() and imm<5>
-    then signalException(Illegal_Instr)
+    then signalException(E_Illegal_Instr)
     else { v1 = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else GPR(rs1)
          ; writeRD(rd, v1 >> [imm])
          }
@@ -2072,7 +2787,7 @@ define Shift > SRAI(rd::reg, rs1::reg, imm::bits(6)) =
 -----------------------------------
 define Shift > SLLIW(rd::reg, rs1::reg, imm::bits(5)) =
     if in32BitMode()
-    then signalException(Illegal_Instr)
+    then signalException(E_Illegal_Instr)
     else writeRD(rd, SignExtend(GPR(rs1)<31:0> << [imm]))
 
 -----------------------------------
@@ -2080,7 +2795,7 @@ define Shift > SLLIW(rd::reg, rs1::reg, imm::bits(5)) =
 -----------------------------------
 define Shift > SRLIW(rd::reg, rs1::reg, imm::bits(5)) =
     if in32BitMode()
-    then signalException(Illegal_Instr)
+    then signalException(E_Illegal_Instr)
     else writeRD(rd, SignExtend(GPR(rs1)<31:0> >>+ [imm]))
 
 -----------------------------------
@@ -2088,7 +2803,7 @@ define Shift > SRLIW(rd::reg, rs1::reg, imm::bits(5)) =
 -----------------------------------
 define Shift > SRAIW(rd::reg, rs1::reg, imm::bits(5)) =
     if in32BitMode()
-    then signalException(Illegal_Instr)
+    then signalException(E_Illegal_Instr)
     else writeRD(rd, SignExtend(GPR(rs1)<31:0> >> [imm]))
 
 -----------------------------------
@@ -2117,7 +2832,7 @@ define ArithR > ADD(rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define ArithR > ADDW(rd::reg, rs1::reg, rs2::reg) =
     if in32BitMode()
-    then signalException(Illegal_Instr)
+    then signalException(E_Illegal_Instr)
     else writeRD(rd, SignExtend(GPR(rs1)<31:0> + GPR(rs2)<31:0>))
 
 -----------------------------------
@@ -2131,7 +2846,7 @@ define ArithR > SUB(rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define ArithR > SUBW(rd::reg, rs1::reg, rs2::reg) =
     if in32BitMode()
-    then signalException(Illegal_Instr)
+    then signalException(E_Illegal_Instr)
     else writeRD(rd, SignExtend(GPR(rs1)<31:0> - GPR(rs2)<31:0>))
 
 -----------------------------------
@@ -2183,7 +2898,7 @@ define Shift > SLL(rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define Shift > SLLW(rd::reg, rs1::reg, rs2::reg) =
     if in32BitMode()
-    then signalException(Illegal_Instr)
+    then signalException(E_Illegal_Instr)
     else writeRD(rd, SignExtend(GPR(rs1)<31:0> << ZeroExtend(GPR(rs2)<4:0>)))
 
 -----------------------------------
@@ -2199,7 +2914,7 @@ define Shift > SRL(rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define Shift > SRLW(rd::reg, rs1::reg, rs2::reg) =
     if in32BitMode()
-    then signalException(Illegal_Instr)
+    then signalException(E_Illegal_Instr)
     else writeRD(rd, SignExtend(GPR(rs1)<31:0> >>+ ZeroExtend(GPR(rs2)<4:0>)))
 
 -----------------------------------
@@ -2215,7 +2930,7 @@ define Shift > SRA(rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define Shift > SRAW(rd::reg, rs1::reg, rs2::reg) =
     if in32BitMode()
-    then signalException(Illegal_Instr)
+    then signalException(E_Illegal_Instr)
     else writeRD(rd, SignExtend(GPR(rs1)<31:0> >> ZeroExtend(GPR(rs2)<4:0>)))
 
 ---------------------------------------------------------------------------
@@ -2266,7 +2981,7 @@ define MulDiv > MULHSU(rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define MulDiv > MULW(rd::reg, rs1::reg, rs2::reg) =
     if in32BitMode()
-    then signalException(Illegal_Instr)
+    then signalException(E_Illegal_Instr)
     else { prod`64 = SignExtend(GPR(rs1)<31:0> * GPR(rs2)<31:0>)
          ; writeRD(rd, SignExtend(prod<31:0>))
          }
@@ -2321,7 +3036,7 @@ define MulDiv > REMU(rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define MulDiv > DIVW(rd::reg, rs1::reg, rs2::reg) =
     if in32BitMode()
-    then signalException(Illegal_Instr)
+    then signalException(E_Illegal_Instr)
     else { s1 = GPR(rs1)<31:0>
          ; s2 = GPR(rs2)<31:0>
          ; if s2 == 0x0
@@ -2339,7 +3054,7 @@ define MulDiv > DIVW(rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define MulDiv > REMW(rd::reg, rs1::reg, rs2::reg) =
     if in32BitMode()
-    then signalException(Illegal_Instr)
+    then signalException(E_Illegal_Instr)
     else { s1 = GPR(rs1)<31:0>
          ; s2 = GPR(rs2)<31:0>
          ; if s2 == 0x0
@@ -2352,7 +3067,7 @@ define MulDiv > REMW(rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define MulDiv > DIVUW(rd::reg, rs1::reg, rs2::reg) =
     if in32BitMode()
-    then signalException(Illegal_Instr)
+    then signalException(E_Illegal_Instr)
     else { s1 = GPR(rs1)<31:0>
          ; s2 = GPR(rs2)<31:0>
          ; if s2 == 0x0
@@ -2365,7 +3080,7 @@ define MulDiv > DIVUW(rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define MulDiv > REMUW(rd::reg, rs1::reg, rs2::reg) =
     if in32BitMode()
-    then signalException(Illegal_Instr)
+    then signalException(E_Illegal_Instr)
     else { s1 = GPR(rs1)<31:0>
          ; s2 = GPR(rs2)<31:0>
          ; if s2 == 0x0
@@ -2385,7 +3100,7 @@ define MulDiv > REMUW(rd::reg, rs1::reg, rs2::reg) =
 define Branch > JAL(rd::reg, imm::imm20) =
 { addr = PC + SignExtend(imm) << 1
 ; if addr<1:0> != 0
-  then signalAddressException(Fetch_Misaligned, addr)
+  then signalAddressException(E_Fetch_Misaligned, addr)
   else { writeRD(rd, PC + 4)
        ; branchTo(addr)
        }
@@ -2397,7 +3112,7 @@ define Branch > JAL(rd::reg, imm::imm20) =
 define Branch > JALR(rd::reg, rs1::reg, imm::imm12) =
 { addr = (GPR(rs1) + SignExtend(imm)) && SignExtend('10')
 ; if addr<1:0> != 0
-  then signalAddressException(Fetch_Misaligned, addr)
+  then signalAddressException(E_Fetch_Misaligned, addr)
   else { writeRD(rd, PC + 4)
        ; branchTo(addr)
        }
@@ -2480,12 +3195,12 @@ define Branch > BGEU(rs1::reg, rs2::reg, offs::imm12) =
 -----------------------------------
 define Load > LW(rd::reg, rs1::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
-; match translateAddr(vAddr, Data, Read)
+; match translateAddr(vAddr, Read, Data)
   { case Some(pAddr) => { val       = SignExtend(rawReadData(pAddr)<31:0>)
                         ; GPR(rd)  <- val
                         ; recordLoad(vAddr, val)
                         }
-    case None        => signalAddressException(Load_Fault, vAddr)
+    case None        => signalAddressException(E_Load_Fault, vAddr)
   }
 }
 
@@ -2494,14 +3209,14 @@ define Load > LW(rd::reg, rs1::reg, offs::imm12) =
 -----------------------------------
 define Load > LWU(rd::reg, rs1::reg, offs::imm12) =
 { if in32BitMode()
-  then signalException(Illegal_Instr)
+  then signalException(E_Illegal_Instr)
   else { vAddr = GPR(rs1) + SignExtend(offs)
-       ; match translateAddr(vAddr, Data, Read)
+       ; match translateAddr(vAddr, Read, Data)
          { case Some(pAddr) => { val        = ZeroExtend(rawReadData(pAddr)<31:0>)
                                ; GPR(rd)   <- val
                                ; recordLoad(vAddr, val)
                                }
-           case None        => signalAddressException(Load_Fault, vAddr)
+           case None        => signalAddressException(E_Load_Fault, vAddr)
          }
        }
 }
@@ -2511,12 +3226,12 @@ define Load > LWU(rd::reg, rs1::reg, offs::imm12) =
 -----------------------------------
 define Load > LH(rd::reg, rs1::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
-; match translateAddr(vAddr, Data, Read)
+; match translateAddr(vAddr, Read, Data)
   { case Some(pAddr) => { val       = SignExtend(rawReadData(pAddr)<15:0>)
                         ; GPR(rd)  <- val
                         ; recordLoad(vAddr, val)
                         }
-    case None        => signalAddressException(Load_Fault, vAddr)
+    case None        => signalAddressException(E_Load_Fault, vAddr)
   }
 }
 
@@ -2525,12 +3240,12 @@ define Load > LH(rd::reg, rs1::reg, offs::imm12) =
 -----------------------------------
 define Load > LHU(rd::reg, rs1::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
-; match translateAddr(vAddr, Data, Read)
+; match translateAddr(vAddr, Read, Data)
   { case Some(pAddr) => { val       = ZeroExtend(rawReadData(pAddr)<15:0>)
                         ; GPR(rd)  <- val
                         ; recordLoad(vAddr, val)
                         }
-    case None        => signalAddressException(Load_Fault, vAddr)
+    case None        => signalAddressException(E_Load_Fault, vAddr)
   }
 }
 
@@ -2539,12 +3254,12 @@ define Load > LHU(rd::reg, rs1::reg, offs::imm12) =
 -----------------------------------
 define Load > LB(rd::reg, rs1::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
-; match translateAddr(vAddr, Data, Read)
+; match translateAddr(vAddr, Read, Data)
   { case Some(pAddr) => { val       = SignExtend(rawReadData(pAddr)<7:0>)
                         ; GPR(rd)  <- val
                         ; recordLoad(vAddr, val)
                         }
-    case None        => signalAddressException(Load_Fault, vAddr)
+    case None        => signalAddressException(E_Load_Fault, vAddr)
   }
 }
 
@@ -2553,12 +3268,12 @@ define Load > LB(rd::reg, rs1::reg, offs::imm12) =
 -----------------------------------
 define Load > LBU(rd::reg, rs1::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
-; match translateAddr(vAddr, Data, Read)
+; match translateAddr(vAddr, Read, Data)
   { case Some(pAddr) => { val       = ZeroExtend(rawReadData(pAddr)<7:0>)
                         ; GPR(rd)  <- val
                         ; recordLoad(vAddr, val)
                         }
-    case None        => signalAddressException(Load_Fault, vAddr)
+    case None        => signalAddressException(E_Load_Fault, vAddr)
   }
 }
 
@@ -2567,14 +3282,14 @@ define Load > LBU(rd::reg, rs1::reg, offs::imm12) =
 -----------------------------------
 define Load > LD(rd::reg, rs1::reg, offs::imm12) =
     if in32BitMode()
-    then signalException(Illegal_Instr)
+    then signalException(E_Illegal_Instr)
     else { vAddr = GPR(rs1) + SignExtend(offs)
-         ; match translateAddr(vAddr, Data, Read)
+         ; match translateAddr(vAddr, Read, Data)
            { case Some(pAddr) => { val      = rawReadData(pAddr)
                                  ; GPR(rd) <- val
                                  ; recordLoad(vAddr, val)
                                  }
-             case None        => signalAddressException(Load_Fault, vAddr)
+             case None        => signalAddressException(E_Load_Fault, vAddr)
            }
          }
 
@@ -2583,12 +3298,12 @@ define Load > LD(rd::reg, rs1::reg, offs::imm12) =
 -----------------------------------
 define Store > SW(rs1::reg, rs2::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
-; match translateAddr(vAddr, Data, Write)
+; match translateAddr(vAddr, Write, Data)
   { case Some(pAddr) => { data = GPR(rs2)
                         ; rawWriteData(pAddr, data, 4)
                         ; recordStore(vAddr, data, 4)
                         }
-    case None        => signalAddressException(Store_AMO_Fault, vAddr)
+    case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
   }
 }
 
@@ -2597,12 +3312,12 @@ define Store > SW(rs1::reg, rs2::reg, offs::imm12) =
 -----------------------------------
 define Store > SH(rs1::reg, rs2::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
-; match translateAddr(vAddr, Data, Write)
+; match translateAddr(vAddr, Write, Data)
   { case Some(pAddr) => { data = GPR(rs2)
                         ; rawWriteData(pAddr, data, 2)
                         ; recordStore(vAddr, data, 2)
                         }
-    case None        => signalAddressException(Store_AMO_Fault, vAddr)
+    case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
   }
 }
 
@@ -2611,12 +3326,12 @@ define Store > SH(rs1::reg, rs2::reg, offs::imm12) =
 -----------------------------------
 define Store > SB(rs1::reg, rs2::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
-; match translateAddr(vAddr, Data, Write)
+; match translateAddr(vAddr, Write, Data)
   { case Some(pAddr) => { data = GPR(rs2)
                         ; rawWriteData(pAddr, data, 1)
                         ; recordStore(vAddr, data, 1)
                         }
-    case None        => signalAddressException(Store_AMO_Fault, vAddr)
+    case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
   }
 }
 
@@ -2625,14 +3340,14 @@ define Store > SB(rs1::reg, rs2::reg, offs::imm12) =
 -----------------------------------
 define Store > SD(rs1::reg, rs2::reg, offs::imm12) =
     if in32BitMode()
-    then signalException(Illegal_Instr)
+    then signalException(E_Illegal_Instr)
     else { vAddr = GPR(rs1) + SignExtend(offs)
-         ; match translateAddr(vAddr, Data, Write)
+         ; match translateAddr(vAddr, Write, Data)
            { case Some(pAddr) => { data = GPR(rs2)
                                  ; rawWriteData(pAddr, data, 8)
                                  ; recordStore(vAddr, data, 8)
                                  }
-             case None        => signalAddressException(Store_AMO_Fault, vAddr)
+             case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
            }
          }
 
@@ -2658,12 +3373,12 @@ define FENCE_I(rd::reg, rs1::reg, imm::imm12) = nothing
 define AMO > LR_W(aq::amo, rl::amo, rd::reg, rs1::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<1:0> != 0
-  then signalAddressException(AMO_Misaligned, vAddr)
-  else match translateAddr(vAddr, Data, Read)
+  then signalAddressException(E_AMO_Misaligned, vAddr)
+  else match translateAddr(vAddr, Read, Data)
        { case Some(pAddr) => { writeRD(rd, SignExtend(rawReadData(pAddr)<31:0>))
                              ; ReserveLoad  <- Some(vAddr)
                              }
-         case None        => signalAddressException(Load_Fault, vAddr)
+         case None        => signalAddressException(E_Load_Fault, vAddr)
        }
 }
 
@@ -2672,15 +3387,15 @@ define AMO > LR_W(aq::amo, rl::amo, rd::reg, rs1::reg) =
 -----------------------------------
 define AMO > LR_D(aq::amo, rl::amo, rd::reg, rs1::reg) =
     if in32BitMode()
-    then signalException(Illegal_Instr)
+    then signalException(E_Illegal_Instr)
     else { vAddr = GPR(rs1)
          ; if vAddr<2:0> != 0
-           then signalAddressException(AMO_Misaligned, vAddr)
-           else match translateAddr(vAddr, Data, Read)
+           then signalAddressException(E_AMO_Misaligned, vAddr)
+           else match translateAddr(vAddr, Read, Data)
                 { case Some(pAddr) => { writeRD(rd, rawReadData(pAddr))
                                       ; ReserveLoad <- Some(vAddr)
                                       }
-                  case None        => signalAddressException(Load_Fault, vAddr)
+                  case None        => signalAddressException(E_Load_Fault, vAddr)
                 }
          }
 
@@ -2690,17 +3405,17 @@ define AMO > LR_D(aq::amo, rl::amo, rd::reg, rs1::reg) =
 define AMO > SC_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<1:0> != 0
-  then signalAddressException(AMO_Misaligned, vAddr)
+  then signalAddressException(E_AMO_Misaligned, vAddr)
   else if not matchLoadReservation(vAddr)
        then writeRD(rd, 1)
-       else match translateAddr(vAddr, Data, Read)
+       else match translateAddr(vAddr, Write, Data)
             { case Some(pAddr) => { data = GPR(rs2)
                                   ; rawWriteData(pAddr, data, 4)
                                   ; recordStore(vAddr, data, 4)
                                   ; writeRD(rd, 0)
                                   ; ReserveLoad  <- None
                                   }
-              case None        => signalAddressException(Store_AMO_Fault, vAddr)
+              case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
             }
 }
 
@@ -2709,20 +3424,20 @@ define AMO > SC_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define AMO > SC_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
     if in32BitMode()
-    then signalException(Illegal_Instr)
+    then signalException(E_Illegal_Instr)
     else { vAddr = GPR(rs1)
          ; if vAddr<2:0> != 0
-           then signalAddressException(AMO_Misaligned, vAddr)
+           then signalAddressException(E_AMO_Misaligned, vAddr)
            else if not matchLoadReservation(vAddr)
                 then writeRD(rd, 1)
-                else match translateAddr(vAddr, Data, Read)
+                else match translateAddr(vAddr, Write, Data)
                      { case Some(pAddr) => { data = GPR(rs2)
                                            ; rawWriteData(pAddr, data, 4)
                                            ; recordStore(vAddr, data, 4)
                                            ; writeRD(rd, 0)
                                            ; ReserveLoad  <- None
                                            }
-                       case None        => signalAddressException(Store_AMO_Fault, vAddr)
+                       case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
                      }
          }
 
@@ -2732,8 +3447,8 @@ define AMO > SC_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 define AMO > AMOSWAP_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<1:0> != 0
-  then signalAddressException(AMO_Misaligned, vAddr)
-  else match translateAddr(vAddr, Data, Write)
+  then signalAddressException(E_AMO_Misaligned, vAddr)
+  else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
                              ; data = GPR(rs2)
                              ; GPR(rd) <- memv
@@ -2741,7 +3456,7 @@ define AMO > AMOSWAP_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; recordLoad(vAddr, memv)
                              ; recordStore(vAddr, data, 4)
                              }
-         case None        => signalAddressException(Store_AMO_Fault, vAddr)
+         case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
 }
 
@@ -2751,8 +3466,8 @@ define AMO > AMOSWAP_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 define AMO > AMOSWAP_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<2:0> != 0
-  then signalAddressException(AMO_Misaligned, vAddr)
-  else match translateAddr(vAddr, Data, Write)
+  then signalAddressException(E_AMO_Misaligned, vAddr)
+  else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = rawReadData(pAddr)
                              ; data = GPR(rs2)
                              ; GPR(rd) <- memv
@@ -2760,7 +3475,7 @@ define AMO > AMOSWAP_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; recordLoad(vAddr, memv)
                              ; recordStore(vAddr, data, 8)
                              }
-         case None        => signalAddressException(Store_AMO_Fault, vAddr)
+         case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
 }
 
@@ -2770,8 +3485,8 @@ define AMO > AMOSWAP_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 define AMO > AMOADD_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<1:0> != 0
-  then signalAddressException(AMO_Misaligned, vAddr)
-  else match translateAddr(vAddr, Data, Write)
+  then signalAddressException(E_AMO_Misaligned, vAddr)
+  else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
                              ; data = GPR(rs2)
                              ; GPR(rd) <- memv
@@ -2780,7 +3495,7 @@ define AMO > AMOADD_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; recordLoad(vAddr, memv)
                              ; recordStore(vAddr, val, 4)
                              }
-         case None        => signalAddressException(Store_AMO_Fault, vAddr)
+         case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
 }
 
@@ -2790,8 +3505,8 @@ define AMO > AMOADD_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 define AMO > AMOADD_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<2:0> != 0
-  then signalAddressException(AMO_Misaligned, vAddr)
-  else match translateAddr(vAddr, Data, Write)
+  then signalAddressException(E_AMO_Misaligned, vAddr)
+  else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = rawReadData(pAddr)
                              ; data = GPR(rs2)
                              ; GPR(rd) <- memv
@@ -2800,7 +3515,7 @@ define AMO > AMOADD_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; recordLoad(vAddr, memv)
                              ; recordStore(vAddr, val, 8)
                              }
-         case None        => signalAddressException(Store_AMO_Fault, vAddr)
+         case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
 }
 
@@ -2810,8 +3525,8 @@ define AMO > AMOADD_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 define AMO > AMOXOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<1:0> != 0
-  then signalAddressException(AMO_Misaligned, vAddr)
-  else match translateAddr(vAddr, Data, Write)
+  then signalAddressException(E_AMO_Misaligned, vAddr)
+  else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
                              ; data = GPR(rs2)
                              ; GPR(rd) <- memv
@@ -2820,7 +3535,7 @@ define AMO > AMOXOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; recordLoad(vAddr, memv)
                              ; recordStore(vAddr, val, 4)
                              }
-         case None        => signalAddressException(Store_AMO_Fault, vAddr)
+         case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
 }
 
@@ -2830,8 +3545,8 @@ define AMO > AMOXOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 define AMO > AMOXOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<2:0> != 0
-  then signalAddressException(AMO_Misaligned, vAddr)
-  else match translateAddr(vAddr, Data, Write)
+  then signalAddressException(E_AMO_Misaligned, vAddr)
+  else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = rawReadData(pAddr)
                              ; data = GPR(rs2)
                              ; GPR(rd) <- memv
@@ -2840,7 +3555,7 @@ define AMO > AMOXOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; recordLoad(vAddr, memv)
                              ; recordStore(vAddr, val, 8)
                              }
-         case None        => signalAddressException(Store_AMO_Fault, vAddr)
+         case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
 }
 
@@ -2850,8 +3565,8 @@ define AMO > AMOXOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 define AMO > AMOAND_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<1:0> != 0
-  then signalAddressException(AMO_Misaligned, vAddr)
-  else match translateAddr(vAddr, Data, Write)
+  then signalAddressException(E_AMO_Misaligned, vAddr)
+  else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
                              ; data = GPR(rs2)
                              ; GPR(rd) <- memv
@@ -2860,7 +3575,7 @@ define AMO > AMOAND_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; recordLoad(vAddr, memv)
                              ; recordStore(vAddr, val, 4)
                              }
-         case None        => signalAddressException(Store_AMO_Fault, vAddr)
+         case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
 }
 
@@ -2870,8 +3585,8 @@ define AMO > AMOAND_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 define AMO > AMOAND_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<2:0> != 0
-  then signalAddressException(AMO_Misaligned, vAddr)
-  else match translateAddr(vAddr, Data, Write)
+  then signalAddressException(E_AMO_Misaligned, vAddr)
+  else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = rawReadData(pAddr)
                              ; data = GPR(rs2)
                              ; GPR(rd) <- memv
@@ -2880,7 +3595,7 @@ define AMO > AMOAND_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; recordLoad(vAddr, memv)
                              ; recordStore(vAddr, val, 8)
                              }
-         case None        => signalAddressException(Store_AMO_Fault, vAddr)
+         case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
 }
 
@@ -2890,8 +3605,8 @@ define AMO > AMOAND_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 define AMO > AMOOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<1:0> != 0
-  then signalAddressException(AMO_Misaligned, vAddr)
-  else match translateAddr(vAddr, Data, Write)
+  then signalAddressException(E_AMO_Misaligned, vAddr)
+  else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
                              ; data = GPR(rs2)
                              ; GPR(rd) <- memv
@@ -2900,7 +3615,7 @@ define AMO > AMOOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; recordLoad(vAddr, memv)
                              ; recordStore(vAddr, val, 4)
                              }
-         case None        => signalAddressException(Store_AMO_Fault, vAddr)
+         case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
 }
 
@@ -2910,8 +3625,8 @@ define AMO > AMOOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 define AMO > AMOOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<2:0> != 0
-  then signalAddressException(AMO_Misaligned, vAddr)
-  else match translateAddr(vAddr, Data, Write)
+  then signalAddressException(E_AMO_Misaligned, vAddr)
+  else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = rawReadData(pAddr)
                              ; data = GPR(rs2)
                              ; GPR(rd) <- memv
@@ -2920,7 +3635,7 @@ define AMO > AMOOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; recordLoad(vAddr, memv)
                              ; recordStore(vAddr, val, 8)
                              }
-         case None        => signalAddressException(Store_AMO_Fault, vAddr)
+         case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
 }
 
@@ -2930,8 +3645,8 @@ define AMO > AMOOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 define AMO > AMOMIN_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<1:0> != 0
-  then signalAddressException(AMO_Misaligned, vAddr)
-  else match translateAddr(vAddr, Data, Write)
+  then signalAddressException(E_AMO_Misaligned, vAddr)
+  else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
                              ; data = GPR(rs2)
                              ; GPR(rd) <- memv
@@ -2940,7 +3655,7 @@ define AMO > AMOMIN_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; recordLoad(vAddr, memv)
                              ; recordStore(vAddr, val, 4)
                              }
-         case None        => signalAddressException(Store_AMO_Fault, vAddr)
+         case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
 }
 
@@ -2950,8 +3665,8 @@ define AMO > AMOMIN_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 define AMO > AMOMIN_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<2:0> != 0
-  then signalAddressException(AMO_Misaligned, vAddr)
-  else match translateAddr(vAddr, Data, Write)
+  then signalAddressException(E_AMO_Misaligned, vAddr)
+  else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = rawReadData(pAddr)
                              ; data = GPR(rs2)
                              ; GPR(rd) <- memv
@@ -2960,7 +3675,7 @@ define AMO > AMOMIN_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; recordLoad(vAddr, memv)
                              ; recordStore(vAddr, val, 8)
                              }
-         case None        => signalAddressException(Store_AMO_Fault, vAddr)
+         case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
 }
 
@@ -2970,8 +3685,8 @@ define AMO > AMOMIN_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 define AMO > AMOMAX_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<1:0> != 0
-  then signalAddressException(AMO_Misaligned, vAddr)
-  else match translateAddr(vAddr, Data, Write)
+  then signalAddressException(E_AMO_Misaligned, vAddr)
+  else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
                              ; data = GPR(rs2)
                              ; GPR(rd) <- memv
@@ -2980,7 +3695,7 @@ define AMO > AMOMAX_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; recordLoad(vAddr, memv)
                              ; recordStore(vAddr, val, 4)
                              }
-         case None        => signalAddressException(Store_AMO_Fault, vAddr)
+         case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
 }
 
@@ -2990,8 +3705,8 @@ define AMO > AMOMAX_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 define AMO > AMOMAX_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<2:0> != 0
-  then signalAddressException(AMO_Misaligned, vAddr)
-  else match translateAddr(vAddr, Data, Write)
+  then signalAddressException(E_AMO_Misaligned, vAddr)
+  else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = rawReadData(pAddr)
                              ; data = GPR(rs2)
                              ; GPR(rd) <- memv
@@ -3000,7 +3715,7 @@ define AMO > AMOMAX_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; recordLoad(vAddr, memv)
                              ; recordStore(vAddr, val, 8)
                              }
-         case None        => signalAddressException(Store_AMO_Fault, vAddr)
+         case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
 }
 
@@ -3010,8 +3725,8 @@ define AMO > AMOMAX_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 define AMO > AMOMINU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<1:0> != 0
-  then signalAddressException(AMO_Misaligned, vAddr)
-  else match translateAddr(vAddr, Data, Write)
+  then signalAddressException(E_AMO_Misaligned, vAddr)
+  else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
                              ; data = GPR(rs2)
                              ; GPR(rd) <- memv
@@ -3020,7 +3735,7 @@ define AMO > AMOMINU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; recordLoad(vAddr, memv)
                              ; recordStore(vAddr, val, 4)
                              }
-         case None        => signalAddressException(Store_AMO_Fault, vAddr)
+         case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
 }
 
@@ -3030,8 +3745,8 @@ define AMO > AMOMINU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 define AMO > AMOMINU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<2:0> != 0
-  then signalAddressException(AMO_Misaligned, vAddr)
-  else match translateAddr(vAddr, Data, Write)
+  then signalAddressException(E_AMO_Misaligned, vAddr)
+  else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = rawReadData(pAddr)
                              ; data = GPR(rs2)
                              ; GPR(rd) <- memv
@@ -3040,7 +3755,7 @@ define AMO > AMOMINU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; recordLoad(vAddr, memv)
                              ; recordStore(vAddr, val, 8)
                              }
-         case None        => signalAddressException(Store_AMO_Fault, vAddr)
+         case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
 }
 
@@ -3050,8 +3765,8 @@ define AMO > AMOMINU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 define AMO > AMOMAXU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<1:0> != 0
-  then signalAddressException(AMO_Misaligned, vAddr)
-  else match translateAddr(vAddr, Data, Write)
+  then signalAddressException(E_AMO_Misaligned, vAddr)
+  else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
                              ; data = GPR(rs2)
                              ; GPR(rd) <- memv
@@ -3060,7 +3775,7 @@ define AMO > AMOMAXU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; recordLoad(vAddr, memv)
                              ; recordStore(vAddr, val, 4)
                              }
-         case None        => signalAddressException(Store_AMO_Fault, vAddr)
+         case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
 }
 
@@ -3070,8 +3785,8 @@ define AMO > AMOMAXU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 define AMO > AMOMAXU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
 ; if vAddr<2:0> != 0
-  then signalAddressException(AMO_Misaligned, vAddr)
-  else match translateAddr(vAddr, Data, Write)
+  then signalAddressException(E_AMO_Misaligned, vAddr)
+  else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = rawReadData(pAddr)
                              ; data = GPR(rs2)
                              ; GPR(rd) <- memv
@@ -3080,7 +3795,7 @@ define AMO > AMOMAXU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; recordLoad(vAddr, memv)
                              ; recordStore(vAddr, val, 8)
                              }
-         case None        => signalAddressException(Store_AMO_Fault, vAddr)
+         case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
 }
 
@@ -3097,12 +3812,12 @@ define AMO > AMOMAXU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 
 define FPLoad > FLW(rd::reg, rs1::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
-; match translateAddr(vAddr, Data, Read)
+; match translateAddr(vAddr, Read, Data)
   { case Some(pAddr) => { val       = rawReadData(pAddr)<31:0>
                         ; FPRS(rd) <- val
                         ; recordLoad(vAddr, ZeroExtend(val))
                         }
-    case None        => signalAddressException(Load_Fault, vAddr)
+    case None        => signalAddressException(E_Load_Fault, vAddr)
   }
 }
 
@@ -3112,12 +3827,12 @@ define FPLoad > FLW(rd::reg, rs1::reg, offs::imm12) =
 
 define FPStore > FSW(rs1::reg, rs2::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
-; match translateAddr(vAddr, Data, Write)
+; match translateAddr(vAddr, Write, Data)
   { case Some(pAddr) => { data = FPRS(rs2)
                         ; rawWriteData(pAddr, ZeroExtend(data), 4)
                         ; recordStore(vAddr, ZeroExtend(data), 4)
                         }
-    case None        => signalAddressException(Store_AMO_Fault, vAddr)
+    case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
   }
 }
 
@@ -3132,7 +3847,7 @@ define FPStore > FSW(rs1::reg, rs2::reg, offs::imm12) =
 define FArith > FADD_S(rd::reg, rs1::reg, rs2::reg, fprnd::fprnd) =
 { match round(fprnd)
   { case Some(r) => writeFPRS(rd, FP32_Add(r, FPRS(rs1), FPRS(rs2)))
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3143,7 +3858,7 @@ define FArith > FADD_S(rd::reg, rs1::reg, rs2::reg, fprnd::fprnd) =
 define FArith > FSUB_S(rd::reg, rs1::reg, rs2::reg, fprnd::fprnd) =
 { match round(fprnd)
   { case Some(r) => writeFPRS(rd, FP32_Sub(r, FPRS(rs1), FPRS(rs2)))
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3154,7 +3869,7 @@ define FArith > FSUB_S(rd::reg, rs1::reg, rs2::reg, fprnd::fprnd) =
 define FArith > FMUL_S(rd::reg, rs1::reg, rs2::reg, fprnd::fprnd) =
 { match round(fprnd)
   { case Some(r) => writeFPRS(rd, FP32_Mul(r, FPRS(rs1), FPRS(rs2)))
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3165,7 +3880,7 @@ define FArith > FMUL_S(rd::reg, rs1::reg, rs2::reg, fprnd::fprnd) =
 define FArith > FDIV_S(rd::reg, rs1::reg, rs2::reg, fprnd::fprnd) =
 { match round(fprnd)
   { case Some(r) => writeFPRS(rd, FP32_Div(r, FPRS(rs1), FPRS(rs2)))
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3176,7 +3891,7 @@ define FArith > FDIV_S(rd::reg, rs1::reg, rs2::reg, fprnd::fprnd) =
 define FArith > FSQRT_S(rd::reg, rs::reg, fprnd::fprnd) =
 { match round(fprnd)
   { case Some(r) => writeFPRS(rd, FP32_Sqrt(r, FPRS(rs)))
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3225,7 +3940,7 @@ define FArith > FMAX_S(rd::reg, rs1::reg, rs2::reg) =
 define FArith > FMADD_S(rd::reg, rs1::reg, rs2::reg, rs3::reg, fprnd::fprnd) =
 { match round(fprnd)
   { case Some(r) => writeFPRS(rd, FP32_Add(r, FP32_Mul(r, FPRS(rs1), FPRS(rs2)), FPRS(rs3)))
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3236,7 +3951,7 @@ define FArith > FMADD_S(rd::reg, rs1::reg, rs2::reg, rs3::reg, fprnd::fprnd) =
 define FArith > FMSUB_S(rd::reg, rs1::reg, rs2::reg, rs3::reg, fprnd::fprnd) =
 { match round(fprnd)
   { case Some(r) => writeFPRS(rd, FP32_Sub(r, FP32_Mul(r, FPRS(rs1), FPRS(rs2)), FPRS(rs3)))
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3247,7 +3962,7 @@ define FArith > FMSUB_S(rd::reg, rs1::reg, rs2::reg, rs3::reg, fprnd::fprnd) =
 define FArith > FNMADD_S(rd::reg, rs1::reg, rs2::reg, rs3::reg, fprnd::fprnd) =
 { match round(fprnd)
   { case Some(r) => writeFPRS(rd, FP32_Neg(FP32_Add(r, FP32_Mul(r, FPRS(rs1), FPRS(rs2)), FPRS(rs3))))
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3258,7 +3973,7 @@ define FArith > FNMADD_S(rd::reg, rs1::reg, rs2::reg, rs3::reg, fprnd::fprnd) =
 define FArith > FNMSUB_S(rd::reg, rs1::reg, rs2::reg, rs3::reg, fprnd::fprnd) =
 { match round(fprnd)
   { case Some(r) => writeFPRS(rd, FP32_Neg(FP32_Sub(r, FP32_Mul(r, FPRS(rs1), FPRS(rs2)), FPRS(rs3))))
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3271,7 +3986,7 @@ define FArith > FNMSUB_S(rd::reg, rs1::reg, rs2::reg, rs3::reg, fprnd::fprnd) =
 define FConv > FCVT_S_W(rd::reg, rs::reg, fprnd::fprnd) =
 { match round(fprnd)
   { case Some(r) => writeFPRS(rd, FP32_FromInt(r, [GPR(rs)<31:0>]::int))
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3282,7 +3997,7 @@ define FConv > FCVT_S_W(rd::reg, rs::reg, fprnd::fprnd) =
 define FConv > FCVT_S_WU(rd::reg, rs::reg, fprnd::fprnd) =
 { match round(fprnd)
   { case Some(r) => writeFPRS(rd, FP32_FromInt(r, [0`1 : GPR(rs)<31:0>]::int))
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3305,7 +4020,7 @@ define FConv > FCVT_W_S(rd::reg, rs::reg, fprnd::fprnd) =
                             else [val]
                     ; writeRD(rd, res)
                     }
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3328,7 +4043,7 @@ define FConv > FCVT_WU_S(rd::reg, rs::reg, fprnd::fprnd) =
                             else [val]
                     ; writeRD(rd, res)
                     }
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3339,7 +4054,7 @@ define FConv > FCVT_WU_S(rd::reg, rs::reg, fprnd::fprnd) =
 define FConv > FCVT_S_L(rd::reg, rs::reg, fprnd::fprnd) =
 { match round(fprnd)
   { case Some(r) => writeFPRS(rd, FP32_FromInt(r, [GPR(rs)]::int))
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3350,7 +4065,7 @@ define FConv > FCVT_S_L(rd::reg, rs::reg, fprnd::fprnd) =
 define FConv > FCVT_S_LU(rd::reg, rs::reg, fprnd::fprnd) =
 { match round(fprnd)
   { case Some(r) => writeFPRS(rd, FP32_FromInt(r, [0`1 : GPR(rs)]::int))
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3373,7 +4088,7 @@ define FConv > FCVT_L_S(rd::reg, rs::reg, fprnd::fprnd) =
                             else [val]
                     ; writeRD(rd, res)
                     }
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3396,7 +4111,7 @@ define FConv > FCVT_LU_S(rd::reg, rs::reg, fprnd::fprnd) =
                             else [val]
                     ; writeRD(rd, res)
                     }
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3547,12 +4262,12 @@ define FConv > FCLASS_S(rd::reg, rs::reg) =
 
 define FPLoad > FLD(rd::reg, rs1::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
-; match translateAddr(vAddr, Data, Read)
+; match translateAddr(vAddr, Read, Data)
   { case Some(pAddr) => { val       = rawReadData(pAddr)
                         ; FPRD(rd) <- val
                         ; recordLoad(vAddr, val)
                         }
-    case None        => signalAddressException(Load_Fault, vAddr)
+    case None        => signalAddressException(E_Load_Fault, vAddr)
   }
 }
 
@@ -3562,12 +4277,12 @@ define FPLoad > FLD(rd::reg, rs1::reg, offs::imm12) =
 
 define FPStore > FSD(rs1::reg, rs2::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
-; match translateAddr(vAddr, Data, Write)
+; match translateAddr(vAddr, Write, Data)
   { case Some(pAddr) => { data = FPRD(rs2)
                         ; rawWriteData(pAddr, data, 8)
                         ; recordStore(vAddr, data, 8)
                         }
-    case None        => signalAddressException(Store_AMO_Fault, vAddr)
+    case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
   }
 }
 
@@ -3582,7 +4297,7 @@ define FPStore > FSD(rs1::reg, rs2::reg, offs::imm12) =
 define FArith > FADD_D(rd::reg, rs1::reg, rs2::reg, fprnd::fprnd) =
 { match round(fprnd)
   { case Some(r) => writeFPRD(rd, FP64_Add(r, FPRD(rs1), FPRD(rs2)))
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3593,7 +4308,7 @@ define FArith > FADD_D(rd::reg, rs1::reg, rs2::reg, fprnd::fprnd) =
 define FArith > FSUB_D(rd::reg, rs1::reg, rs2::reg, fprnd::fprnd) =
 { match round(fprnd)
   { case Some(r) => writeFPRD(rd, FP64_Sub(r, FPRD(rs1), FPRD(rs2)))
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3604,7 +4319,7 @@ define FArith > FSUB_D(rd::reg, rs1::reg, rs2::reg, fprnd::fprnd) =
 define FArith > FMUL_D(rd::reg, rs1::reg, rs2::reg, fprnd::fprnd) =
 { match round(fprnd)
   { case Some(r) => writeFPRD(rd, FP64_Mul(r, FPRD(rs1), FPRD(rs2)))
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3615,7 +4330,7 @@ define FArith > FMUL_D(rd::reg, rs1::reg, rs2::reg, fprnd::fprnd) =
 define FArith > FDIV_D(rd::reg, rs1::reg, rs2::reg, fprnd::fprnd) =
 { match round(fprnd)
   { case Some(r) => writeFPRD(rd, FP64_Div(r, FPRD(rs1), FPRD(rs2)))
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3626,7 +4341,7 @@ define FArith > FDIV_D(rd::reg, rs1::reg, rs2::reg, fprnd::fprnd) =
 define FArith > FSQRT_D(rd::reg, rs::reg, fprnd::fprnd) =
 { match round(fprnd)
   { case Some(r) => writeFPRD(rd, FP64_Sqrt(r, FPRD(rs)))
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3676,7 +4391,7 @@ define FArith > FMAX_D(rd::reg, rs1::reg, rs2::reg) =
 define FArith > FMADD_D(rd::reg, rs1::reg, rs2::reg, rs3::reg, fprnd::fprnd) =
 { match round(fprnd)
   { case Some(r) => writeFPRD(rd, FP64_Add(r, FP64_Mul(r, FPRD(rs1), FPRD(rs2)), FPRD(rs3)))
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3687,7 +4402,7 @@ define FArith > FMADD_D(rd::reg, rs1::reg, rs2::reg, rs3::reg, fprnd::fprnd) =
 define FArith > FMSUB_D(rd::reg, rs1::reg, rs2::reg, rs3::reg, fprnd::fprnd) =
 { match round(fprnd)
   { case Some(r) => writeFPRD(rd, FP64_Sub(r, FP64_Mul(r, FPRD(rs1), FPRD(rs2)), FPRD(rs3)))
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3698,7 +4413,7 @@ define FArith > FMSUB_D(rd::reg, rs1::reg, rs2::reg, rs3::reg, fprnd::fprnd) =
 define FArith > FNMADD_D(rd::reg, rs1::reg, rs2::reg, rs3::reg, fprnd::fprnd) =
 { match round(fprnd)
   { case Some(r) => writeFPRD(rd, FP64_Neg(FP64_Add(r, FP64_Mul(r, FPRD(rs1), FPRD(rs2)), FPRD(rs3))))
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3709,7 +4424,7 @@ define FArith > FNMADD_D(rd::reg, rs1::reg, rs2::reg, rs3::reg, fprnd::fprnd) =
 define FArith > FNMSUB_D(rd::reg, rs1::reg, rs2::reg, rs3::reg, fprnd::fprnd) =
 { match round(fprnd)
   { case Some(r) => writeFPRD(rd, FP64_Neg(FP64_Sub(r, FP64_Mul(r, FPRD(rs1), FPRD(rs2)), FPRD(rs3))))
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3722,7 +4437,7 @@ define FArith > FNMSUB_D(rd::reg, rs1::reg, rs2::reg, rs3::reg, fprnd::fprnd) =
 define FConv > FCVT_D_W(rd::reg, rs::reg, fprnd::fprnd) =
 { match round(fprnd)
   { case Some(r) => writeFPRD(rd, FP64_FromInt(r, [GPR(rs)<31:0>]::int))
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3733,7 +4448,7 @@ define FConv > FCVT_D_W(rd::reg, rs::reg, fprnd::fprnd) =
 define FConv > FCVT_D_WU(rd::reg, rs::reg, fprnd::fprnd) =
 { match round(fprnd)
   { case Some(r) => writeFPRD(rd, FP64_FromInt(r, [0`1 : GPR(rs)<31:0>]::int))
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3756,7 +4471,7 @@ define FConv > FCVT_W_D(rd::reg, rs::reg, fprnd::fprnd) =
                             else [val]
                     ; writeRD(rd, res)
                     }
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3779,7 +4494,7 @@ define FConv > FCVT_WU_D(rd::reg, rs::reg, fprnd::fprnd) =
                             else [val]
                     ; writeRD(rd, res)
                     }
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3790,7 +4505,7 @@ define FConv > FCVT_WU_D(rd::reg, rs::reg, fprnd::fprnd) =
 define FConv > FCVT_D_L(rd::reg, rs::reg, fprnd::fprnd) =
 { match round(fprnd)
   { case Some(r) => writeFPRD(rd, FP64_FromInt(r, [GPR(rs)]::int))
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3801,7 +4516,7 @@ define FConv > FCVT_D_L(rd::reg, rs::reg, fprnd::fprnd) =
 define FConv > FCVT_D_LU(rd::reg, rs::reg, fprnd::fprnd) =
 { match round(fprnd)
   { case Some(r) => writeFPRD(rd, FP64_FromInt(r, [0`1 : GPR(rs)]::int))
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3824,7 +4539,7 @@ define FConv > FCVT_L_D(rd::reg, rs::reg, fprnd::fprnd) =
                             else [val]
                     ; writeRD(rd, res)
                     }
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3847,7 +4562,7 @@ define FConv > FCVT_LU_D(rd::reg, rs::reg, fprnd::fprnd) =
                             else [val]
                     ; writeRD(rd, res)
                     }
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3858,7 +4573,7 @@ define FConv > FCVT_LU_D(rd::reg, rs::reg, fprnd::fprnd) =
 define FConv > FCVT_S_D(rd::reg, rs::reg, fprnd::fprnd) =
 { match round(fprnd)
   { case Some(r) => writeFPRS(rd, FP64_ToFP32(r, FPRD(rs)))
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -3869,7 +4584,7 @@ define FConv > FCVT_S_D(rd::reg, rs::reg, fprnd::fprnd) =
 define FConv > FCVT_D_S(rd::reg, rs::reg, fprnd::fprnd) =
 { match round(fprnd)
   { case Some(r) => writeFPRD(rd, FP32_ToFP64(FPRS(rs)))
-    case None    => signalException(Illegal_Instr)
+    case None    => signalException(E_Illegal_Instr)
   }
 }
 
@@ -4021,26 +4736,32 @@ define System > ECALL  = signalEnvCall()
 -- EBREAK
 -----------------------------------
 
-define System > EBREAK = signalException(Breakpoint)
+define System > EBREAK =
+    signalException(E_Breakpoint)
 
 -----------------------------------
--- ERET
+-- URET
 -----------------------------------
-define System > ERET   =
-    NextFetch <- Some(Ereturn)
+define System > URET   =
+    NextFetch <- Some(Uret)
 
 -----------------------------------
--- MRTS
+-- SRET
 -----------------------------------
-define System > MRTS   =
-{ SCSR.scause       <- MCSR.mcause
-; SCSR.sbadaddr     <- MCSR.mbadaddr
-; SCSR.sepc         <- MCSR.mepc
+define System > SRET   =
+    NextFetch <- Some(Sret)
 
-; MCSR.mstatus.MPRV <- privLevel(Supervisor)
+-----------------------------------
+-- HRET
+-----------------------------------
+define System > HRET   =
+    NextFetch <- Some(Hret)
 
-; NextFetch         <- Some(Mrts)
-}
+-----------------------------------
+-- MRET
+-----------------------------------
+define System > MRET   =
+    NextFetch <- Some(Mret)
 
 -----------------------------------
 -- WFI
@@ -4050,7 +4771,7 @@ define System > WFI    = nothing
 -- Control and Status Registers
 
 bool checkCSROp(csr::imm12, rs1::reg, a::accessType) =
-    is_CSR_defined(csr) and check_CSR_access(csrRW(csr), csrPR(csr), curPrivilege(), a)
+    is_CSR_defined(csr) and check_CSR_access(csrRW(csr), csrPR(csr), curPrivilege, a)
 
 -----------------------------------
 -- CSRRW  rd, rs1, imm
@@ -4061,7 +4782,7 @@ define System > CSRRW(rd::reg, rs1::reg, csr::imm12) =
          ; writeCSR(csr, GPR(rs1))
          ; writeRD(rd, val)
          }
-    else signalException(Illegal_Instr)
+    else signalException(E_Illegal_Instr)
 
 -----------------------------------
 -- CSRRS  rd, rs1, imm
@@ -4073,7 +4794,7 @@ define System > CSRRS(rd::reg, rs1::reg, csr::imm12) =
            do writeCSR(csr, val || GPR(rs1))
          ; writeRD(rd, val)
          }
-    else signalException(Illegal_Instr)
+    else signalException(E_Illegal_Instr)
 
 -----------------------------------
 -- CSRRC  rd, rs1, imm
@@ -4085,7 +4806,7 @@ define System > CSRRC(rd::reg, rs1::reg, csr::imm12) =
            do writeCSR(csr, val && ~GPR(rs1))
          ; writeRD(rd, val)
          }
-    else signalException(Illegal_Instr)
+    else signalException(E_Illegal_Instr)
 
 -----------------------------------
 -- CSRRWI rd, rs1, imm
@@ -4097,7 +4818,7 @@ define System > CSRRWI(rd::reg, zimm::reg, csr::imm12) =
            do writeCSR(csr, ZeroExtend(zimm))
          ; writeRD(rd, val)
          }
-    else signalException(Illegal_Instr)
+    else signalException(E_Illegal_Instr)
 
 -----------------------------------
 -- CSRRSI rd, rs1, imm
@@ -4109,7 +4830,7 @@ define System > CSRRSI(rd::reg, zimm::reg, csr::imm12) =
            do writeCSR(csr, val || ZeroExtend(zimm))
          ; writeRD(rd, val)
          }
-    else signalException(Illegal_Instr)
+    else signalException(E_Illegal_Instr)
 
 -----------------------------------
 -- CSRRCI rd, rs1, imm
@@ -4121,7 +4842,7 @@ define System > CSRRCI(rd::reg, zimm::reg, csr::imm12) =
            do writeCSR(csr, val && ~ZeroExtend(zimm))
          ; writeRD(rd, val)
          }
-    else signalException(Illegal_Instr)
+    else signalException(E_Illegal_Instr)
 
 -- Address translation cache flush
 
@@ -4130,14 +4851,22 @@ define System > CSRRCI(rd::reg, zimm::reg, csr::imm12) =
 -----------------------------------
 define System > SFENCE_VM(rs1::reg) =
 { addr = if rs1 == 0 then None else Some(GPR(rs1))
-; TLB <- flushTLB(curASID(), addr, TLB)
+; match vmType(MCSR.mstatus.M_VM)
+  { case Sv32 => { a = if IsSome(addr) then Some(ValOf(addr)<31:0>) else None
+                 ; TLB32 <- flushTLB32(curAsid32(), a, TLB32)
+                 }
+    case Sv39 => { a = if IsSome(addr) then Some(ValOf(addr)<38:0>) else None
+                 ; TLB39 <- flushTLB39(curAsid64(), a, TLB39)
+                 }
+    case _    => #INTERNAL_ERROR("sfence.vm: unimplemented VM model") -- FIXME
+  }
 }
 
 -----------------------------------
 -- Unsupported instructions
 -----------------------------------
 define UnknownInstruction =
-    signalException(Illegal_Instr)
+    signalException(E_Illegal_Instr)
 
 -----------------------------------
 -- Internal pseudo-instructions
@@ -4146,12 +4875,12 @@ define UnknownInstruction =
 -- The argument is the value from the PC.
 
 define Internal > FETCH_MISALIGNED(addr::regType) =
-{ signalAddressException(Fetch_Misaligned, [addr])
+{ signalAddressException(E_Fetch_Misaligned, [addr])
 ; recordFetchException(addr)
 }
 
 define Internal > FETCH_FAULT(addr::regType) =
-{ signalAddressException(Fetch_Fault, [addr])
+{ signalAddressException(E_Fetch_Fault, [addr])
 ; recordFetchException(addr)
 }
 
@@ -4170,7 +4899,7 @@ FetchResult Fetch() =
 { vPC    = PC
 ; if vPC<1:0> != 0
   then F_Error(Internal(FETCH_MISALIGNED(vPC)))
-  else match translateAddr(vPC, Instruction, Read)
+  else match translateAddr(vPC, Execute, Instruction)
        { case Some(pPC) => { instw = rawReadInst(pPC)
                            ; setupDelta(vPC, instw)
                            ; F_Result(instw)
@@ -4380,11 +5109,15 @@ instruction Decode(w::word) =
 
      case '000000000000  00000 000 00000 11100 11' => System( ECALL)
      case '000000000001  00000 000 00000 11100 11' => System(EBREAK)
-     case '000100000000  00000 000 00000 11100 11' => System(  ERET)
-     case '001100000101  00000 000 00000 11100 11' => System( MRTS)
-     case '000100000010  00000 000 00000 11100 11' => System(  WFI)
 
-     case '000100000001    rs1 000 00000 11100 11' => System(SFENCE_VM(rs1))
+     case '000000000010  00000 000 00000 11100 11' => System(  URET)
+     case '000100000010  00000 000 00000 11100 11' => System(  SRET)
+     case '001000000010  00000 000 00000 11100 11' => System(  HRET)
+     case '001100000010  00000 000 00000 11100 11' => System(  MRET)
+
+     case '000100000101  00000 000 00000 11100 11' => System(   WFI)
+
+     case '000100000100    rs1 000 00000 11100 11' => System(SFENCE_VM(rs1))
 
      -- unsupported instructions
      case _                                        => UnknownInstruction
@@ -4641,8 +5374,11 @@ string instructionToString(i::instruction) =
 
      case System( ECALL)                    => pN0type("ECALL")
      case System(EBREAK)                    => pN0type("EBREAK")
-     case System(  ERET)                    => pN0type("ERET")
-     case System(  MRTS)                    => pN0type("MRTS")
+     case System(  URET)                    => pN0type("URET")
+     case System(  SRET)                    => pN0type("SRET")
+     case System(  HRET)                    => pN0type("HRET")
+     case System(  MRET)                    => pN0type("MRET")
+
      case System(   WFI)                    => pN0type("WFI")
 
      case System( CSRRW(rd, rs1, csr))      => pCSRtype("CSRRW",  rd, rs1, csr)
@@ -4864,11 +5600,14 @@ word Encode(i::instruction) =
 
      case System( ECALL)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x000)
      case System(EBREAK)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x001)
-     case System(  ERET)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x100)
-     case System(  MRTS)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x305)
-     case System(   WFI)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x102)
+     case System(  URET)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x002)
+     case System(  SRET)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x102)
+     case System(  HRET)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x202)
+     case System(  MRET)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x302)
 
-     case System(SFENCE_VM(rs1))            =>  Itype(opc(0x1C), 0, 0, rs1, 0x101)
+     case System(   WFI)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x105)
+
+     case System(SFENCE_VM(rs1))            =>  Itype(opc(0x1C), 0, 0, rs1, 0x104)
 
      case System( CSRRW(rd, rs1, csr))      =>  Itype(opc(0x1C), 1, rd, rs1, csr)
      case System( CSRRS(rd, rs1, csr))      =>  Itype(opc(0x1C), 2, rd, rs1, csr)
@@ -4911,27 +5650,11 @@ unit incrInstret() =
     c_instret(procID) <- c_instret(procID) + 1
 
 unit checkTimers() =
-{ when (clock >+ MCSR.mtimecmp + MCSR.mtime_delta)
-  do MCSR.mip.MTIP <- true
-; when (clock >+ SCSR.stimecmp + SCSR.stime_delta)
-  do MCSR.mip.STIP <- true
+{ ()
 }
 
 unit Next =
 { clear_logs()
-
--- Handle the char i/o section of the Berkeley HTIF protocol
--- following cissrStandalone.c.
-; when MCSR.mtohost <> 0x0
-  do   { mark_log(LOG_IO, log_tohost(MCSR.mtohost))
-       -- The HTIF protocol sets bit 0 to indicate exit, with actual
-       -- exit code left-shifted by 1 bit.
-       ; if MCSR.mtohost<0>
-         then { done <- true
-              ; ExitCode <- MCSR.mtohost >> 1
-              }
-         else MCSR.mtohost <- 0x0   -- TODO: rest of relevant HTIF protocol
-       }
 
 ; match Fetch()
   { case F_Result(w) =>
@@ -4939,82 +5662,95 @@ unit Next =
     ; mark_log(LOG_INSN, log_instruction(w, inst))
     ; Run(inst)
     }
-    case F_Error(inst)  =>
+    case F_Error(inst) =>
     { mark_log(LOG_INSN, log_instruction([0::word], inst))
     ; Run(inst)
     }
   }
 
-; checkTimers()     -- this can trigger timer interrupts
+; tickClock()
 
-; match NextFetch, checkInterrupts()
-  { case None, None =>
+  -- Interrupts are prioritized above synchronous traps.
+; match NextFetch, curInterrupt()
+  { case _, Some(i, delegate) =>
+               excHandler(true, interruptIndex(i), curPrivilege, delegate, PC, None)
+    case Some(Trap(e)), None =>
+             { excIdx = match e.trap
+                        { case E_Env_Call => -- convert into privilege-appropriate
+                                             -- exception bit-index of {m,h,s}-edeleg
+                                             match curPrivilege
+                                             { case User       =>  8
+                                               case Supervisor =>  9
+                                               case Hypervisor => 10
+                                               case Machine    => 11
+                                             }
+                          case _          => excCode(e.trap)
+                        }
+             ; delegate = excHandlerDelegate(Machine, [excIdx]::nat)
+             ; excHandler(false, excIdx, curPrivilege, delegate, PC, e.badaddr)
+             }
+    case Some(Uret), None =>
+             { MCSR.mstatus <- uret(MCSR.mstatus)
+             ; curPrivilege <- User
+             ; PC           <- UCSR.uepc
+             }
+    case Some(Sret), None =>
+             { MCSR.mstatus <- sret(MCSR.mstatus)
+             ; curPrivilege <- if MCSR.mstatus.M_SPP then Supervisor else User
+             ; PC           <- SCSR.sepc
+             }
+    case Some(Hret), None =>
+             { MCSR.mstatus <- hret(MCSR.mstatus)
+             ; curPrivilege <- match privilege(MCSR.mstatus.M_HPP)
+                               { case User        => User
+                                 case Supervisor  => Supervisor
+                                 case Hypervisor  => Hypervisor
+                                 case Machine     => #INTERNAL_ERROR("hret to machine mode")
+                               }
+             ; PC           <- HCSR.hepc
+             }
+    case Some(Mret), None =>
+             { MCSR.mstatus <- mret(MCSR.mstatus)
+             ; curPrivilege <- privilege(MCSR.mstatus.M_MPP)
+             ; PC           <- MCSR.mepc
+             }
+    case Some(BranchTo(pc)), None =>
+             { incrInstret()
+             ; PC <- pc
+             }
+    case None, None =>
              { incrInstret()
              ; PC <- PC + 4
              }
-    case None, Some(i, p) =>
-             { incrInstret()
-             ; takeTrap(true, interruptIndex(i), PC + 4, None, p)
-             }
-    case Some(BranchTo(addr)), _ =>
-             { incrInstret()
-             ; NextFetch    <- None
-             ; PC           <- addr
-             }
-    case Some(Ereturn), _ =>
-             { incrInstret()
-             ; NextFetch    <- None
-             ; PC           <- curEPC()
-
-             ; from = curPrivilege()
-             ; MCSR.mstatus <- popPrivilegeStack(MCSR.mstatus)
-             ; to   = curPrivilege()
-
-             ; mark_log(LOG_INSN, ["exception return from " : privName(from)
-                                   : " to " : privName(to)])
-             }
-    case Some(Trap(t)), _ =>
-             { NextFetch    <- None
-             -- We currently don't implement delegation, so always trap to M-mode.
-             ; takeTrap(false, excCode(t.trap), PC, t.badaddr, Machine)
-             }
-    case Some(Mrts), _ =>
-             { incrInstret()
-             ; NextFetch    <- None
-             ; PC           <- SCSR.stvec
-             }
   }
-
-; tickClock()
 }
 
 unit initIdent(arch::Architecture) =
-{ MCSR.mcpuid.ArchBase <- archBase(arch)
-; MCSR.mcpuid.U        <- true
-; MCSR.mcpuid.S        <- true
-; MCSR.mcpuid.M        <- true
-; MCSR.mcpuid.I        <- true
+{ MCSR.misa.ArchBase    <- archBase(arch)
+; MCSR.misa.U           <- true
+; MCSR.misa.S           <- true
+; MCSR.misa.M           <- true
+; MCSR.misa.I           <- true
 
-; MCSR.mimpid.RVSource <- 0x8000 -- anonymous source
-; MCSR.mimpid.RVImpl   <- 0x0
+; MCSR.mvendorid        <- MVENDORID
+; MCSR.marchid          <- MARCHID
+; MCSR.mimpid           <- MIMPID
 }
 
 unit initMachine(hartid::id) =
 { -- Startup in Mbare machine mode, with interrupts disabled.
-  MCSR.mstatus.VM   <- vmMode(Mbare)
-; MCSR.mstatus.MPRV <- privLevel(Machine)
-; MCSR.mstatus.MIE  <- false
+  curPrivilege          <- Machine
+; MCSR.&mstatus         <- 0
+; MCSR.mstatus.M_VM     <- vmMode(Mbare)
   -- initialize extension context state
-; MCSR.mstatus.MFS  <- ext_status(Initial)
-; MCSR.mstatus.MXS  <- ext_status(Off)
-; MCSR.mstatus.MSD  <- false
-
-  -- MPRV1/MIE1 and MPRV2/MIE2 are unspecified.
+; MCSR.mstatus.M_FS     <- ext_status(Initial)
+; MCSR.mstatus.M_XS     <- ext_status(Off)
+; MCSR.mstatus.M_SD     <- false
 
   -- Setup hartid
-; MCSR.mhartid      <- ZeroExtend(hartid)
+; MCSR.mhartid          <- ZeroExtend(hartid)
   -- Initialize mtvec to lower address (other option is 0xF...FFE00)
-; MCSR.mtvec        <- ZeroExtend(0x100`16)
+; MCSR.mtvec            <- ZeroExtend(0x100`16)
 }
 -- This initializes each core (via setting procID appropriately) on
 -- startup before execution begins.
@@ -5027,7 +5763,7 @@ unit initRegs(pc::nat) =
 ; for i in 0 .. 31 do
     fpr([i])   <- 0x0
 
-; PC           <- [pc]
-; NextFetch    <- None
-; done         <- false
+; NextFetch <- None
+; PC        <- [pc]
+; done      <- false
 }

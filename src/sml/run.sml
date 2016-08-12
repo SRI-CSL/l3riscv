@@ -25,6 +25,7 @@ val mem_size        = ref (Word64.fromInt 0)
 (* true  -> init starting PC to reset vector
    false -> use start offset from ELF *)
 val boot        = ref false
+val reset_vec   = 0x1000  (* default used in spike *)
 
 val be          = ref false (* little-endian *)
 val time_run    = ref true
@@ -323,7 +324,7 @@ fun setupElf file dis =
     let val elf   = Elf.openElf file
         val hdr   = Elf.getElfHeader elf
         val psegs = Elf.getElfProgSegments elf hdr
-        val pc    = if !boot then 0x200 else (#entry hdr)
+        val pc    = if !boot then reset_vec else (#entry hdr)
     in  initCores ( if (#class hdr) = Elf.BIT_32
                     then riscv.RV32I else riscv.RV64I
                   , pc
@@ -559,7 +560,7 @@ local
               \  --trace  <level>     verbosity level (0 default, 2 maximum)\n\
               \  --multi  <#cores>    number of cores (1 default)\n\
               \  --check  <bool>      check execution against external verifier\n\
-              \  --boot   <bool>      set starting pc to reset address x200 (false default)\n\
+              \  --boot   <bool>      set starting pc to reset address x1000 (false default)\n\
               \  -h or --help         print this message\n\n")
 
     fun getNumber s =

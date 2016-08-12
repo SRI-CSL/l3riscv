@@ -16,7 +16,7 @@ This model has a fair amount of dependencies: two Standard ML compilers, and L3
 itself.
 
 L3 is available from: http://www.cl.cam.ac.uk/~acjf3/l3
-Ensure that you are using a recent version (L3-2015-07-22 or later).
+Ensure that you are using a recent version (L3-2016-08-15 or later).
 
 L3 itself needs PolyML 5.5, which depending on your platform, you may need to
 install from source from www.polyml.org.  L3 generated code is compiled with

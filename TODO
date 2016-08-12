@@ -1,3 +1,5 @@
+- support for wpri field checks
+
 - testing floating point; implement missing L3 support
 
 - mcpuid needs to be checked (and set appropriately on initialization) as
