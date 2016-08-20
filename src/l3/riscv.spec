@@ -5752,9 +5752,7 @@ unit checkTimers() =
 }
 
 unit Next =
-{ clear_logs()
-
-; match Fetch()
+{ match Fetch()
   { case F_Result(w) =>
     { inst = Decode(w)
     ; mark_log(LOG_INSN, log_instruction(w, inst))
@@ -5773,7 +5771,8 @@ unit Next =
   { case _, Some(i, delegate) =>
                excHandler(true, interruptIndex(i), curPrivilege, delegate, PC, None)
     case Some(Trap(e)), None =>
-             { excIdx = match e.trap
+             { NextFetch <- None
+             ; excIdx = match e.trap
                         { case E_Env_Call => -- convert into privilege-appropriate
                                              -- exception bit-index of {m,h,s}-edeleg
                                              match curPrivilege
@@ -5788,17 +5787,20 @@ unit Next =
              ; excHandler(false, excIdx, curPrivilege, delegate, PC, e.badaddr)
              }
     case Some(Uret), None =>
-             { MCSR.mstatus <- uret(MCSR.mstatus)
+             { NextFetch    <- None
+             ; MCSR.mstatus <- uret(MCSR.mstatus)
              ; curPrivilege <- User
              ; PC           <- UCSR.uepc
              }
     case Some(Sret), None =>
-             { MCSR.mstatus <- sret(MCSR.mstatus)
+             { NextFetch    <- None
+             ; MCSR.mstatus <- sret(MCSR.mstatus)
              ; curPrivilege <- if MCSR.mstatus.M_SPP then Supervisor else User
              ; PC           <- SCSR.sepc
              }
     case Some(Hret), None =>
-             { MCSR.mstatus <- hret(MCSR.mstatus)
+             { NextFetch    <- None
+             ; MCSR.mstatus <- hret(MCSR.mstatus)
              ; curPrivilege <- match privilege(MCSR.mstatus.M_HPP)
                                { case User        => User
                                  case Supervisor  => Supervisor
@@ -5808,17 +5810,19 @@ unit Next =
              ; PC           <- HCSR.hepc
              }
     case Some(Mret), None =>
-             { MCSR.mstatus <- mret(MCSR.mstatus)
+             { NextFetch    <- None
+             ; MCSR.mstatus <- mret(MCSR.mstatus)
              ; curPrivilege <- privilege(MCSR.mstatus.M_MPP)
              ; PC           <- MCSR.mepc
              }
     case Some(BranchTo(pc)), None =>
              { incrInstret()
-             ; PC <- pc
+             ; NextFetch    <- None
+             ; PC           <- pc
              }
     case None, None =>
              { incrInstret()
-             ; PC <- PC + 4
+             ; PC           <- PC + 4
              }
   }
 }
@@ -5861,7 +5865,7 @@ unit initRegs(pc::nat) =
 ; for i in 0 .. 31 do
     fpr([i])   <- 0x0
 
-; NextFetch <- None
+; NextFetch <- Some(BranchTo([pc]))
 ; PC        <- [pc]
 ; done      <- false
 }
