@@ -17,7 +17,7 @@
 
 (* Default Configuration *)
 
-val mem_base_addr   = ref (Word64.fromInt 400000)
+val mem_base_addr   = ref (Word64.fromInt 0x80000000) (* default used in spike *)
 val mem_size        = ref (Word64.fromInt 0)
 
 (* Execution parameters *)
@@ -25,7 +25,7 @@ val mem_size        = ref (Word64.fromInt 0)
 (* true  -> init starting PC to reset vector
    false -> use start offset from ELF *)
 val boot        = ref false
-val reset_vec   = 0x1000  (* default used in spike *)
+val reset_addr  = 0x1000  (* default used in spike *)
 
 val be          = ref false (* little-endian *)
 val time_run    = ref true
@@ -49,6 +49,7 @@ val hex64  = phex 64
 
 fun hx32 n = Word32.fmt StringCvt.HEX n
 fun hx64 n = Word64.fmt StringCvt.HEX n
+fun hxi  n = Int.fmt    StringCvt.HEX n
 
 fun failExit s = ( print (s ^ "\n"); OS.Process.exit OS.Process.failure )
 fun err e s = failExit ("Failed to " ^ e ^ " file \"" ^ s ^ "\"")
@@ -114,11 +115,14 @@ fun isLastCore () =
 
 (* Printing utilities *)
 
-fun printLog () = List.app (fn (n, l) =>
-                               if n <= !trace_lvl
-                               then print (l ^ "\n")
-                               else ()
-                           ) (List.rev (!riscv.log))
+fun printLog () =
+    ( List.app (fn (n, l) =>
+                   if n <= !trace_lvl
+                   then print (l ^ "\n")
+                   else ()
+               ) (List.rev (!riscv.log))
+    ; riscv.clear_logs ()
+    )
 
 local
     fun readReg i = hex64 (riscv.GPR (BitsN.fromNat (i, 5)))
@@ -233,6 +237,7 @@ fun decr i = if i <= 0 then i else i - 1
 fun silentLoop mx =
     ( riscv.scheduleCore (nextCoreToSchedule ())
     ; riscv.Next ()
+    ; riscv.clear_logs ()
     ; if !check then doCheck() else ()
     ; if !riscv.done orelse (mx = 1) orelse isCheckerDone ()
       then let val ec = riscv.exitCode ()
@@ -266,7 +271,27 @@ end
 
 (* Platform initialization *)
 
-fun initPlatform (cores) =
+fun insertBootCode () =
+    let val auipc_val = Word64.toInt(Word64.-(!mem_base_addr, Word64.fromInt reset_addr))
+        val auipc_imm = BitsN.>>+ (BitsN.fromInt (auipc_val, 32), 12)
+        val boot_code =
+            [ (* auipc t0, 0x7ffff *)
+              riscv.ArithI(riscv.AUIPC(BitsN.fromNat (5, 5), auipc_imm))
+            , (* jr t0 *)
+              riscv.Branch(riscv.JALR(BitsN.fromNat (0, 5), (BitsN.fromNat (5, 5), BitsN.zero 12)))
+            ]
+        val boot_vec = List.map riscv.Encode boot_code
+        fun insert addr insns =
+            case insns of
+                i :: tl        => ( riscv.rawWriteData (BitsN.fromInt (addr, 64), (i, 4))
+                                  ; insert (addr + 4) tl
+                                  )
+              | []             => ()
+    in print ("L3RISCV: Loading reset code at " ^ hxi reset_addr ^ "\n")
+     ; insert reset_addr (List.map riscv.Encode boot_code)
+    end
+
+fun initPlatform cores =
     ( riscv.print     := debugPrint
     ; riscv.println   := debugPrintln
     ; riscv.procID    := BitsN.B(0, BitsN.size(!riscv.procID))
@@ -276,6 +301,9 @@ fun initPlatform (cores) =
                          , 64))
     ; if !check
       then initChecker ()
+      else ()
+    ; if !boot
+      then insertBootCode ()
       else ()
     )
 
@@ -324,7 +352,7 @@ fun setupElf file dis =
     let val elf   = Elf.openElf file
         val hdr   = Elf.getElfHeader elf
         val psegs = Elf.getElfProgSegments elf hdr
-        val pc    = if !boot then reset_vec else (#entry hdr)
+        val pc    = if !boot then reset_addr else (#entry hdr)
     in  initCores ( if (#class hdr) = Elf.BIT_32
                     then riscv.RV32I else riscv.RV64I
                   , pc
