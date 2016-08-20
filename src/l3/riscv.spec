@@ -4921,22 +4921,36 @@ imm20 asImm20(imm20::bits(1), immhi::bits(8), imm11::bits(1), immlo::bits(10)) =
 
 imm12 asSImm12(immhi::bits(7), immlo::bits(5)) =  immhi : immlo
 
-instruction Decode(w::word) =
+-- decoders organized by major opcode
+
+instruction decode_LOAD(w::word) =
    match w
-   { case 'i12 ihi rs2 rs1 000 ilo i11 11000 11' => Branch( BEQ(rs1, rs2, asImm12(i12, i11, ihi, ilo)))
-     case 'i12 ihi rs2 rs1 001 ilo i11 11000 11' => Branch( BNE(rs1, rs2, asImm12(i12, i11, ihi, ilo)))
-     case 'i12 ihi rs2 rs1 100 ilo i11 11000 11' => Branch( BLT(rs1, rs2, asImm12(i12, i11, ihi, ilo)))
-     case 'i12 ihi rs2 rs1 101 ilo i11 11000 11' => Branch( BGE(rs1, rs2, asImm12(i12, i11, ihi, ilo)))
-     case 'i12 ihi rs2 rs1 110 ilo i11 11000 11' => Branch(BLTU(rs1, rs2, asImm12(i12, i11, ihi, ilo)))
-     case 'i12 ihi rs2 rs1 111 ilo i11 11000 11' => Branch(BGEU(rs1, rs2, asImm12(i12, i11, ihi, ilo)))
+   { case 'imm           rs1 000  rd 00000 11' => Load( LB(rd, rs1, imm))
+     case 'imm           rs1 001  rd 00000 11' => Load( LH(rd, rs1, imm))
+     case 'imm           rs1 010  rd 00000 11' => Load( LW(rd, rs1, imm))
+     case 'imm           rs1 011  rd 00000 11' => Load( LD(rd, rs1, imm))
+     case 'imm           rs1 100  rd 00000 11' => Load(LBU(rd, rs1, imm))
+     case 'imm           rs1 101  rd 00000 11' => Load(LHU(rd, rs1, imm))
+     case 'imm           rs1 110  rd 00000 11' => Load(LWU(rd, rs1, imm))
+     case _                                    => UnknownInstruction
+   }
 
-     case 'imm           rs1 000  rd 11001 11' => Branch( JALR(rd, rs1, imm))
-     case 'i20 ilo i11 ihi        rd 11011 11' => Branch(  JAL(rd, asImm20(i20, ihi, i11, ilo)))
+instruction decode_LOAD_FP(w::word) =
+   match w
+   { case 'imm           rs1 010  rd 00001 11' => FPLoad(FLW(rd, rs1, imm))
+     case 'imm           rs1 011  rd 00001 11' => FPLoad(FLD(rd, rs1, imm))
+     case _                                    => UnknownInstruction
+   }
+instruction decode_MISC_MEM(w::word) =
+   match w
+   { case '_`4 pred succ rs1 000  rd 00011 11' =>   FENCE(rd, rs1, pred, succ)
+     case 'imm           rs1 001  rd 00011 11' => FENCE_I(rd, rs1, imm)
+     case _                                    => UnknownInstruction
+   }
 
-     case 'imm                    rd 01101 11' => ArithI(  LUI(rd, imm))
-     case 'imm                    rd 00101 11' => ArithI(AUIPC(rd, imm))
-
-     case 'imm           rs1 000  rd 00100 11' => ArithI( ADDI(rd, rs1, imm))
+instruction decode_OP_IMM(w::word) =
+   match w
+   { case 'imm           rs1 000  rd 00100 11' => ArithI( ADDI(rd, rs1, imm))
      case '000000  shamt rs1 001  rd 00100 11' =>  Shift( SLLI(rd, rs1, shamt))
      case 'imm           rs1 010  rd 00100 11' => ArithI( SLTI(rd, rs1, imm))
      case 'imm           rs1 011  rd 00100 11' => ArithI(SLTIU(rd, rs1, imm))
@@ -4945,8 +4959,67 @@ instruction Decode(w::word) =
      case '010000  shamt rs1 101  rd 00100 11' =>  Shift( SRAI(rd, rs1, shamt))
      case 'imm           rs1 110  rd 00100 11' => ArithI(  ORI(rd, rs1, imm))
      case 'imm           rs1 111  rd 00100 11' => ArithI( ANDI(rd, rs1, imm))
+     case _                                    => UnknownInstruction
+   }
 
-     case '0000000   rs2 rs1 000  rd 01100 11' => ArithR(  ADD(rd, rs1, rs2))
+instruction decode_OP_IMM_32(w::word) =
+   match w
+   { case 'imm           rs1 000  rd 00110 11' => ArithI(ADDIW(rd, rs1, imm))
+     case '0000000 shamt rs1 001  rd 00110 11' =>  Shift(SLLIW(rd, rs1, shamt))
+     case '0000000 shamt rs1 101  rd 00110 11' =>  Shift(SRLIW(rd, rs1, shamt))
+     case '0100000 shamt rs1 101  rd 00110 11' =>  Shift(SRAIW(rd, rs1, shamt))
+     case _                                    => UnknownInstruction
+   }
+
+instruction decode_STORE(w::word) =
+   match w
+   { case 'ihi       rs2 rs1 000 ilo 01000 11' => Store(SB(rs1, rs2, asSImm12(ihi, ilo)))
+     case 'ihi       rs2 rs1 001 ilo 01000 11' => Store(SH(rs1, rs2, asSImm12(ihi, ilo)))
+     case 'ihi       rs2 rs1 010 ilo 01000 11' => Store(SW(rs1, rs2, asSImm12(ihi, ilo)))
+     case 'ihi       rs2 rs1 011 ilo 01000 11' => Store(SD(rs1, rs2, asSImm12(ihi, ilo)))
+     case _                                    => UnknownInstruction
+   }
+
+instruction decode_STORE_FP(w::word) =
+   match w
+   { case 'ihi       rs2 rs1 010 ilo 01001 11' => FPStore(FSW(rs1, rs2, asSImm12(ihi, ilo)))
+     case 'ihi       rs2 rs1 011 ilo 01001 11' => FPStore(FSD(rs1, rs2, asSImm12(ihi, ilo)))
+     case _                                    => UnknownInstruction
+   }
+
+instruction decode_AMO(w::word) =
+   match w
+   { case '00010 aq rl 00000  rs1 010 rd 01011 11' => AMO(     LR_W(aq, rl, rd, rs1))
+     case '00010 aq rl 00000  rs1 011 rd 01011 11' => AMO(     LR_D(aq, rl, rd, rs1))
+     case '00011 aq rl rs2    rs1 010 rd 01011 11' => AMO(     SC_W(aq, rl, rd, rs1, rs2))
+     case '00011 aq rl rs2    rs1 011 rd 01011 11' => AMO(     SC_D(aq, rl, rd, rs1, rs2))
+
+     case '00001 aq rl rs2    rs1 010 rd 01011 11' => AMO(AMOSWAP_W(aq, rl, rd, rs1, rs2))
+     case '00000 aq rl rs2    rs1 010 rd 01011 11' => AMO( AMOADD_W(aq, rl, rd, rs1, rs2))
+     case '00100 aq rl rs2    rs1 010 rd 01011 11' => AMO( AMOXOR_W(aq, rl, rd, rs1, rs2))
+     case '01100 aq rl rs2    rs1 010 rd 01011 11' => AMO( AMOAND_W(aq, rl, rd, rs1, rs2))
+     case '01000 aq rl rs2    rs1 010 rd 01011 11' => AMO(  AMOOR_W(aq, rl, rd, rs1, rs2))
+     case '10000 aq rl rs2    rs1 010 rd 01011 11' => AMO( AMOMIN_W(aq, rl, rd, rs1, rs2))
+     case '10100 aq rl rs2    rs1 010 rd 01011 11' => AMO( AMOMAX_W(aq, rl, rd, rs1, rs2))
+     case '11000 aq rl rs2    rs1 010 rd 01011 11' => AMO(AMOMINU_W(aq, rl, rd, rs1, rs2))
+     case '11100 aq rl rs2    rs1 010 rd 01011 11' => AMO(AMOMAXU_W(aq, rl, rd, rs1, rs2))
+
+     case '00001 aq rl rs2    rs1 011 rd 01011 11' => AMO(AMOSWAP_D(aq, rl, rd, rs1, rs2))
+     case '00000 aq rl rs2    rs1 011 rd 01011 11' => AMO( AMOADD_D(aq, rl, rd, rs1, rs2))
+     case '00100 aq rl rs2    rs1 011 rd 01011 11' => AMO( AMOXOR_D(aq, rl, rd, rs1, rs2))
+     case '01100 aq rl rs2    rs1 011 rd 01011 11' => AMO( AMOAND_D(aq, rl, rd, rs1, rs2))
+     case '01000 aq rl rs2    rs1 011 rd 01011 11' => AMO(  AMOOR_D(aq, rl, rd, rs1, rs2))
+     case '10000 aq rl rs2    rs1 011 rd 01011 11' => AMO( AMOMIN_D(aq, rl, rd, rs1, rs2))
+     case '10100 aq rl rs2    rs1 011 rd 01011 11' => AMO( AMOMAX_D(aq, rl, rd, rs1, rs2))
+     case '11000 aq rl rs2    rs1 011 rd 01011 11' => AMO(AMOMINU_D(aq, rl, rd, rs1, rs2))
+     case '11100 aq rl rs2    rs1 011 rd 01011 11' => AMO(AMOMAXU_D(aq, rl, rd, rs1, rs2))
+
+     case _                                        => UnknownInstruction
+   }
+
+instruction decode_OP(w::word) =
+   match w
+   { case '0000000   rs2 rs1 000  rd 01100 11' => ArithR(  ADD(rd, rs1, rs2))
      case '0100000   rs2 rs1 000  rd 01100 11' => ArithR(  SUB(rd, rs1, rs2))
      case '0000000   rs2 rs1 001  rd 01100 11' =>  Shift(  SLL(rd, rs1, rs2))
      case '0000000   rs2 rs1 010  rd 01100 11' => ArithR(  SLT(rd, rs1, rs2))
@@ -4957,17 +5030,6 @@ instruction Decode(w::word) =
      case '0000000   rs2 rs1 110  rd 01100 11' => ArithR(   OR(rd, rs1, rs2))
      case '0000000   rs2 rs1 111  rd 01100 11' => ArithR(  AND(rd, rs1, rs2))
 
-     case 'imm           rs1 000  rd 00110 11' => ArithI(ADDIW(rd, rs1, imm))
-     case '0000000 shamt rs1 001  rd 00110 11' =>  Shift(SLLIW(rd, rs1, shamt))
-     case '0000000 shamt rs1 101  rd 00110 11' =>  Shift(SRLIW(rd, rs1, shamt))
-     case '0100000 shamt rs1 101  rd 00110 11' =>  Shift(SRAIW(rd, rs1, shamt))
-
-     case '0000000   rs2 rs1 000  rd 01110 11' => ArithR( ADDW(rd, rs1, rs2))
-     case '0100000   rs2 rs1 000  rd 01110 11' => ArithR( SUBW(rd, rs1, rs2))
-     case '0000000   rs2 rs1 001  rd 01110 11' =>  Shift( SLLW(rd, rs1, rs2))
-     case '0000000   rs2 rs1 101  rd 01110 11' =>  Shift( SRLW(rd, rs1, rs2))
-     case '0100000   rs2 rs1 101  rd 01110 11' =>  Shift( SRAW(rd, rs1, rs2))
-
      case '0000001   rs2 rs1 000  rd 01100 11' => MulDiv(   MUL(rd, rs1, rs2))
      case '0000001   rs2 rs1 001  rd 01100 11' => MulDiv(  MULH(rd, rs1, rs2))
      case '0000001   rs2 rs1 010  rd 01100 11' => MulDiv(MULHSU(rd, rs1, rs2))
@@ -4977,34 +5039,57 @@ instruction Decode(w::word) =
      case '0000001   rs2 rs1 110  rd 01100 11' => MulDiv(   REM(rd, rs1, rs2))
      case '0000001   rs2 rs1 111  rd 01100 11' => MulDiv(  REMU(rd, rs1, rs2))
 
+     case _                                    => UnknownInstruction
+   }
+
+instruction decode_OP_32(w::word) =
+   match w
+   { case '0000000   rs2 rs1 000  rd 01110 11' => ArithR( ADDW(rd, rs1, rs2))
+     case '0100000   rs2 rs1 000  rd 01110 11' => ArithR( SUBW(rd, rs1, rs2))
+     case '0000000   rs2 rs1 001  rd 01110 11' =>  Shift( SLLW(rd, rs1, rs2))
+     case '0000000   rs2 rs1 101  rd 01110 11' =>  Shift( SRLW(rd, rs1, rs2))
+     case '0100000   rs2 rs1 101  rd 01110 11' =>  Shift( SRAW(rd, rs1, rs2))
+
      case '0000001   rs2 rs1 000  rd 01110 11' => MulDiv(  MULW(rd, rs1, rs2))
      case '0000001   rs2 rs1 100  rd 01110 11' => MulDiv(  DIVW(rd, rs1, rs2))
      case '0000001   rs2 rs1 101  rd 01110 11' => MulDiv( DIVUW(rd, rs1, rs2))
      case '0000001   rs2 rs1 110  rd 01110 11' => MulDiv(  REMW(rd, rs1, rs2))
      case '0000001   rs2 rs1 111  rd 01110 11' => MulDiv( REMUW(rd, rs1, rs2))
 
-     case 'imm           rs1 000  rd 00000 11' =>   Load(   LB(rd, rs1, imm))
-     case 'imm           rs1 001  rd 00000 11' =>   Load(   LH(rd, rs1, imm))
-     case 'imm           rs1 010  rd 00000 11' =>   Load(   LW(rd, rs1, imm))
-     case 'imm           rs1 011  rd 00000 11' =>   Load(   LD(rd, rs1, imm))
-     case 'imm           rs1 100  rd 00000 11' =>   Load(  LBU(rd, rs1, imm))
-     case 'imm           rs1 101  rd 00000 11' =>   Load(  LHU(rd, rs1, imm))
-     case 'imm           rs1 110  rd 00000 11' =>   Load(  LWU(rd, rs1, imm))
+     case _                                    => UnknownInstruction
+   }
 
-     case 'ihi       rs2 rs1 000 ilo 01000 11' =>  Store(   SB(rs1, rs2, asSImm12(ihi, ilo)))
-     case 'ihi       rs2 rs1 001 ilo 01000 11' =>  Store(   SH(rs1, rs2, asSImm12(ihi, ilo)))
-     case 'ihi       rs2 rs1 010 ilo 01000 11' =>  Store(   SW(rs1, rs2, asSImm12(ihi, ilo)))
-     case 'ihi       rs2 rs1 011 ilo 01000 11' =>  Store(   SD(rs1, rs2, asSImm12(ihi, ilo)))
+instruction decode_MADD(w::word) =
+   match w
+   { case 'rs3  00   rs2 rs1 frm  rd 10000 11' => FArith(  FMADD_S(rd, rs1, rs2, rs3, frm))
+     case 'rs3  01   rs2 rs1 frm  rd 10000 11' => FArith(  FMADD_D(rd, rs1, rs2, rs3, frm))
+     case _                                    => UnknownInstruction
+   }
 
-     case '_`4 pred succ rs1 000  rd 00011 11' =>        FENCE(rd, rs1, pred, succ)
-     case 'imm           rs1 001  rd 00011 11' =>      FENCE_I(rd, rs1, imm)
+instruction decode_MSUB(w::word) =
+   match w
+   { case 'rs3  00   rs2 rs1 frm  rd 10001 11' => FArith(  FMSUB_S(rd, rs1, rs2, rs3, frm))
+     case 'rs3  01   rs2 rs1 frm  rd 10001 11' => FArith(  FMSUB_D(rd, rs1, rs2, rs3, frm))
+     case _                                    => UnknownInstruction
+   }
 
-     case 'rs3  00   rs2 rs1 frm  rd 10000 11' => FArith(  FMADD_S(rd, rs1, rs2, rs3, frm))
-     case 'rs3  00   rs2 rs1 frm  rd 10001 11' => FArith(  FMSUB_S(rd, rs1, rs2, rs3, frm))
-     case 'rs3  00   rs2 rs1 frm  rd 10010 11' => FArith( FNMSUB_S(rd, rs1, rs2, rs3, frm))
-     case 'rs3  00   rs2 rs1 frm  rd 10011 11' => FArith( FNMADD_S(rd, rs1, rs2, rs3, frm))
+instruction decode_NMSUB(w::word) =
+   match w
+   { case 'rs3  00   rs2 rs1 frm  rd 10010 11' => FArith( FNMSUB_S(rd, rs1, rs2, rs3, frm))
+     case 'rs3  01   rs2 rs1 frm  rd 10010 11' => FArith( FNMSUB_D(rd, rs1, rs2, rs3, frm))
+     case _                                    => UnknownInstruction
+   }
 
-     case '0000000   rs2 rs1 frm  rd 10100 11' => FArith(   FADD_S(rd, rs1, rs2, frm))
+instruction decode_NMADD(w::word) =
+   match w
+   { case 'rs3  00   rs2 rs1 frm  rd 10011 11' => FArith( FNMADD_S(rd, rs1, rs2, rs3, frm))
+     case 'rs3  01   rs2 rs1 frm  rd 10011 11' => FArith( FNMADD_D(rd, rs1, rs2, rs3, frm))
+     case _                                    => UnknownInstruction
+   }
+
+instruction decode_OP_FP(w::word) =
+   match w
+   { case '0000000   rs2 rs1 frm  rd 10100 11' => FArith(   FADD_S(rd, rs1, rs2, frm))
      case '0000100   rs2 rs1 frm  rd 10100 11' => FArith(   FSUB_S(rd, rs1, rs2, frm))
      case '0001000   rs2 rs1 frm  rd 10100 11' => FArith(   FMUL_S(rd, rs1, rs2, frm))
      case '0001100   rs2 rs1 frm  rd 10100 11' => FArith(   FDIV_S(rd, rs1, rs2, frm))
@@ -5027,11 +5112,6 @@ instruction Decode(w::word) =
      case '1101000 00000 rs1 frm  rd 10100 11' => FConv(  FCVT_S_W(rd, rs1, frm))
      case '1101000 00001 rs1 frm  rd 10100 11' => FConv( FCVT_S_WU(rd, rs1, frm))
      case '1111000 00000 rs1 000  rd 10100 11' => FConv(   FMV_S_X(rd, rs1))
-
-     case 'rs3  01   rs2 rs1 frm  rd 10000 11' => FArith(  FMADD_D(rd, rs1, rs2, rs3, frm))
-     case 'rs3  01   rs2 rs1 frm  rd 10001 11' => FArith(  FMSUB_D(rd, rs1, rs2, rs3, frm))
-     case 'rs3  01   rs2 rs1 frm  rd 10010 11' => FArith( FNMSUB_D(rd, rs1, rs2, rs3, frm))
-     case 'rs3  01   rs2 rs1 frm  rd 10011 11' => FArith( FNMADD_D(rd, rs1, rs2, rs3, frm))
 
      case '0000001   rs2 rs1 frm  rd 10100 11' => FArith(   FADD_D(rd, rs1, rs2, frm))
      case '0000101   rs2 rs1 frm  rd 10100 11' => FArith(   FSUB_D(rd, rs1, rs2, frm))
@@ -5070,37 +5150,23 @@ instruction Decode(w::word) =
      case '0100000 00001 rs1 frm  rd 10100 11' => FConv(  FCVT_S_D(rd, rs1, frm))
      case '0100001 00000 rs1 frm  rd 10100 11' => FConv(  FCVT_D_S(rd, rs1, frm))
 
-     case 'imm           rs1 010  rd 00001 11' => FPLoad(  FLW(rd, rs1, imm))
-     case 'imm           rs1 011  rd 00001 11' => FPLoad(  FLD(rd, rs1, imm))
-     case 'ihi       rs2 rs1 010 ilo 01001 11' => FPStore( FSW(rs1, rs2, asSImm12(ihi, ilo)))
-     case 'ihi       rs2 rs1 011 ilo 01001 11' => FPStore( FSD(rs1, rs2, asSImm12(ihi, ilo)))
+     case _                                    => UnknownInstruction
+   }
 
-     case '00010 aq rl 00000  rs1 010 rd 01011 11' => AMO(     LR_W(aq, rl, rd, rs1))
-     case '00010 aq rl 00000  rs1 011 rd 01011 11' => AMO(     LR_D(aq, rl, rd, rs1))
-     case '00011 aq rl rs2    rs1 010 rd 01011 11' => AMO(     SC_W(aq, rl, rd, rs1, rs2))
-     case '00011 aq rl rs2    rs1 011 rd 01011 11' => AMO(     SC_D(aq, rl, rd, rs1, rs2))
+instruction decode_BRANCH(w::word) =
+   match w
+   { case 'i12 ihi rs2 rs1 000 ilo i11 11000 11' => Branch( BEQ(rs1, rs2, asImm12(i12, i11, ihi, ilo)))
+     case 'i12 ihi rs2 rs1 001 ilo i11 11000 11' => Branch( BNE(rs1, rs2, asImm12(i12, i11, ihi, ilo)))
+     case 'i12 ihi rs2 rs1 100 ilo i11 11000 11' => Branch( BLT(rs1, rs2, asImm12(i12, i11, ihi, ilo)))
+     case 'i12 ihi rs2 rs1 101 ilo i11 11000 11' => Branch( BGE(rs1, rs2, asImm12(i12, i11, ihi, ilo)))
+     case 'i12 ihi rs2 rs1 110 ilo i11 11000 11' => Branch(BLTU(rs1, rs2, asImm12(i12, i11, ihi, ilo)))
+     case 'i12 ihi rs2 rs1 111 ilo i11 11000 11' => Branch(BGEU(rs1, rs2, asImm12(i12, i11, ihi, ilo)))
+     case _                                      => UnknownInstruction
+   }
 
-     case '00001 aq rl rs2    rs1 010 rd 01011 11' => AMO(AMOSWAP_W(aq, rl, rd, rs1, rs2))
-     case '00000 aq rl rs2    rs1 010 rd 01011 11' => AMO( AMOADD_W(aq, rl, rd, rs1, rs2))
-     case '00100 aq rl rs2    rs1 010 rd 01011 11' => AMO( AMOXOR_W(aq, rl, rd, rs1, rs2))
-     case '01100 aq rl rs2    rs1 010 rd 01011 11' => AMO( AMOAND_W(aq, rl, rd, rs1, rs2))
-     case '01000 aq rl rs2    rs1 010 rd 01011 11' => AMO(  AMOOR_W(aq, rl, rd, rs1, rs2))
-     case '10000 aq rl rs2    rs1 010 rd 01011 11' => AMO( AMOMIN_W(aq, rl, rd, rs1, rs2))
-     case '10100 aq rl rs2    rs1 010 rd 01011 11' => AMO( AMOMAX_W(aq, rl, rd, rs1, rs2))
-     case '11000 aq rl rs2    rs1 010 rd 01011 11' => AMO(AMOMINU_W(aq, rl, rd, rs1, rs2))
-     case '11100 aq rl rs2    rs1 010 rd 01011 11' => AMO(AMOMAXU_W(aq, rl, rd, rs1, rs2))
-
-     case '00001 aq rl rs2    rs1 011 rd 01011 11' => AMO(AMOSWAP_D(aq, rl, rd, rs1, rs2))
-     case '00000 aq rl rs2    rs1 011 rd 01011 11' => AMO( AMOADD_D(aq, rl, rd, rs1, rs2))
-     case '00100 aq rl rs2    rs1 011 rd 01011 11' => AMO( AMOXOR_D(aq, rl, rd, rs1, rs2))
-     case '01100 aq rl rs2    rs1 011 rd 01011 11' => AMO( AMOAND_D(aq, rl, rd, rs1, rs2))
-     case '01000 aq rl rs2    rs1 011 rd 01011 11' => AMO(  AMOOR_D(aq, rl, rd, rs1, rs2))
-     case '10000 aq rl rs2    rs1 011 rd 01011 11' => AMO( AMOMIN_D(aq, rl, rd, rs1, rs2))
-     case '10100 aq rl rs2    rs1 011 rd 01011 11' => AMO( AMOMAX_D(aq, rl, rd, rs1, rs2))
-     case '11000 aq rl rs2    rs1 011 rd 01011 11' => AMO(AMOMINU_D(aq, rl, rd, rs1, rs2))
-     case '11100 aq rl rs2    rs1 011 rd 01011 11' => AMO(AMOMAXU_D(aq, rl, rd, rs1, rs2))
-
-     case 'csr                rs1 001 rd 11100 11' => System( CSRRW(rd, rs1, csr))
+instruction decode_SYSTEM(w::word) =
+   match w
+   { case 'csr                rs1 001 rd 11100 11' => System( CSRRW(rd, rs1, csr))
      case 'csr                rs1 010 rd 11100 11' => System( CSRRS(rd, rs1, csr))
      case 'csr                rs1 011 rd 11100 11' => System( CSRRC(rd, rs1, csr))
      case 'csr                imm 101 rd 11100 11' => System(CSRRWI(rd, imm, csr))
@@ -5119,8 +5185,40 @@ instruction Decode(w::word) =
 
      case '000100000100    rs1 000 00000 11100 11' => System(SFENCE_VM(rs1))
 
-     -- unsupported instructions
      case _                                        => UnknownInstruction
+   }
+
+-- decode by major opcode, except in cases where it has a single instruction
+instruction Decode(w::word) =
+   match w
+   { case 'imm           rs1 000  rd 11001 11' => Branch( JALR(rd, rs1, imm))
+     case 'i20 ilo i11 ihi        rd 11011 11' => Branch(  JAL(rd, asImm20(i20, ihi, i11, ilo)))
+
+     case 'imm                    rd 00101 11' => ArithI(AUIPC(rd, imm))
+     case 'imm                    rd 01101 11' => ArithI(  LUI(rd, imm))
+
+     case '_`25                      00000 11' => decode_LOAD(w)
+     case '_`25                      00001 11' => decode_LOAD_FP(w)
+     case '_`25                      00011 11' => decode_MISC_MEM(w)
+     case '_`25                      00100 11' => decode_OP_IMM(w)
+     case '_`25                      00110 11' => decode_OP_IMM_32(w)
+
+     case '_`25                      01000 11' => decode_STORE(w)
+     case '_`25                      01001 11' => decode_STORE_FP(w)
+     case '_`25                      01011 11' => decode_AMO(w)
+     case '_`25                      01100 11' => decode_OP(w)
+     case '_`25                      01110 11' => decode_OP_32(w)
+
+     case '_`25                      10000 11' => decode_MADD(w)
+     case '_`25                      10001 11' => decode_MSUB(w)
+     case '_`25                      10010 11' => decode_NMSUB(w)
+     case '_`25                      10011 11' => decode_NMADD(w)
+     case '_`25                      10100 11' => decode_OP_FP(w)
+
+     case '_`25                      11000 11' => decode_BRANCH(w)
+     case '_`25                      11100 11' => decode_SYSTEM(w)
+
+     case _                                    => UnknownInstruction
    }
 
 -- instruction printer
