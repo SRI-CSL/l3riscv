@@ -63,7 +63,7 @@ ${SMLSRCDIR}/riscv.sig ${SMLSRCDIR}/riscv.sml: ${L3SRC}
 l3riscv: ${SMLLIB} ${SMLSRC} Makefile
 	mlton $(MLTON_OPTS) \
               $(MLTON_LIB_OPTS) \
-              -output $@ ${SMLSRCDIR}/$(MLBFILE) ${SMLSRCDIR}/riscv_cissr.c
+              -output $@ ${SMLSRCDIR}/$(MLBFILE) ${SMLSRCDIR}/riscv_cissr.c $(L3LIBDIR)/sse_float.c $(L3LIBDIR)/mlton_sse_float.c
 
 libl3riscv.so: ${SMLLIB} ${SMLSRC} Makefile
 	mlton $(MLTON_OPTS) \
