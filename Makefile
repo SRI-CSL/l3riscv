@@ -25,6 +25,11 @@ SMLSRCBASE+=riscv_oracle.c
 MLBFILE=l3riscv.mlb
 SMLSRC=$(patsubst %, $(SMLSRCDIR)/%, $(SMLSRCBASE))
 
+# generating the IL source
+#######################################
+ILSRCDIR=src/il
+
+
 # MLton compiler options
 #######################################
 MLTON_OPTS     = -inline 1000 -default-type intinf -verbose 1
@@ -48,6 +53,9 @@ endif
 #######################################
 
 all: l3riscv libl3riscv.so
+
+ilspec: ${L3SRC}
+	echo 'ILExport.spec ("${L3SRC}", "${ILSRCDIR}/riscv")' | l3
 
 ${SMLSRCDIR}/riscv.sig ${SMLSRCDIR}/riscv.sml: ${L3SRC}
 	echo 'SMLExport.spec ("${L3SRC}", "${SMLSRCDIR}/riscv")' | l3
