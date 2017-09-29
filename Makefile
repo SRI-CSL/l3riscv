@@ -55,6 +55,7 @@ endif
 all: l3riscv libl3riscv.so
 
 ilspec: ${L3SRC}
+	mkdir -p $(ILSRCDIR)
 	echo 'ILExport.spec ("${L3SRC}", "${ILSRCDIR}/riscv")' | l3
 
 ${SMLSRCDIR}/riscv.sig ${SMLSRCDIR}/riscv.sml: ${L3SRC}
@@ -74,3 +75,4 @@ libl3riscv.so: ${SMLLIB} ${SMLSRC} Makefile
 clean:
 	rm -f l3riscv libl3riscv.so
 	rm -f ${SMLSRCDIR}/riscv.sig ${SMLSRCDIR}/riscv.sml
+	rm -f ${ILSRCDIR}/riscv.l3
