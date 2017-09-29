@@ -6,8 +6,15 @@ For more on RISC-V, see http://riscv.org.
 This L3 specification can be used to generate an executable interpreter of
 RISC-V binaries, similar to the Spike simulator for RISC-V.
 
-It can also be used as a verification library to verify a processor
+It can be used as a verification library to verify a processor
 implementation in a simulator.
+
+It can also be used to generate a machine-readable specification in a simple
+sexpr-based syntax.
+
+NOTE: the current version implements mildly obsolete versions of the ISA
+specifications (version 2.0 of the user spec, and version 1.9 of the privileged
+spec).
 
 Dependencies
 ------------
@@ -16,7 +23,7 @@ This model has a fair amount of dependencies: two Standard ML compilers, and L3
 itself.
 
 L3 is available from: http://www.cl.cam.ac.uk/~acjf3/l3
-Ensure that you are using a recent version (L3-2017-07-24 or later).
+Ensure that you are using a recent version (L3-2017-09-29 or later).
 
 L3 itself needs PolyML 5.7, which depending on your platform, you may need to
 install from source from www.polyml.org.  L3 generated code is compiled with
@@ -61,6 +68,13 @@ verification, and exit on the first verification error.
 
 See src/sml/TandemVerification_api.{h,c} to see how this is being done for the
 RISC-V processors from Bluespec, Inc.
+
+Generating a machine-readable specification
+-------------------------------------------
+
+$ make ilspec
+
+The specification generated will be in src/il/riscv.l3.
 
 Known Issues
 ------------
