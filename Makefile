@@ -29,6 +29,9 @@ SMLSRC=$(patsubst %, $(SMLSRCDIR)/%, $(SMLSRCBASE))
 #######################################
 ILSRCDIR=src/il
 
+# generating the HOL source
+#######################################
+HOLSRCDIR=src/hol
 
 # MLton compiler options
 #######################################
@@ -52,11 +55,7 @@ endif
 # make targets
 #######################################
 
-all: l3riscv libl3riscv.so
-
-ilspec: ${L3SRC}
-	mkdir -p $(ILSRCDIR)
-	echo 'ILExport.spec ("${L3SRC}", "${ILSRCDIR}/riscv")' | l3
+all: l3riscv libl3riscv.so ilspec holspec
 
 ${SMLSRCDIR}/riscv.sig ${SMLSRCDIR}/riscv.sml: ${L3SRC}
 	echo 'SMLExport.spec ("${L3SRC}", "${SMLSRCDIR}/riscv")' | l3
@@ -72,7 +71,16 @@ libl3riscv.so: ${SMLLIB} ${SMLSRC} Makefile
               -format library \
               -output $@ ${SMLSRCDIR}/$(MLBFILE) ${SMLSRCDIR}/riscv_cissr.c ${SMLSRCDIR}/riscv_oracle.c
 
+ilspec: ${L3SRC}
+	mkdir -p $(ILSRCDIR)
+	echo 'ILExport.spec ("${L3SRC}", "${ILSRCDIR}/riscv")' | l3
+
+holspec: ${L3SRC}
+	mkdir -p $(HOLSRCDIR)
+	echo 'HolExport.spec ("${L3SRC}", "${HOLSRCDIR}/riscv")' | l3
+
 clean:
 	rm -f l3riscv libl3riscv.so
 	rm -f ${SMLSRCDIR}/riscv.sig ${SMLSRCDIR}/riscv.sml
 	rm -f ${ILSRCDIR}/riscv.l3
+	rm -f ${HOLSRCDIR}/riscvLib.sig ${HOLSRCDIR}/riscvLib.sml ${HOLSRCDIR}/riscvScript.sml
