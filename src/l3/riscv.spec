@@ -1912,6 +1912,7 @@ unit excHandler(intr::bool, ec::exc_code, fromPriv::Privilege, toPriv::Privilege
                        ; PC                     <- UCSR.utvec
                        }
   }
+; curPrivilege <- toPriv
 }
 
 -- Interrupts are globally enabled if the current privilege level is
