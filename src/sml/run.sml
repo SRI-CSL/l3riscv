@@ -321,12 +321,12 @@ fun initCores (arch, pc) =
 
 (* Program load *)
 
-fun loadElf segs dis =
+fun loadElf segms dis =
     List.app (fn s =>
                  if (#ptype s) = Elf.PT_LOAD
                  then ( if !trace_elf
                         then ( print ( "Loading segment ...\n")
-                             ; Elf.printPSeg s
+                             ; Elf.printSegm s
                              )
                         else ()
                       ; storeVecInMem ((#vaddr s), (#memsz s), (#bytes s))
@@ -344,14 +344,15 @@ fun loadElf segs dis =
                         else ()
                       )
                  else ( print ("Skipping segment ...\n")
-                      ; Elf.printPSeg s
+                      ; Elf.printSegm s
                       )
-             ) segs
+             ) segms
 
 fun setupElf file dis =
     let val elf   = Elf.openElf file
-        val hdr   = Elf.getElfHeader elf
-        val psegs = Elf.getElfProgSegments elf hdr
+        val hdr   = Elf.getHeader elf
+        val segms = Elf.getSegments elf hdr
+        val sects = Elf.getSections elf hdr
         val pc    = if !boot then reset_addr else (#entry hdr)
     in  initCores ( if (#class hdr) = Elf.BIT_32
                     then riscv.RV32I else riscv.RV64I
@@ -361,11 +362,12 @@ fun setupElf file dis =
                ^ (if !boot then " [boot]\n" else " [elf]\n"))
       ; if !trace_elf
         then ( print "Loading elf file ...\n"
-             ; Elf.printElfHeader hdr
+             ; Elf.printHeader hdr
+             ; List.app Elf.printSect sects
              )
         else ()
       ; be := (if (#endian hdr = Elf.BIG) then true else false)
-      ; loadElf psegs dis
+      ; loadElf segms dis
       ; if !trace_elf
         then ( print ("\nMem base: " ^ (hx64 (!mem_base_addr)))
              ; print ("\nMem size: " ^ (hx64 (!mem_size))

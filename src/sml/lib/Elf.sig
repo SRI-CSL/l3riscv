@@ -16,7 +16,7 @@ sig
     datatype PType    = PT_NULL | PT_LOAD | PT_DYNAMIC | PT_INTERP | PT_NOTE | PT_SHLIB | PT_PHDR | PT_OTHER
     datatype SType    = SHT_NULL | SHT_PROGBITS | SHT_SYMTAB | SHT_STRTAB | SHT_RELA | SHT_HASH | SHT_DYNAMIC | SHT_NOTE | SHT_NOBITS | SHT_REL | SHT_SHLIB | SHT_DYNSYM | SHT_OTHER
 
-    type ehdr =
+    type hdr =
          { etype:  ElfType
          , endian: Endian
          , class:  Class
@@ -29,7 +29,7 @@ sig
          , shnum:  LargeInt.int
          }
 
-    type pseg =
+    type segm =
          { ptype:  PType
          , offset: LargeInt.int
          , paddr:  LargeInt.int
@@ -38,7 +38,7 @@ sig
          , bytes:  Word8Vector.vector
          }
 
-    type psect =
+    type sect =
          { stype:  SType
          , snmidx: LargeInt.int
          , saddr:  LargeInt.int
@@ -49,14 +49,14 @@ sig
 
     type elf_file
 
-    val openElf : string -> elf_file
+    val openElf     : string -> elf_file
 
-    val isELFFile           : elf_file -> bool
-    val getElfHeader        : elf_file -> ehdr
-    val getElfProgSegments  : elf_file -> ehdr -> pseg list
-    val getElfProgSections  : elf_file -> ehdr -> psect list
+    val isELFFile   : elf_file -> bool
+    val getHeader   : elf_file -> hdr
+    val getSegments : elf_file -> hdr -> segm list
+    val getSections : elf_file -> hdr -> sect list
 
-    val printElfHeader      : ehdr  -> unit
-    val printPSeg           : pseg  -> unit
-    val printPSect          : psect -> unit
+    val printHeader : hdr  -> unit
+    val printSegm   : segm -> unit
+    val printSect   : sect -> unit
 end
