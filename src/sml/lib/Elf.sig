@@ -14,6 +14,7 @@ sig
     datatype Endian   = BIG | LITTLE
     datatype Class    = BIT_32 | BIT_64
     datatype PType    = PT_NULL | PT_LOAD | PT_DYNAMIC | PT_INTERP | PT_NOTE | PT_SHLIB | PT_PHDR | PT_OTHER
+    datatype SType    = SHT_NULL | SHT_PROGBITS | SHT_SYMTAB | SHT_STRTAB | SHT_RELA | SHT_HASH | SHT_DYNAMIC | SHT_NOTE | SHT_NOBITS | SHT_REL | SHT_SHLIB | SHT_DYNSYM | SHT_OTHER
 
     type ehdr =
          { etype:  ElfType
@@ -23,6 +24,9 @@ sig
          , phoff:  LargeInt.int
          , phesz:  LargeInt.int
          , phnum:  LargeInt.int
+         , shoff:  LargeInt.int
+         , shesz:  LargeInt.int
+         , shnum:  LargeInt.int
          }
 
     type pseg =
@@ -34,6 +38,15 @@ sig
          , bytes:  Word8Vector.vector
          }
 
+    type psect =
+         { stype:  SType
+         , snmidx: LargeInt.int
+         , saddr:  LargeInt.int
+         , soffs:  LargeInt.int
+         , ssize:  LargeInt.int
+         , sentsz: LargeInt.int
+         }
+
     type elf_file
 
     val openElf : string -> elf_file
@@ -41,7 +54,9 @@ sig
     val isELFFile           : elf_file -> bool
     val getElfHeader        : elf_file -> ehdr
     val getElfProgSegments  : elf_file -> ehdr -> pseg list
+    val getElfProgSections  : elf_file -> ehdr -> psect list
 
-    val printElfHeader      : ehdr -> unit
-    val printPSeg           : pseg -> unit
+    val printElfHeader      : ehdr  -> unit
+    val printPSeg           : pseg  -> unit
+    val printPSect          : psect -> unit
 end
