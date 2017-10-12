@@ -343,7 +343,7 @@ fun loadElf segs dis =
                       ; if dis then disassemble (#vaddr s) (#memsz s)
                         else ()
                       )
-                 else ( print ("Skipping ")
+                 else ( print ("Skipping segment ...\n")
                       ; Elf.printPSeg s
                       )
              ) segs
@@ -375,17 +375,14 @@ fun setupElf file dis =
     end
 
 fun doElf cycles file dis =
-    let val elf   = Elf.openElf file
-        val hdr   = Elf.getElfHeader elf
-        val psegs = Elf.getElfProgSegments elf hdr
-    in  setupElf file dis
-      ; if !check
-        then loadChecker file
-        else ()
-      ; if dis
-        then printLog ()
-        else runWrapped cycles
-    end
+    ( setupElf file dis
+    ; if !check
+      then loadChecker file
+      else ()
+    ; if dis
+      then printLog ()
+      else runWrapped cycles
+    )
 
 (* Tandem verification:
    server interface: verify against model *)
