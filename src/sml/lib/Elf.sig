@@ -1,4 +1,4 @@
-(* Copyright (C) 2015, SRI International.
+(* Copyright (C) 2015-2017, SRI International.
  *
  * This software was developed by SRI International and the University
  * of Cambridge Computer Laboratory under DARPA/AFRL contract
