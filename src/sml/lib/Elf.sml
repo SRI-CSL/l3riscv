@@ -27,6 +27,7 @@ type hdr =
      , shoff:  LargeInt.int
      , shesz:  LargeInt.int
      , shnum:  LargeInt.int
+     , shsndx: LargeInt.int
      }
 
 type segm =
@@ -183,13 +184,16 @@ fun isELFFile fd =
             ) true magic
     end
 
-fun entry_loc c = if c = BIT_32 then (24,4) else (24,8)
-fun phoff_loc c = if c = BIT_32 then (28,4) else (32,8)
-fun shoff_loc c = if c = BIT_32 then (32,4) else (40,8)
-fun phesz_loc c = if c = BIT_32 then (42,2) else (54,2)
-fun phnum_loc c = if c = BIT_32 then (44,2) else (56,2)
-fun shesz_loc c = if c = BIT_32 then (46,2) else (58,2)
-fun shnum_loc c = if c = BIT_32 then (48,2) else (60,2)
+(* elf header *)
+
+fun entry_loc  c = if c = BIT_32 then (24,4) else (24,8)
+fun phoff_loc  c = if c = BIT_32 then (28,4) else (32,8)
+fun shoff_loc  c = if c = BIT_32 then (32,4) else (40,8)
+fun phesz_loc  c = if c = BIT_32 then (42,2) else (54,2)
+fun phnum_loc  c = if c = BIT_32 then (44,2) else (56,2)
+fun shesz_loc  c = if c = BIT_32 then (46,2) else (58,2)
+fun shnum_loc  c = if c = BIT_32 then (48,2) else (60,2)
+fun shsndx_loc c = if c = BIT_32 then (50,2) else (62,2)
 
 fun getHeader fd =
     let val class  = toClass  (toInt LITTLE (extract_bin fd 0x04 1))
@@ -199,26 +203,19 @@ fun getHeader fd =
         fun ex_field f    = let val (off, wd) = f
                             in  extract_bin fd off wd
                             end
-        fun int_field loc = toInt endian (ex_field (loc class))
-
-        val entry  = int_field entry_loc
-        val phoff  = int_field phoff_loc
-        val phesz  = int_field phesz_loc
-        val phnum  = int_field phnum_loc
-        val shoff  = int_field shoff_loc
-        val shesz  = int_field shesz_loc
-        val shnum  = int_field shnum_loc
+        fun int_field loc = IntInf.toLarge (toInt endian (ex_field (loc class)))
     in
         { etype  = etype
         , endian = endian
         , class  = class
-        , entry  = IntInf.toLarge entry
-        , phoff  = IntInf.toLarge phoff
-        , phesz  = IntInf.toLarge phesz
-        , phnum  = IntInf.toLarge phnum
-        , shoff  = IntInf.toLarge shoff
-        , shesz  = IntInf.toLarge shesz
-        , shnum  = IntInf.toLarge shnum
+        , entry  = int_field entry_loc
+        , phoff  = int_field phoff_loc
+        , phesz  = int_field phesz_loc
+        , phnum  = int_field phnum_loc
+        , shoff  = int_field shoff_loc
+        , shesz  = int_field shesz_loc
+        , shnum  = int_field shnum_loc
+        , shsndx = int_field shsndx_loc
         }
     end
 

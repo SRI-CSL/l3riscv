@@ -27,6 +27,7 @@ sig
          , shoff:  LargeInt.int
          , shesz:  LargeInt.int
          , shnum:  LargeInt.int
+         , shsndx: LargeInt.int
          }
 
     type segm =
