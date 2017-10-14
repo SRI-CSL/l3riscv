@@ -354,6 +354,7 @@ fun setupElf file dis =
         val segms  = Elf.getSegments elf hdr
         val sects  = Elf.getSections elf hdr
         val nsects = Elf.getNamedSections elf hdr sects
+        val symbs  = Elf.getSymbols elf hdr nsects
         val pc     = if !boot then reset_addr else (#entry hdr)
     in  initCores ( if (#class hdr) = Elf.BIT_32
                     then riscv.RV32I else riscv.RV64I
@@ -365,6 +366,7 @@ fun setupElf file dis =
         then ( print "Loading elf file ...\n"
              ; Elf.printHeader hdr
              ; List.app Elf.printNamedSection nsects
+             ; List.app Elf.printSymbol symbs
              )
         else ()
       ; be := (if (#endian hdr = Elf.BIG) then true else false)

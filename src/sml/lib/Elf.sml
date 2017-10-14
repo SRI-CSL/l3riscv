@@ -48,6 +48,16 @@ type sect =
      , sentsz: LargeInt.int
      }
 
+type named_sect = Substring.substring option * sect
+
+type symb =
+     { syname:  Substring.substring option
+     , syshndx: LargeInt.int
+     , syvalue: LargeInt.int
+     , sysize:  LargeInt.int
+     , syinfo:  LargeInt.int
+     }
+
 type elf_file = Posix.IO.file_desc
 
 (* type conversion utilities *)
@@ -249,6 +259,7 @@ fun printHeader (hdr : hdr) =
     ; print ("\tshoff:  " ^ (IntInf.fmt StringCvt.HEX (#shoff hdr)) ^ "\n")
     ; print ("\tshesz:  " ^ (IntInf.fmt StringCvt.HEX (#shesz hdr)) ^ "\n")
     ; print ("\tshnum:  " ^ (IntInf.fmt StringCvt.HEX (#shnum hdr)) ^ "\n")
+    ; print ("\tshsndx: " ^ (IntInf.fmt StringCvt.HEX (#shsndx hdr)) ^ "\n")
     )
 
 (* segments *)
@@ -333,10 +344,6 @@ fun extractSection fd (sect : sect) =
           end
         )
 
-fun getSymbols fd sects =
-    []
-
-
 (* Elf32_Shdr and Elf64_Shdr have different layouts. *)
 fun snmidx_loc c = (0,4)
 fun stype_loc  c = (4,4)
@@ -403,4 +410,76 @@ fun printNamedSection (nm, (sect : sect)) =
     ; print ("\tEntSize: " ^ (IntInf.fmt StringCvt.HEX (#sentsz sect)) ^ "\n")
     )
 
+(* symbols *)
+
+fun getSymbolSections nsects =
+    let fun pred name stype (nm, (s : sect)) =
+            (case (nm, (#stype s)) of
+                 (SOME s, t) => Substring.string s = name andalso t = stype
+              |  (_, _)      => false
+            )
+        val symtab = List.find (pred ".symtab" SHT_SYMTAB) nsects
+        val strtab = List.find (pred ".strtab" SHT_STRTAB) nsects
+    in  (symtab, strtab)
+    end
+
+(* Elf32_Sym and Elf64_Sym have different layouts. *)
+fun syname_loc  c = (0, 4)
+fun syvalue_loc c = if c = BIT_32 then ( 4,4) else ( 8,8)
+fun sysize_loc  c = if c = BIT_32 then ( 8,4) else (16,8)
+fun syinfo_loc  c = if c = BIT_32 then (12,1) else ( 4,1)
+fun syshndx_loc c = if c = BIT_32 then (14,2) else ( 6,2)
+fun getSym (fd : elf_file) (hdr : hdr) (symtab : sect) str_buf i =
+    let val c           = #class  hdr
+        val endian      = #endian hdr
+        fun ex_field f  = let val (off, wd) = f
+                              val ent_skip  = LargeInt.* (i, (#sentsz symtab))
+                              val ent_off   = LargeInt.+ ((#soffs symtab), ent_skip)
+                              val fld_off   = LargeInt.+ (ent_off, off)
+                          in  extract_bin fd (Int64.fromLarge fld_off) wd
+                          end
+        fun int_field loc = toInt endian (ex_field (loc c))
+        val name_ofs      = int_field syname_loc
+    in { syname  = extractCString str_buf name_ofs
+       , syshndx = int_field syshndx_loc
+       , syvalue = int_field syvalue_loc
+       , sysize  = int_field sysize_loc
+       , syinfo  = int_field syinfo_loc
+       }
+    end
+
+fun printSymbol (symb : symb) =
+    ( print ("Symbol:\n")
+    ; (case (#syname symb) of
+           SOME s =>
+           print ("\tName:    " ^ (Substring.string s) ^ "\n")
+        |  NONE   =>
+           print ("\tNo Name\n")
+      )
+    ; print ("\tSectIdx: " ^ (IntInf.fmt StringCvt.HEX (#syshndx symb)) ^ "\n")
+    ; print ("\tValue:   " ^ (IntInf.fmt StringCvt.HEX (#syvalue symb)) ^ "\n")
+    ; print ("\tSize:    " ^ (IntInf.fmt StringCvt.HEX (#sysize  symb)) ^ "\n")
+    ; print ("\tInfo:    " ^ (IntInf.fmt StringCvt.HEX (#syinfo  symb)) ^ "\n")
+    )
+
+fun getSyms fd hdr (symtab : sect) (strtab : sect) =
+    let val syment_sz = #sentsz symtab
+        val symtab_sz = #ssize  symtab
+        val nsyms     = if syment_sz = LargeInt.toLarge 0
+                        then 0
+                        else LargeInt.quot (symtab_sz, syment_sz)
+        val sym_idxs  = List.tabulate (nsyms, (fn i => Int.toLarge i))
+        val str_buf   = extractSection fd strtab
+    in List.map (getSym fd hdr symtab str_buf) sym_idxs
+    end
+
+fun getSyms_opt fd hdr symtab_opt strtab_opt =
+    case (symtab_opt, strtab_opt) of
+        (SOME (_, symtab), SOME (_, strtab)) => getSyms fd hdr symtab strtab
+      | (_, _)                               => []
+
+fun getSymbols fd hdr nsects =
+    let val (symtab, strtab) = getSymbolSections nsects
+    in  getSyms_opt fd hdr symtab strtab
+    end
 end (* struct *)

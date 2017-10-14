@@ -48,6 +48,16 @@ sig
          , sentsz: LargeInt.int
          }
 
+    type named_sect = Substring.substring option * sect
+
+    type symb =
+         { syname:  Substring.substring option
+         , syshndx: LargeInt.int
+         , syvalue: LargeInt.int
+         , sysize:  LargeInt.int
+         , syinfo:  LargeInt.int
+         }
+
     type elf_file
 
     val openElf     : string -> elf_file
@@ -56,12 +66,13 @@ sig
     val getHeader   : elf_file -> hdr
     val getSegments : elf_file -> hdr -> segm list
     val getSections : elf_file -> hdr -> sect list
+    val getSymbols  : elf_file -> hdr -> named_sect list -> symb list
 
     val printHeader  : hdr  -> unit
     val printSegment : segm -> unit
     val printSection : sect -> unit
+    val printSymbol  : symb  -> unit
 
-    val getNamedSections : elf_file -> hdr -> sect list
-                           -> (Substring.substring option * sect) list
-    val printNamedSection: (Substring.substring option * sect) -> unit
+    val getNamedSections : elf_file -> hdr -> sect list -> named_sect list
+    val printNamedSection: named_sect -> unit
 end
