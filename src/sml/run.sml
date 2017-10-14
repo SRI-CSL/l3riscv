@@ -326,7 +326,7 @@ fun loadElf segms dis =
                  if (#ptype s) = Elf.PT_LOAD
                  then ( if !trace_elf
                         then ( print ( "Loading segment ...\n")
-                             ; Elf.printSegm s
+                             ; Elf.printSegment s
                              )
                         else ()
                       ; storeVecInMem ((#vaddr s), (#memsz s), (#bytes s))
@@ -344,16 +344,17 @@ fun loadElf segms dis =
                         else ()
                       )
                  else ( print ("Skipping segment ...\n")
-                      ; Elf.printSegm s
+                      ; Elf.printSegment s
                       )
              ) segms
 
 fun setupElf file dis =
-    let val elf   = Elf.openElf file
-        val hdr   = Elf.getHeader elf
-        val segms = Elf.getSegments elf hdr
-        val sects = Elf.getSections elf hdr
-        val pc    = if !boot then reset_addr else (#entry hdr)
+    let val elf    = Elf.openElf file
+        val hdr    = Elf.getHeader elf
+        val segms  = Elf.getSegments elf hdr
+        val sects  = Elf.getSections elf hdr
+        val nsects = Elf.getNamedSections elf hdr sects
+        val pc     = if !boot then reset_addr else (#entry hdr)
     in  initCores ( if (#class hdr) = Elf.BIT_32
                     then riscv.RV32I else riscv.RV64I
                   , pc
@@ -363,7 +364,7 @@ fun setupElf file dis =
       ; if !trace_elf
         then ( print "Loading elf file ...\n"
              ; Elf.printHeader hdr
-             ; List.app Elf.printSect sects
+             ; List.app Elf.printNamedSection nsects
              )
         else ()
       ; be := (if (#endian hdr = Elf.BIG) then true else false)

@@ -57,7 +57,11 @@ sig
     val getSegments : elf_file -> hdr -> segm list
     val getSections : elf_file -> hdr -> sect list
 
-    val printHeader : hdr  -> unit
-    val printSegm   : segm -> unit
-    val printSect   : sect -> unit
+    val printHeader  : hdr  -> unit
+    val printSegment : segm -> unit
+    val printSection : sect -> unit
+
+    val getNamedSections : elf_file -> hdr -> sect list
+                           -> (Substring.substring option * sect) list
+    val printNamedSection: (Substring.substring option * sect) -> unit
 end

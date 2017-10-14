@@ -150,8 +150,8 @@ fun stypeToString t =
 (* binary processing utilities *)
 
 fun extract_bin fd ofs width =
-    let val ofs = Posix.IO.lseek(fd, ofs, Posix.IO.SEEK_SET)
-    in  Posix.IO.readVec(fd, width)
+    let val ofs  = Posix.IO.lseek(fd, ofs, Posix.IO.SEEK_SET)
+    in  Posix.IO.readVec(fd, width) (* TODO: handle under-reads. *)
     end
 
 fun toInt endian v =
@@ -169,6 +169,24 @@ fun show_bin name v =
      Vector.appi (fn (i,e) =>
                      print("\t " ^ (Int.toString i) ^ ": " ^ (Word8.toString e) ^ "\n")
                  ) v)
+
+(* C-string utilities *)
+
+fun locateCStringEnd buf ofs =
+    let val len = String.size buf
+        fun at_null idx = String.sub(buf, idx) = #"\000"
+        fun search idx  = if idx >= len
+                          then NONE
+                          else if at_null idx
+                          then SOME idx
+                          else search (idx + 1)
+    in  if ofs < 0 then NONE else search ofs
+    end
+
+fun extractCString buf ofs =
+    case locateCStringEnd buf ofs of
+        NONE     => NONE
+     |  SOME idx => SOME (Substring.substring(buf, ofs, idx - ofs))
 
 (* api *)
 
@@ -233,6 +251,8 @@ fun printHeader (hdr : hdr) =
     ; print ("\tshnum:  " ^ (IntInf.fmt StringCvt.HEX (#shnum hdr)) ^ "\n")
     )
 
+(* segments *)
+
 (* Elf32_Phdr and Elf64_Phdr have different layouts for alignment! *)
 fun ptype_loc  c = ( 0,4)
 fun flags_loc  c = if c = BIT_32 then (24,4) else ( 4,4)
@@ -266,7 +286,7 @@ fun getPhdr (fd : elf_file) (hdr : hdr) i =
        }
     end
 
-fun printSegm (segm : segm) =
+fun printSegment (segm : segm) =
     ( print ("Segment:\n")
     ; print ("\tType:     " ^ (ptypeToString   (#ptype segm)) ^ "\n")
     ; print ("\tOffset:   " ^ (IntInf.fmt StringCvt.HEX (#offset segm)) ^ "\n")
@@ -287,6 +307,35 @@ fun getSegments fd (hdr : hdr) =
         val segnlist = List.tabulate (nsegs, (fn i => Int.toLarge i))
     in  List.map (getPhdr fd hdr) segnlist
     end
+
+(* sections *)
+
+(* TODO: helpers needed for symbol resolution:
+ - parse symbol table entries from symtab (32/64-bit)
+ - collect symbol names and values
+ *)
+
+fun extractSection fd (sect : sect) =
+    case #stype sect of
+        SHT_NOBITS => ""
+      | _ =>
+        ( let val ofs  = Posix.IO.lseek(fd, Int64.fromInt (#soffs sect), Posix.IO.SEEK_SET)
+              val fvec = Posix.IO.readVec(fd, #ssize sect)
+              val flen = Vector.length fvec
+              val elen = #ssize sect
+          in  if flen <> elen
+              then raise Fail ("Error extracting contents from "
+                               ^ (stypeToString (#stype sect))
+                               ^ " section: got " ^ (Int.toString flen) ^ " bytes "
+                               ^ " when " ^ (Int.toString elen) ^ " were expected."
+                              )
+              else Byte.bytesToString fvec
+          end
+        )
+
+fun getSymbols fd sects =
+    []
+
 
 (* Elf32_Shdr and Elf64_Shdr have different layouts. *)
 fun snmidx_loc c = (0,4)
@@ -314,7 +363,7 @@ fun getShdr (fd : elf_file) (hdr : hdr) i =
        }
     end
 
-fun printSect (sect : sect) =
+fun printSection (sect : sect) =
     ( print ("Section:\n")
     ; print ("\tType:    " ^ (stypeToString (#stype sect)) ^ "\n")
     ; print ("\tNameIdx: " ^ (IntInf.fmt StringCvt.HEX (#snmidx sect)) ^ "\n")
@@ -329,5 +378,29 @@ fun getSections fd (hdr : hdr) =
         val sectnlist = List.tabulate (nsects, (fn i => Int.toLarge i))
     in  List.map (getShdr fd hdr) sectnlist
     end
+
+fun getNamedSections fd (hdr : hdr) (sects : sect list) =
+    let val shsndx   = LargeInt.toInt (#shsndx hdr)
+        val shs_sect = List.nth(sects, shsndx)
+                       handle Subscript => raise Fail ("Out-of-bounds shstrndx"
+                                                       ^ (Int.toString shsndx)
+                                                       ^ "in Elf-header")
+        val shs_buf  = extractSection fd shs_sect
+        fun nm sect  = extractCString shs_buf (#snmidx sect)
+    in  List.map (fn s => (nm s, s)) sects
+    end
+
+fun printNamedSection (nm, (sect : sect)) =
+    ( (case nm of
+           NONE   => print ("Unnamed Section: \n")
+        |  SOME s => print ("Section: " ^ Substring.string s ^ "\n")
+      )
+    ; print ("\tType:    " ^ (stypeToString (#stype sect)) ^ "\n")
+    ; print ("\tNameIdx: " ^ (IntInf.fmt StringCvt.HEX (#snmidx sect)) ^ "\n")
+    ; print ("\tAddress: " ^ (IntInf.fmt StringCvt.HEX (#saddr  sect)) ^ "\n")
+    ; print ("\tOffset:  " ^ (IntInf.fmt StringCvt.HEX (#soffs  sect)) ^ "\n")
+    ; print ("\tSize:    " ^ (IntInf.fmt StringCvt.HEX (#ssize  sect)) ^ "\n")
+    ; print ("\tEntSize: " ^ (IntInf.fmt StringCvt.HEX (#sentsz sect)) ^ "\n")
+    )
 
 end (* struct *)
