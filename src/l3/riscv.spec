@@ -518,10 +518,6 @@ record MachineCSR
   mscycle_delta     :: regType
   mstime_delta      :: regType
   msinstret_delta   :: regType
-
-                   -- host-target interface (berkeley extensions)
-  mtohost       :: regType      -- output register to host
-  mfromhost     :: regType      -- input register from host
 }
 
 -- Hypervisor-Level CSRs
@@ -1804,7 +1800,7 @@ string log_exc(e::ExceptionType) =
     " Exception " : excName(e) : " raised!"
 
 string log_tohost(tohost::regType) =
-    "-> host: " : [[tohost<7:0>]::char]
+    "-> host: " : hex64(tohost)
 
 nat LOG_IO      = 0
 nat LOG_INSN    = 1
@@ -2054,6 +2050,12 @@ unit writeFPRD(rd::reg, val::regType) =
 declare MEM :: pAddrIdx -> regType -- raw memory, laid out in blocks
                                    -- of (|pAddr|-|pAddrIdx|) bits
 
+-- Spike HTIF compatibility
+-- The riscv-test suite uses the tohost MMIO port to indicate test completion
+-- and pass/fail status.
+declare htif_tohost_addr :: pAddr  -- address of tohost port
+declare done :: bool               -- internal flag to request termination
+
 unit initMem(val::regType) =
     MEM <- InitMap(val)
 
@@ -2103,6 +2105,12 @@ unit rawWriteData(pAddr::pAddr, data::regType, nbytes::nat) =
               ; MEM(pAddrIdx)   <- dw_new<Size(data)-1:0>
               }
        }
+; if pAddr == htif_tohost_addr
+  then { mark_log(LOG_MEM, log_tohost(data))
+       ; ExitCode <- data
+       ; done     <- true
+       }
+  else ()
 }
 
 word rawReadInst(pAddr::pAddr) =
@@ -5728,8 +5736,6 @@ word Encode(i::instruction) =
 string log_instruction(w::word, inst::instruction) =
     "instr " : [procID] : " " : [[c_instret(procID)]::nat] :
     " 0x" : hex64(PC) : " : " : hex32(w) : "   " : instructionToString(inst)
-
-declare done :: bool   -- Flag to request termination
 
 nat exitCode() =
     [ExitCode]::nat

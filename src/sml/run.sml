@@ -145,7 +145,7 @@ fun dumpRegisters core =
       ; L3.for
             (0, 31,
              fn i =>
-                print ("Reg " ^ (if i < 10 then " " else "") ^
+                print ("reg " ^ (if i < 10 then " " else "") ^
                        Int.toString i ^ " " ^ readReg i ^ "\n"))
       ; riscv.scheduleCore savedCore
     end
@@ -181,7 +181,7 @@ val oracle_get_exit = _import "oracle_get_exit_pc" : unit -> Word64.word;
 fun loadChecker filename =
     ( oracle_load filename
     ; checker_exit_pc := oracle_get_exit ()
-    ; print ("Set exit pc to 0x" ^ hx64 (!checker_exit_pc) ^ "\n")
+    ; print ("exit pc set to 0x" ^ hx64 (!checker_exit_pc) ^ "\n")
     )
 
 val oracle_check =
@@ -348,6 +348,21 @@ fun loadElf segms dis =
                       )
              ) segms
 
+fun match_symb (name : string) (s : Elf.symb) =
+    case (#syname s) of
+        NONE    => false
+     |  SOME nm => Substring.string nm = name
+
+fun set_tohost (tohost : Elf.symb option) =
+    case tohost of
+        NONE   =>
+        print "L3RISCV: no tohost symbol found!\n"
+     |  SOME s =>
+        let val addr = #syvalue s
+        in print ("L3RISCV: tohost mapped to 0x" ^ (hxi addr) ^ "\n")
+         ; riscv.htif_tohost_addr := BitsN.fromInt(addr, 64)
+        end
+
 fun setupElf file dis =
     let val elf    = Elf.openElf file
         val hdr    = Elf.getHeader elf
@@ -356,11 +371,13 @@ fun setupElf file dis =
         val nsects = Elf.getNamedSections elf hdr sects
         val symbs  = Elf.getSymbols elf hdr nsects
         val pc     = if !boot then reset_addr else (#entry hdr)
-    in  initCores ( if (#class hdr) = Elf.BIT_32
+        val tohost = List.find (match_symb "tohost") symbs
+    in  set_tohost tohost
+      ; initCores ( if (#class hdr) = Elf.BIT_32
                     then riscv.RV32I else riscv.RV64I
                   , pc
                   )
-      ; print ("L3RISCV: Set pc to " ^ (hx64 (Word64.fromInt pc))
+      ; print ("L3RISCV: pc set to 0x" ^ (hx64 (Word64.fromInt pc))
                ^ (if !boot then " [boot]\n" else " [elf]\n"))
       ; if !trace_elf
         then ( print "Loading elf file ...\n"
