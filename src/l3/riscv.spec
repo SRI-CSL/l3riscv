@@ -5738,7 +5738,7 @@ string log_instruction(w::word, inst::instruction) =
     " 0x" : hex64(PC) : " : " : hex32(w) : "   " : instructionToString(inst)
 
 nat exitCode() =
-    [ExitCode]::nat
+    [ExitCode >> 1]::nat
 
 -- The clock/timer factor here is arbitrary, except it that if it is
 -- >= approx 200, some 32-bit -pt- tests unexpectedly pass.
