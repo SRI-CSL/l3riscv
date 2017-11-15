@@ -69,7 +69,7 @@ libl3riscv.so: ${SMLLIB} ${SMLSRC} Makefile
 	mlton $(MLTON_OPTS) \
               $(MLTON_LIB_OPTS) \
               -format library \
-              -output $@ ${SMLSRCDIR}/$(MLBFILE) ${SMLSRCDIR}/riscv_cissr.c ${SMLSRCDIR}/riscv_oracle.c
+              -output $@ ${SMLSRCDIR}/$(MLBFILE) ${SMLSRCDIR}/riscv_cissr.c ${SMLSRCDIR}/riscv_oracle.c $(L3LIBDIR)/sse_float.c $(L3LIBDIR)/mlton_sse_float.c
 
 ilspec: ${L3SRC}
 	mkdir -p $(ILSRCDIR)
