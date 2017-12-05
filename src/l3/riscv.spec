@@ -117,7 +117,6 @@ type priv_level = bits(2)
 construct Privilege
 { User
 , Supervisor
-, Hypervisor
 , Machine
 }
 
@@ -125,7 +124,6 @@ priv_level privLevel(p::Privilege) =
     match p
     { case User       => 0
       case Supervisor => 1
-      case Hypervisor => 2
       case Machine    => 3
     }
 
@@ -133,7 +131,6 @@ Privilege privilege(p::priv_level) =
     match p
     { case 0          => User
       case 1          => Supervisor
-      case 2          => Hypervisor
       case 3          => Machine
     }
 
@@ -141,7 +138,6 @@ string privName(p::Privilege) =
     match p
     { case User       => "U"
       case Supervisor => "S"
-      case Hypervisor => "H"
       case Machine    => "M"
     }
 
@@ -520,21 +516,6 @@ record MachineCSR
   msinstret_delta   :: regType
 }
 
--- Hypervisor-Level CSRs
-
-record HypervisorCSR
-{ hstatus       :: mstatus      -- trap setup
-  hedeleg       :: regType
-  hideleg       :: regType
-  hie           :: regType
-  htvec         :: regType
-
-  hscratch      :: regType      -- trap handling
-  hepc          :: regType
-  hcause        :: mcause
-  hbadaddr      :: regType
-}
-
 -- Supervisor-Level CSRs
 
 register sstatus :: regType
@@ -828,7 +809,6 @@ mstatus menter(v::mstatus, p::Privilege) =
 ; m.M_MPIE <- match p
               { case User       => m.M_UIE
                 case Supervisor => m.M_SIE
-                case Hypervisor => m.M_HIE
                 case Machine    => m.M_MIE
               }
 ; m.M_MPP <- privLevel(p)
@@ -841,7 +821,6 @@ mstatus henter(v::mstatus, p::Privilege) =
 ; m.M_HPIE <- match p
               { case User       => m.M_UIE
                 case Supervisor => m.M_SIE
-                case Hypervisor => m.M_HIE
                 case Machine    => #INTERNAL_ERROR("Invalid privilege for henter")
               }
 ; m.M_HPP <- privLevel(p)
@@ -879,7 +858,6 @@ mstatus mret(v::mstatus) =
 ; match privilege(m.M_MPP)
   { case User       => m.M_UIE  <- m.M_MPIE
     case Supervisor => m.M_SIE  <- m.M_MPIE
-    case Hypervisor => m.M_HIE  <- m.M_MPIE
     case Machine    => m.M_MIE  <- m.M_MPIE
   }
 ; m.M_MPP  <- privLevel(User)
@@ -892,7 +870,6 @@ mstatus hret(v::mstatus) =
 ; match privilege(m.M_HPP)
   { case User       => m.M_UIE  <- m.M_HPIE
     case Supervisor => m.M_SIE  <- m.M_HPIE
-    case Hypervisor => m.M_HIE  <- m.M_HPIE
     case _          => #INTERNAL_ERROR("Invalid mstatus for HRET")
   }
 ; m.M_HPP  <- privLevel(User)
@@ -959,7 +936,6 @@ declare
 
   c_UCSR        :: id -> UserCSR                -- user-level CSRs
   c_SCSR        :: id -> SupervisorCSR          -- supervisor-level CSRs
-  c_HCSR        :: id -> HypervisorCSR          -- hypervisor-level CSRs
   c_MCSR        :: id -> MachineCSR             -- machine-level CSRs
 
   c_privilege   :: id -> Privilege              -- current execution context privilege
@@ -1021,11 +997,6 @@ component UCSR :: UserCSR
 component SCSR :: SupervisorCSR
 { value        = c_SCSR(procID)
   assign value = c_SCSR(procID) <- value
-}
-
-component HCSR :: HypervisorCSR
-{ value        = c_HCSR(procID)
-  assign value = c_HCSR(procID) <- value
 }
 
 component MCSR :: MachineCSR
@@ -1283,8 +1254,6 @@ component CSRMap(csr::creg) :: regType
         case 0xD81, true    => SignExtend((c_MCSR(procID).mtime    + c_MCSR(procID).mstime_delta)<63:32>)
         case 0xD82, true    => SignExtend((c_MCSR(procID).minstret + c_MCSR(procID).msinstret_delta)<63:32>)
 
-        -- Leave hypervisor CSRs for later.
-
         -- machine information registers
         case 0xF10, false   => c_MCSR(procID).&misa
         case 0xF10, true    => SignExtend(isa_to_32(c_MCSR(procID).&misa))
@@ -1420,8 +1389,6 @@ component CSRMap(csr::creg) :: regType
 
         -- supervisor counters/timers are SRO
 
-        -- TODO: hypervisor register write support
-
         -- machine information registers are MRO
 
         -- machine trap setup
@@ -1524,27 +1491,6 @@ string csrName(csr::creg) =
       case 0xD80  => "scycleh"
       case 0xD81  => "stimeh"
       case 0xD82  => "sinstreth"
-
-      -- hypervisor trap setup
-      case 0x200  => "hstatus"
-      case 0x202  => "hedeleg"
-      case 0x203  => "hideleg"
-      case 0x204  => "hie"
-      case 0x205  => "htvec"
-
-      -- hypervisor trap handling
-      case 0x240  => "hscratch"
-      case 0x241  => "hepc"
-      case 0x242  => "hcause"
-      case 0x243  => "hbadaddr"
-
-      -- hypervisor counters/timers
-      case 0xE00  => "hcycle"
-      case 0xE01  => "htime"
-      case 0xE02  => "hinstret"
-      case 0xE80  => "hcycleh"
-      case 0xE81  => "htimeh"
-      case 0xE82  => "hinstreth"
 
       -- machine information registers
       case 0xF10  => "misa"
@@ -1847,11 +1793,8 @@ unit signalEnvCall() =
 Privilege excHandlerDelegate(delegate::Privilege, ec_idx::nat) =
 { match delegate
   { case Machine    => if MCSR.&medeleg<ec_idx>
-                       then excHandlerDelegate(Hypervisor, ec_idx)
-                       else Machine
-    case Hypervisor => if HCSR.hedeleg<ec_idx>
                        then excHandlerDelegate(Supervisor, ec_idx)
-                       else Hypervisor
+                       else Machine
     case Supervisor => if SCSR.&sedeleg<ec_idx>
                        then User
                        else Supervisor
@@ -1862,11 +1805,8 @@ Privilege excHandlerDelegate(delegate::Privilege, ec_idx::nat) =
 Privilege intHandlerDelegate(delegate::Privilege, int_idx::nat) =
 { match delegate
   { case Machine    => if MCSR.&mideleg<int_idx>
-                       then intHandlerDelegate(Hypervisor, int_idx)
-                       else Machine
-    case Hypervisor => if HCSR.hideleg<int_idx>
                        then intHandlerDelegate(Supervisor, int_idx)
-                       else Hypervisor
+                       else Machine
     case Supervisor => if SCSR.&sideleg<int_idx>
                        then User
                        else Supervisor
@@ -1888,12 +1828,6 @@ unit excHandler(intr::bool, ec::exc_code, fromPriv::Privilege, toPriv::Privilege
                        ; MCSR.mcause.M_ExcCause <- ZeroExtend(ec)
                        ; MCSR.mbadaddr          <- if IsSome(badaddr) then ValOf(badaddr) else SignExtend(0b1`1)
                        ; PC                     <- MCSR.mtvec
-                       }
-    case Hypervisor => { MCSR.mstatus           <- henter(MCSR.mstatus, fromPriv)
-                       ; HCSR.hepc              <- epc
-                       ; HCSR.hcause.M_Intr     <- intr
-                       ; HCSR.hcause.M_ExcCause <- ZeroExtend(ec)
-                       ; PC                     <- HCSR.htvec
                        }
     case Supervisor => { MCSR.mstatus           <- senter(MCSR.mstatus, fromPriv)
                        ; SCSR.sepc              <- epc
@@ -1919,10 +1853,6 @@ bool globallyEnabled(delegate::Privilege, cur::Privilege) =
   { case Machine,    Machine    => MCSR.mstatus.M_MIE
     case Machine,    _          => true
 
-    case Hypervisor, Machine    => false
-    case Hypervisor, Hypervisor => MCSR.mstatus.M_HIE
-    case Hypervisor, _          => true
-
     case Supervisor, Supervisor => MCSR.mstatus.M_SIE
     case Supervisor, User       => true
     case Supervisor, _          => false
@@ -1941,11 +1871,7 @@ bool globallyEnabled(delegate::Privilege, cur::Privilege) =
 { match i
   { case I_M_External => Some(I_M_Software, Machine)
     case I_M_Software => Some(I_M_Timer,    Machine)
-    case I_M_Timer    => Some(I_H_External, Hypervisor)
-
-    case I_H_External => Some(I_H_Software, Hypervisor)
-    case I_H_Software => Some(I_H_Timer,    Hypervisor)
-    case I_H_Timer    => Some(I_S_External, Supervisor)
+    case I_M_Timer    => Some(I_H_External, Supervisor)
 
     case I_S_External => Some(I_S_Software, Supervisor)
     case I_S_Software => Some(I_S_Timer,    Supervisor)
@@ -2158,7 +2084,6 @@ bool checkMemPermission(ac::accessType, priv::Privilege, mxr::bool, pum::bool, p
     case Write,     Supervisor  => p.Mem_W and !(p.Mem_U and pum)
     case ReadWrite, Supervisor  => (p.Mem_R or (mxr and p.Mem_X)) and p.Mem_W and !(p.Mem_U and pum)
     case Execute,   Supervisor  => p.Mem_X and !(p.Mem_U and pum)
-    case _,         Hypervisor  => #INTERNAL_ERROR("hypervisor 32-bit mem perm check") -- should not happen
     case _,         Machine     => #INTERNAL_ERROR("machine 32-bit mem perm check")    -- should not happen
   }
 }
@@ -2662,8 +2587,7 @@ pAddr option translateAddr(vAddr::regType, ac::accessType, ft::fetchType) =
 ; pum  = MCSR.mstatus.M_PUM
 ; match vmType(MCSR.mstatus.M_VM), priv
   { case Mbare, _
-    or       _,    Machine
-    or       _, Hypervisor  => Some(vAddr)  -- no translation
+    or       _,    Machine  => Some(vAddr)  -- no translation
 
     {- Comment out base/bound modes since there are no tests for them.
 
@@ -5785,7 +5709,6 @@ unit Next =
                                              match curPrivilege
                                              { case User       =>  8
                                                case Supervisor =>  9
-                                               case Hypervisor => 10
                                                case Machine    => 11
                                              }
                           case _          => excCode(e.trap)
@@ -5806,16 +5729,7 @@ unit Next =
              ; PC           <- SCSR.sepc
              }
     case Some(Hret), None =>
-             { NextFetch    <- None
-             ; MCSR.mstatus <- hret(MCSR.mstatus)
-             ; curPrivilege <- match privilege(MCSR.mstatus.M_HPP)
-                               { case User        => User
-                                 case Supervisor  => Supervisor
-                                 case Hypervisor  => Hypervisor
-                                 case Machine     => #INTERNAL_ERROR("hret to machine mode")
-                               }
-             ; PC           <- HCSR.hepc
-             }
+             #INTERNAL_ERROR("hret not implemented")
     case Some(Mret), None =>
              { NextFetch    <- None
              ; MCSR.mstatus <- mret(MCSR.mstatus)
