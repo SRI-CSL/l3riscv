@@ -170,25 +170,14 @@ fun verifierTrace (lvl, str) =
     else ()
 
 (* Tandem verification:
-   client interface: external oracle, currently cissr *)
+   client interface: disabled pending a new implementation *)
 
-val oracle_reset = _import "oracle_reset" : (Word64.word * Word64.word) -> unit;
 fun initChecker () =
-    oracle_reset (!mem_base_addr, !mem_size)
+    ()
 
-val oracle_load     = _import "oracle_load" : string -> unit;
-val oracle_get_exit = _import "oracle_get_exit_pc" : unit -> Word64.word;
 fun loadChecker filename =
-    ( oracle_load filename
-    ; checker_exit_pc := oracle_get_exit ()
-    ; print ("exit pc set to 0x" ^ hx64 (!checker_exit_pc) ^ "\n")
-    )
+    ()
 
-val oracle_check =
-    _import "oracle_check"  : (bool
-                               * Int64.int * Int64.int * Int64.int
-                               * Int64.int * Int64.int * Int64.int
-                               * Int32.int) -> bool;
 fun doCheck () =
     let val delta       = riscv.Delta ()
         fun toI64  b    = Int64.fromInt (BitsN.toInt b)
@@ -201,7 +190,7 @@ fun doCheck () =
         val data2       = fromOpt (#data2   delta)
         val fp_data     = fromOpt (#fp_data delta)
         val verbosity   = Int32.fromInt (!trace_lvl)
-    in  if oracle_check (exc_taken, pc, addr, data1, data2, data3, fp_data, verbosity)
+    in  if true
         then ()
         else ( print "Verification error:\n"
              ; dumpRegisters (currentCore ())
@@ -553,45 +542,7 @@ fun verifyInstr (cpu, m, exc, pc, addr, d1, d2, d3, fpd, v) =
     end
 
 fun initModel () =
-    let val exp_mem_base = _export "_l3r_get_mem_base" private : (unit -> Word64.word)        -> unit
-      ; val exp_mem_size = _export "_l3r_get_mem_size" private : (unit -> Word64.word)        -> unit
-      ; val exp_load_elf = _export "_l3r_load_elf"     private : (unit -> Int64.int)        -> unit
-      ; val exp_mem_read = _export "_l3r_read_mem"     private : (Word64.word -> Word64.word) -> unit
-      ; val exp_ver_inst = _export "_l3r_verify_instr" private : ((Word64.word * Word32.word * Int32.int
-                                                                   * Word64.word * Word64.word * Word64.word
-                                                                   * Word64.word * Word64.word * Word64.word
-                                                                   * Word32.word) -> Int32.int
-                                                                 ) -> unit
-      ;
-    in  exp_mem_base (fn () => !mem_base_addr)
-      ; exp_mem_size (fn () => !mem_size)
-      ; exp_load_elf (fn () =>
-                         case OS.Process.getEnv verifier_exe_name of
-                             SOME s => ( verifierTrace (0, "Loading " ^ s)
-                                       ; (setupElf s false; 0)
-                                         handle e => ( verifierTrace (0, exnMessage e)
-                                                     ; failExit ("ELF file failure")
-                                                     ; ~1
-                                                     )
-                                       )
-                           | NONE   => ( verifierTrace (0, "Env variable " ^ verifier_exe_name ^ " not set!")
-                                       ; failExit ("ELF file failure")
-                                       ; ~1
-                                       )
-                     )
-      ; exp_mem_read (fn a  =>
-                         let val addr  = BitsN.fromInt (Word64.toInt a, 64)
-                             val dword = riscv.rawReadData addr
-                             val mem   = Word64.fromInt (BitsN.toUInt dword)
-                         in  (* verifierTrace (2, String.concat["L3RISCV: mem[", Word64.toString a
-                                                             , "] -> ", Word64.toString mem, "\n"])
-                           ; *) mem
-                         end
-                     )
-      ; exp_ver_inst verifyInstr
-      ; initPlatform (1)
-      ; verifierTrace (0, "L3 RISCV model verifier initialized.\n")
-    end
+    ()
 
 (* Command line interface *)
 

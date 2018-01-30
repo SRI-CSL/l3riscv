@@ -6,9 +6,6 @@ For more on RISC-V, see http://riscv.org.
 This L3 specification can be used to generate an executable interpreter of
 RISC-V binaries, similar to the Spike simulator for RISC-V.
 
-It can be used as a verification library to verify a processor
-implementation in a simulator.
-
 It can also be used to generate a machine-readable specification in a simple
 sexpr-based syntax.
 
@@ -56,18 +53,6 @@ another interpreter.
 
 Note that the interpreter cannot currently boot an OS since the SBI spec for
 RISC-V has not yet been released.
-
-Using the verification library
-------------------------------
-
-Use the src/sml/l3riscv.h to write a C file that calls into the library.
-Incorporate that file into your project, and link it against libl3riscv.so.  As
-the processor executes, use the l3riscv_verify() call to check every retired
-instruction against the model.  The model will generate a trace log of the
-verification, and exit on the first verification error.
-
-See src/sml/TandemVerification_api.{h,c} to see how this is being done for the
-RISC-V processors from Bluespec, Inc.
 
 Generating a machine-readable specification
 -------------------------------------------
