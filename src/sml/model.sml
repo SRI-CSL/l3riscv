@@ -1,6 +1,6 @@
 (* Copyright (C) 2014, 2015 Anthony Fox, University of Cambridge
  * Copyright (C) 2014, 2015 Alexandre Joannou, University of Cambridge
- * Copyright (C) 2015-2017, SRI International.
+ * Copyright (C) 2015-2018, SRI International.
  *
  * This software was developed by SRI International and the University of
  * Cambridge Computer Laboratory under DARPA/AFRL contract FA8750-11-C-0249
@@ -10,6 +10,8 @@
  *
  * See the LICENSE file for details.
  *)
+
+structure model : model = struct
 
 (* --------------------------------------------------------------------------
    RISCV emulator
@@ -546,55 +548,54 @@ fun initModel () =
 
 (* Command line interface *)
 
-local
-    fun printUsage () =
-        print
-            ("\nRISCV emulator (based on an L3 specification).\n\
-              \http://www.cl.cam.ac.uk/~acjf3/l3\n\n\
-              \usage: " ^ OS.Path.file (CommandLine.name ()) ^ " [arguments] file\n\n\
-              \Arguments:\n\
-              \  --dis    <bool>      only disassemble loaded code\n\
-              \  --cycles <number>    upper bound on instruction cycles\n\
-              \  --trace  <level>     verbosity level (0 default, 2 maximum)\n\
-              \  --multi  <#cores>    number of cores (1 default)\n\
-              \  --check  <bool>      check execution against external verifier\n\
-              \  --boot   <bool>      set starting pc to reset address x1000 (false default)\n\
-              \  -h or --help         print this message\n\n")
+fun printUsage () =
+    print
+        ("\nRISCV emulator (based on an L3 specification).\n\
+          \http://www.cl.cam.ac.uk/~acjf3/l3\n\n\
+          \usage: " ^ OS.Path.file (CommandLine.name ()) ^ " [arguments] file\n\n\
+          \Arguments:\n\
+          \  --dis    <bool>      only disassemble loaded code\n\
+          \  --cycles <number>    upper bound on instruction cycles\n\
+          \  --trace  <level>     verbosity level (0 default, 2 maximum)\n\
+          \  --multi  <#cores>    number of cores (1 default)\n\
+          \  --check  <bool>      check execution against external verifier\n\
+          \  --boot   <bool>      set starting pc to reset address x1000 (false default)\n\
+          \  -h or --help         print this message\n\n")
 
-    fun getNumber s =
-        case IntExtra.fromString s of
-            SOME n => n
-          | NONE   => failExit ("Bad number: " ^ s)
+fun getNumber s =
+    case IntExtra.fromString s of
+        SOME n => n
+      | NONE   => failExit ("Bad number: " ^ s)
 
-    fun getBool s =
-        case Bool.fromString s of
-            SOME b => b
-         |  NONE   => failExit ("Bad bool: " ^ s)
+fun getBool s =
+    case Bool.fromString s of
+        SOME b => b
+     |  NONE   => failExit ("Bad bool: " ^ s)
 
-    fun getArguments () =
-        List.map
-            (fn "-c" => "--cycles"
-            | "-t"   => "--trace"
-            | "-d"   => "--dis"
-            | "-h"   => "--help"
-            | "-k"   => "--check"
-            | "-m"   => "--multi"
-            | "-v"   => "--verifier"
-            | "-b"   => "--boot"
-            | s      => s
-            ) (CommandLine.arguments ())
+fun getArguments () =
+    List.map
+        (fn "-c" => "--cycles"
+        | "-t"   => "--trace"
+        | "-d"   => "--dis"
+        | "-h"   => "--help"
+        | "-k"   => "--check"
+        | "-m"   => "--multi"
+        | "-v"   => "--verifier"
+        | "-b"   => "--boot"
+        | s      => s
+        ) (CommandLine.arguments ())
 
-    fun processOption (s: string) =
-        let fun loop acc =
-                fn a :: b :: r =>
-                   if a = s
-                   then (SOME b, List.rev acc @ r)
-                   else loop (a :: acc) (b :: r)
-              | r => (NONE, List.rev acc @ r)
-        in  loop []
-        end
-in
-val () =
+fun processOption (s: string) =
+    let fun loop acc =
+            fn a :: b :: r =>
+               if a = s
+               then (SOME b, List.rev acc @ r)
+               else loop (a :: acc) (b :: r)
+          | r => (NONE, List.rev acc @ r)
+    in  loop []
+    end
+
+fun main () =
     case getArguments () of
         ["--help"] => printUsage ()
       | l =>
@@ -628,4 +629,5 @@ val () =
                    else doElf c (List.hd l) d
                  )
         end
-end
+
+end (* struct *)

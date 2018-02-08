@@ -31,4 +31,6 @@ riscv.sig
 ann "nonexhaustiveMatch ignore" in
   riscv.sml
 end
-run.sml
+model.sig
+model.sml
+mlton_run.sml
