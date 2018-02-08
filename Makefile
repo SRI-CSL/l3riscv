@@ -39,19 +39,6 @@ MLTON_OPTS     = -inline 1000 -default-type intinf -verbose 1
 MLTON_OPTS    += -default-ann 'allowFFI true' -export-header ${SMLSRCDIR}/riscv_ffi.h
 MLTON_LIB_OPTS = -mlb-path-var 'L3LIBDIR '$(L3LIBDIR)
 
-# use Cissr as a verifier
-#######################################
-USE_CISSR ?= 0
-# If set, point to the location of Bluespec_RISCV
-CISSR_BASE=$(HOME)/proj/Bluespec_RISCV
-# Set the directory containing libcissr
-CISSR_LIB_DIR=$(CISSR_BASE)/build_libcissr
-
-ifeq ($(USE_CISSR),1)
-  MLTON_LIB_OPTS+= -cc-opt "-DUSE_CISSR -DRV64 -I $(CISSR_BASE)"
-  MLTON_LIB_OPTS+= -link-opt "-L $(CISSR_LIB_DIR) -lcissr -Wl,-rpath,$(CISSR_LIB_DIR)"
-endif
-
 # make targets
 #######################################
 
