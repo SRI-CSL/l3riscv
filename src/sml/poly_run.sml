@@ -46,8 +46,8 @@ in
    fun useSigSml a s = List.app (path a s) ["sig", "sml"]
 end
 
-structure Real64 = LargeReal
-structure PackReal64Little = PackRealLittle;
+structure Real64           = LargeReal
+structure PackReal64Little = PackRealLittle
 
 val () =
   List.app (useSigSml L3_LIB_PATH)
@@ -67,9 +67,12 @@ val () =
                             NONE   => "."
                          |  SOME p => OS.Path.dir p)
         val cur_path = OS.Path.fromString cur_dir
+        val lib_dir  = OS.Path.joinDirFile {dir = cur_dir, file = "lib"}
+        val lib_path = OS.Path.fromString lib_dir
     in
         (* (case cur_file of
-             NONE   => print ("No use-file for main module found\n")
+             NONE   => print ("No use-file found for main module\n")
           |  SOME p => print ("Cur file: '" ^ p ^ "'\n")); *)
+        useSigSml lib_path "Elf";
         List.app (useSigSml cur_path) ["riscv", "model"]
     end
