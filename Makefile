@@ -18,7 +18,7 @@ SMLLIB=$(patsubst %, $(SMLLIBDIR)/%, $(SMLLIBSRC))
 # generating the sml source list
 #######################################
 SMLSRCBASE+=riscv.sig riscv.sml
-SMLSRCBASE+=model.sig model.sml mlton_run.sml
+SMLSRCBASE+=model.sig model.sml mlton_run.sml poly_run.sml
 SMLSRCBASE+=l3riscv.mlb
 SMLSRCBASE+=riscv_oracle.c
 MLBFILE=l3riscv.mlb
@@ -39,15 +39,22 @@ MLTON_OPTS     = -inline 1000 -default-type intinf -verbose 1
 MLTON_OPTS    += -default-ann 'allowFFI true' -export-header ${SMLSRCDIR}/riscv_ffi.h
 MLTON_LIB_OPTS = -mlb-path-var 'L3LIBDIR '$(L3LIBDIR)
 
+# PolyML compiler options
+#######################################
+POLYC = polyc
+
 # make targets
 #######################################
 
-all: l3riscv ilspec holspec
+all: l3riscv.poly # l3riscv.mlton ilspec holspec
 
 ${SMLSRCDIR}/riscv.sig ${SMLSRCDIR}/riscv.sml: ${L3SRC}
-	echo 'SMLExport.spec ("${L3SRC}", "${SMLSRCDIR}/riscv")' | l3
+	echo 'SMLExport.spec ("${L3SRC}", "${SMLSRCDIR}/riscv intinf")' | l3
 
-l3riscv: ${SMLLIB} ${SMLSRC} Makefile
+l3riscv.poly: ${SMLLIB} ${SMLSRC} Makefile
+	cd ${SMLSRCDIR} && $(POLYC) -o $@ poly_run.sml
+
+l3riscv.mlton: ${SMLLIB} ${SMLSRC} Makefile
 	$(MLTON) $(MLTON_OPTS) \
               $(MLTON_LIB_OPTS) \
               -output $@ ${SMLSRCDIR}/$(MLBFILE) $(L3LIBDIR)/sse_float.c $(L3LIBDIR)/mlton_sse_float.c
