@@ -18,7 +18,7 @@ SMLLIB=$(patsubst %, $(SMLLIBDIR)/%, $(SMLLIBSRC))
 # generating the sml source list
 #######################################
 SMLSRCBASE+=riscv.sig riscv.sml
-SMLSRCBASE+=model.sig model.sml mlton_run.sml poly_run.sml
+SMLSRCBASE+=model.sml mlton_run.sml poly_run.sml
 SMLSRCBASE+=l3riscv.mlb
 SMLSRCBASE+=riscv_oracle.c
 MLBFILE=l3riscv.mlb
@@ -46,13 +46,13 @@ POLYC = polyc
 # make targets
 #######################################
 
-all: l3riscv.poly # l3riscv.mlton ilspec holspec
+all: l3riscv.poly l3riscv.mlton ilspec holspec
 
 ${SMLSRCDIR}/riscv.sig ${SMLSRCDIR}/riscv.sml: ${L3SRC}
 	echo 'SMLExport.spec ("${L3SRC}", "${SMLSRCDIR}/riscv intinf")' | l3
 
 l3riscv.poly: ${SMLLIB} ${SMLSRC} Makefile
-	cd ${SMLSRCDIR} && $(POLYC) -o $@ poly_run.sml
+	$(POLYC) -o $@ ${SMLSRCDIR}/poly_run.sml
 
 l3riscv.mlton: ${SMLLIB} ${SMLSRC} Makefile
 	$(MLTON) $(MLTON_OPTS) \

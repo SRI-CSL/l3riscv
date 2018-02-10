@@ -11,16 +11,14 @@
  * See the LICENSE file for details.
  *)
 
-structure model : model = struct
-
 (* --------------------------------------------------------------------------
    RISCV emulator
    -------------------------------------------------------------------------- *)
 
 (* Default Configuration *)
 
-val mem_base_addr   = ref (Word64.fromInt 0x80000000) (* default used in spike *)
-val mem_size        = ref (Word64.fromInt 0)
+val mem_base_addr   = ref (IntInf.fromInt 0x80000000) (* default used in spike *)
+val mem_size        = ref (IntInf.fromInt 0)
 
 (* Execution parameters *)
 
@@ -32,7 +30,7 @@ val reset_addr  = 0x1000  (* default used in spike *)
 val be          = ref false (* little-endian *)
 val time_run    = ref true
 
-val trace_lvl   = ref 0
+val trace_lvl   = ref (0 : int)
 val trace_elf   = ref false
 
 val check           = ref false
@@ -49,9 +47,10 @@ fun phex n = StringCvt.padLeft #"0" (n div 4) o hex
 val hex32  = phex 32
 val hex64  = phex 64
 
-fun hx32 n = Word32.fmt StringCvt.HEX n
-fun hx64 n = Word64.fmt StringCvt.HEX n
-fun hxi  n = Int.fmt    StringCvt.HEX n
+fun hx32  n = Word32.fmt StringCvt.HEX n
+fun hx64  n = Word64.fmt StringCvt.HEX n
+fun hxi   n = Int.fmt    StringCvt.HEX n
+fun hxi64 n = IntInf.fmt StringCvt.HEX n
 
 fun failExit s = ( print (s ^ "\n"); OS.Process.exit OS.Process.failure )
 fun err e s = failExit ("Failed to " ^ e ^ " file \"" ^ s ^ "\"")
@@ -60,13 +59,14 @@ fun debugPrint s = print("==DEBUG== "^s)
 fun debugPrintln s = print("==DEBUG== "^s^"\n")
 
 fun mkMask64 w =
-    Word64.-(Word64.<<(Word64.fromInt 0x1, Word.fromInt (BitsN.toUInt w)),
+    Word64.-(Word64.<<(Word64.fromInt 0x1,
+                       Word.fromInt (IntInf.toInt (BitsN.toUInt w))),
              Word64.fromInt 0x1)
 
 (* Bit vector utilities *)
 
 fun word8ToBits8 word8 =
-    BitsN.B (Word8.toInt word8, 8)
+    BitsN.fromInt (Word8.toLargeInt word8, 8)
 
 fun getByte v i =
     if   i < Word8Vector.length v
@@ -77,13 +77,14 @@ fun getByte v i =
 
 (* TODO: this might be broken for big-endian code, but RISCV is
    little-endian by default. *)
-fun storeVecInMemHelper vec base i =
+fun storeVecInMemHelper vec (base : int) (i : int) =
     let val j = 8*i;
         val bytes0  = List.tabulate (8, fn inner => getByte vec (j+inner));
         val bytes1  = if !be then bytes0 else rev bytes0
         val bits64  = BitsN.concat bytes1
+        val addr    = IntInf.fromInt (base + j)
     in  if   j < Word8Vector.length vec
-        then ( riscv.rawWriteMem (BitsN.fromInt ((base + j), 64), bits64)
+        then ( riscv.rawWriteMem (BitsN.fromInt (addr, IntInf.fromInt 64), bits64)
              ; storeVecInMemHelper vec base (i+1)
              )
         else
@@ -92,7 +93,7 @@ fun storeVecInMemHelper vec base i =
             else ()
     end
 
-fun storeVecInMem (base, memsz, vec) =
+fun storeVecInMem (base : int, memsz : int, vec) =
     let val vlen   = Word8Vector.length vec
         val padded = if memsz <= vlen then vec
                      else (
@@ -119,7 +120,7 @@ fun isLastCore () =
 
 fun printLog () =
     ( List.app (fn (n, l) =>
-                   if n <= !trace_lvl
+                   if IntInf.toInt n <= !trace_lvl
                    then print (l ^ "\n")
                    else ()
                ) (List.rev (!riscv.log))
@@ -134,10 +135,9 @@ fun dumpRegisters core =
         val pc          = riscv.Map.lookup(!riscv.c_PC, core)
     in  riscv.scheduleCore core
       ; print "======   Registers   ======\n"
-      ; print ("Core = " ^ Int.toString(core) ^ "\n")
+      ; print ("Core = " ^ IntInf.toString core ^ "\n")
       ; let val w   = #rinstr (riscv.Delta ())
-            val w32 = Int32.toInt (Int32.fromInt (BitsN.toInt w))
-            val i   = riscv.Decode (BitsN.fromInt (w32, 32))
+            val i   = riscv.Decode w
         in  print ("Faulting instruction: (0x" ^ hex32 w ^ ") "
                    ^ riscv.instructionToString i
                    ^ "\n\n")
@@ -145,17 +145,17 @@ fun dumpRegisters core =
 
       ; print ("PC     " ^ hex64 pc ^ "\n")
       ; L3.for
-            (0, 31,
+            (IntInf.fromInt 0, IntInf.fromInt 31,
              fn i =>
-                print ("reg " ^ (if i < 10 then " " else "") ^
-                       Int.toString i ^ " " ^ readReg i ^ "\n"))
+                print ("reg " ^ (if IntInf.< (i, 10) then " " else "") ^
+                       IntInf.toString i ^ " " ^ readReg i ^ "\n"))
       ; riscv.scheduleCore savedCore
     end
 end
 
 fun disassemble pc range =
     if range <= 0 then ()
-    else let val addr = BitsN.fromInt (IntInf.toInt pc, 64)
+    else let val addr = BitsN.fromInt (pc, IntInf.fromInt 64)
              val word = riscv.rawReadInst (addr)
              val inst = riscv.Decode word
          in  print ("0x" ^ (L3.padLeftString(#"0", (10, BitsN.toHexString addr)))
@@ -181,29 +181,17 @@ fun loadChecker filename =
     ()
 
 fun doCheck () =
-    let val delta       = riscv.Delta ()
-        fun toI64  b    = Int64.fromInt (BitsN.toInt b)
-        fun fromOpt ot  = case ot of SOME (b) => toI64 b | NONE => 0
-        val exc_taken   = #exc_taken delta
-        val pc          = toI64   (#pc      delta)
-        val addr        = fromOpt (#addr    delta)
-        val data3       = toI64   (#rinstr  delta)
-        val data1       = fromOpt (#data1   delta)
-        val data2       = fromOpt (#data2   delta)
-        val fp_data     = fromOpt (#fp_data delta)
-        val verbosity   = Int32.fromInt (!trace_lvl)
-    in  if true
-        then ()
-        else ( print "Verification error:\n"
-             ; dumpRegisters (currentCore ())
-             ; failExit "Verification FAILED!\n"
-             )
-    end
+    if true
+    then ()
+    else ( print "Verification error:\n"
+         ; dumpRegisters (currentCore ())
+         ; failExit "Verification FAILED!\n"
+         )
 
 fun isCheckerDone () =
     if !check then
         let val pc   = BitsN.toUInt (riscv.Map.lookup(!riscv.c_PC, 0))
-            val pc64 = Word64.fromInt pc
+            val pc64 = Word64.fromInt (IntInf.toInt pc)
         in  Word64.compare (!checker_exit_pc, pc64) = EQUAL
         end
     else false
@@ -263,8 +251,9 @@ end
 (* Platform initialization *)
 
 fun insertBootCode () =
-    let val auipc_val = Word64.toInt(Word64.-(!mem_base_addr, Word64.fromInt reset_addr))
-        val auipc_imm = BitsN.>>+ (BitsN.fromInt (auipc_val, 32), 12)
+    let val auipc_val = IntInf.-(!mem_base_addr, IntInf.fromInt reset_addr)
+        val auipc_imm = BitsN.>>+ (BitsN.fromInt (auipc_val, IntInf.fromInt 32),
+                                   12)
         val boot_code =
             [ (* auipc t0, 0x7ffff *)
               riscv.ArithI(riscv.AUIPC(BitsN.fromNat (5, 5), auipc_imm))
@@ -272,14 +261,14 @@ fun insertBootCode () =
               riscv.Branch(riscv.JALR(BitsN.fromNat (0, 5), (BitsN.fromNat (5, 5), BitsN.zero 12)))
             ]
         val boot_vec = List.map riscv.Encode boot_code
-        fun insert addr insns =
+        fun insert (addr : IntInf.int) insns =
             case insns of
                 i :: tl        => ( riscv.rawWriteData (BitsN.fromInt (addr, 64), (i, 4))
-                                  ; insert (addr + 4) tl
+                                  ; insert (IntInf.+ (addr, 4)) tl
                                   )
               | []             => ()
     in print ("L3RISCV: Loading reset code at " ^ hxi reset_addr ^ "\n")
-     ; insert reset_addr (List.map riscv.Encode boot_code)
+     ; insert (IntInf.fromInt reset_addr) (List.map riscv.Encode boot_code)
     end
 
 fun initPlatform cores =
@@ -315,25 +304,27 @@ fun initCores (arch, pc) =
 fun loadElf segms dis =
     List.app (fn s =>
                  if (#ptype s) = Elf.PT_LOAD
-                 then ( if !trace_elf
-                        then ( print ( "Loading segment ...\n")
-                             ; Elf.printSegment s
-                             )
-                        else ()
-                      ; storeVecInMem ((#vaddr s), (#memsz s), (#bytes s))
-                      (* update memory range *)
-                      ; if Word64.<(Word64.fromInt (#vaddr s), !mem_base_addr)
-                        then mem_base_addr := Word64.fromInt (#vaddr s)
-                        else ()
-                      ; if Word64.>( Word64.fromInt ((#vaddr s) + (#memsz s))
-                                   , !mem_base_addr + !mem_size)
-                        then mem_size := Word64.-( Word64.fromInt ((#vaddr s) + (#memsz s))
-                                                 , !mem_base_addr)
-                        else ()
-                      (* TODO: should check flags for executable segment *)
-                      ; if dis then disassemble (#vaddr s) (#memsz s)
-                        else ()
-                      )
+                 then (let val vaddr   = Int.fromLarge (#vaddr s)
+                           val memsz   = Int.fromLarge (#memsz s)
+                           val mem_end = IntInf.toInt (IntInf.+ (!mem_base_addr, !mem_size))
+                       in
+                           if !trace_elf
+                           then ( print ( "Loading segment ...\n")
+                                ; Elf.printSegment s
+                                )
+                           else ()
+                         ; storeVecInMem (vaddr, memsz, (#bytes s))
+                         (* update memory range *)
+                         ; if vaddr < IntInf.toInt (!mem_base_addr)
+                           then mem_base_addr := IntInf.fromInt vaddr
+                           else ()
+                         ; if vaddr + memsz > mem_end
+                           then mem_size := IntInf.fromInt (vaddr + memsz - mem_end)
+                           else ()
+                         (* TODO: should check flags for executable segment *)
+                         ; if dis then disassemble (#vaddr s) (#memsz s)
+                           else ()
+                       end)
                  else ( print ("Skipping segment ...\n")
                       ; Elf.printSegment s
                       )
@@ -349,9 +340,9 @@ fun set_tohost (tohost : Elf.symb option) =
         NONE   =>
         print "L3RISCV: no tohost symbol found!\n"
      |  SOME s =>
-        let val addr = #syvalue s
+        let val addr = Int.fromLarge (#syvalue s)
         in print ("L3RISCV: tohost mapped to 0x" ^ (hxi addr) ^ "\n")
-         ; riscv.htif_tohost_addr := BitsN.fromInt(addr, 64)
+         ; riscv.htif_tohost_addr := BitsN.fromInt(IntInf.fromInt addr, IntInf.fromInt 64)
         end
 
 fun setupElf file dis =
@@ -361,12 +352,12 @@ fun setupElf file dis =
         val sects  = Elf.getSections elf hdr
         val nsects = Elf.getNamedSections elf hdr sects
         val symbs  = Elf.getSymbols elf hdr nsects
-        val pc     = if !boot then reset_addr else (#entry hdr)
+        val pc     = if !boot then reset_addr else (LargeInt.toInt (#entry hdr))
         val tohost = List.find (match_symb "tohost") symbs
     in  set_tohost tohost
       ; initCores ( if (#class hdr) = Elf.BIT_32
                     then riscv.RV32I else riscv.RV64I
-                  , pc
+                  , IntInf.fromInt pc
                   )
       ; print ("L3RISCV: pc set to 0x" ^ (hx64 (Word64.fromInt pc))
                ^ (if !boot then " [boot]\n" else " [elf]\n"))
@@ -380,9 +371,9 @@ fun setupElf file dis =
       ; be := (if (#endian hdr = Elf.BIG) then true else false)
       ; loadElf segms dis
       ; if !trace_elf
-        then ( print ("\nMem base: " ^ (hx64 (!mem_base_addr)))
-             ; print ("\nMem size: " ^ (hx64 (!mem_size))
-                      ^ " (" ^ (Word64.fmt StringCvt.DEC (!mem_size)) ^ ")\n")
+        then ( print ("\nMem base: " ^ (hxi64 (!mem_base_addr)))
+             ; print ("\nMem size: " ^ (hxi64 (!mem_size))
+                      ^ " (" ^ (IntInf.fmt StringCvt.DEC (!mem_size)) ^ ")\n")
              )
         else ()
     end
@@ -426,7 +417,7 @@ fun strOfMsg m =
 
 
 fun doInstrRetire (exc, pc, addr, d1, d2, d3, fpd, v) =
-    let fun toW64 bits      = Word64.fromInt (BitsN.toUInt bits)
+    let fun toW64 bits      = Word64.fromInt (IntInf.toInt (BitsN.toUInt bits))
         val rpc             = toW64 (riscv.PC ())
         fun eqW64 a b       = Word64.compare (a, b) = EQUAL
         fun checkOpt ot v   = case ot of
@@ -484,63 +475,6 @@ fun doInstrRetire (exc, pc, addr, d1, d2, d3, fpd, v) =
                  ; failExit ("VERIFICATION_FAILURE")
                  )
         end
-    end
-
-fun doReset (exc, pc, addr, d1, d2, d3, fpd, v) =
-    ( verifierTrace (1, "reset at pc " ^ hx64 pc)
-    ; 0
-    )
-
-fun doWriteMem (exc, pc, addr, d1, d2, d3, fpd, v) =
-    ( verifierTrace (2, "mem[" ^ hx64 addr ^ "] <- " ^ hx64 d2)
-    ; 0
-    )
-
-fun doWriteGPR (exc, pc, addr, d1, d2, d3, fpd, v) =
-    ( verifierTrace (1, "writeGPR at pc " ^ hx64 pc)
-    ; 0
-    )
-
-fun doWriteCSR (exc, pc, addr, d1, d2, d3, fpd, v) =
-    ( verifierTrace (1, "writeCSR at pc " ^ hx64 pc)
-    ; 0
-    )
-
-fun doWriteFPR (exc, pc, addr, d1, d2, d3, fpd, v) =
-    ( verifierTrace (1, "writeFPR at pc " ^ hx64 pc)
-    ; 0
-    )
-
-fun doWriteFSR (exc, pc, addr, d1, d2, d3, fpd, v) =
-    ( verifierTrace (1, "writeFSR at pc " ^ hx64 pc)
-    ; 0
-    )
-
-fun doWritePC (exc, pc, addr, d1, d2, d3, fpd, v) =
-    ( verifierTrace (1, "writePC at pc " ^ hx64 pc)
-    ; 0
-    )
-
-fun doUnknown m (exc, pc, addr, d1, d2, d3, fpd, v) =
-    ( verifierTrace (0, "UNKNOWN msg " ^ hx32 m
-                        ^ " at pc "    ^ hx64 pc)
-    ; 0
-    )
-
-fun verifyInstr (cpu, m, exc, pc, addr, d1, d2, d3, fpd, v) =
-    (* FIXME: use cpu for multi-core verification *)
-    let val msgType = typeOfMsg (Word32.toInt m)
-        val msg     = (exc, pc, addr, d1, d2, d3, fpd, v)
-    in  case msgType of
-            SOME InstrRetire => doInstrRetire msg
-          | SOME Reset       => doReset msg
-          | SOME WriteMem    => 0 (* doWriteMem msg *)
-          | SOME WriteGPR    => doWriteGPR msg
-          | SOME WriteCSR    => doWriteCSR msg
-          | SOME WriteFPR    => doWriteFPR msg
-          | SOME WriteFSR    => doWriteFSR msg
-          | SOME WritePC     => doWritePC  msg
-          | NONE             => doUnknown  m msg
     end
 
 fun initModel () =
@@ -609,13 +543,14 @@ fun main () =
 
             val c = Option.getOpt (Option.map getNumber c, ~1)
             val d = Option.getOpt (Option.map getBool d, !trace_elf)
-            val t = Option.getOpt (Option.map getNumber t, !trace_lvl)
+            val t = Option.getOpt (Option.map getNumber t,
+                                   (IntInf.fromInt (!trace_lvl)))
             val m = Option.getOpt (Option.map getNumber m, 1)
             val k = Option.getOpt (Option.map getBool k, !check)
             val v = Option.getOpt (Option.map getBool v, !verifier_mode)
             val b = Option.getOpt (Option.map getBool b, !boot)
 
-            val () = trace_lvl      := Int.max (0, t)
+            val () = trace_lvl      := Int.max (0, IntInf.toInt t)
             val () = check          := k
             val () = trace_elf      := d
             val () = verifier_mode  := v
@@ -626,8 +561,6 @@ fun main () =
             else ( initPlatform (m)
                  ; if !verifier_mode
                    then initModel ()
-                   else doElf c (List.hd l) d
+                   else doElf (IntInf.toInt c) (List.hd l) d
                  )
         end
-
-end (* struct *)

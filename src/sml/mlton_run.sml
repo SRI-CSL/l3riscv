@@ -13,5 +13,4 @@
 
 (* Outer shell for Mlton *)
 
-val () =
-    model.main ()
+val () = main ()

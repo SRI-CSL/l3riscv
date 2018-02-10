@@ -159,15 +159,15 @@ fun stypeToString t =
 
 (* binary processing utilities *)
 
-fun extract_bin fd ofs width =
+fun extract_bin fd (ofs : Position.int) (width : int) : Word8Vector.vector =
     let val ofs  = Posix.IO.lseek(fd, ofs, Posix.IO.SEEK_SET)
     in  Posix.IO.readVec(fd, width) (* TODO: handle under-reads. *)
     end
 
-fun toInt endian v =
+fun toInt endian v : IntInf.int =
     (case endian of
-         BIG    => Vector.foldli
-      |  LITTLE => Vector.foldri
+         BIG    => Word8Vector.foldli
+      |  LITTLE => Word8Vector.foldri
     ) (fn (i, v, acc) =>
           IntInf.orb (IntInf.<< (acc, Word.fromInt 8), IntInf.fromInt (Word8.toInt v))
       ) (IntInf.fromInt 0) v
@@ -193,7 +193,7 @@ fun locateCStringEnd buf ofs =
     in  if ofs < 0 then NONE else search ofs
     end
 
-fun extractCString buf ofs =
+fun extractCString buf (ofs : int) =
     case locateCStringEnd buf ofs of
         NONE     => NONE
      |  SOME idx => SOME (Substring.substring(buf, ofs, idx - ofs))
@@ -203,12 +203,12 @@ fun extractCString buf ofs =
 fun openElf fname =
     Posix.FileSys.openf (fname, Posix.FileSys.O_RDONLY, Posix.FileSys.O.sync)
 
-val ELF_MAGIC = Vector.fromList [ 0x7F, 0x45, 0x4c, 0x46 ]
+val ELF_MAGIC = Word8Vector.fromList [ 0wx7F, 0wx45, 0wx4c, 0wx46 ]
 fun isELFFile fd =
-    let val magic = extract_bin fd (Int64.fromInt 0) 4
-    in  Vector.foldli
+    let val magic = extract_bin fd (Position.fromInt 0) 4
+    in  Word8Vector.foldli
             (fn (idx, v, acc) =>
-                acc andalso (Word8.fromInt (Vector.sub (ELF_MAGIC, idx)) = v)
+                acc andalso (Word8Vector.sub (ELF_MAGIC, idx) = v)
             ) true magic
     end
 
@@ -280,13 +280,13 @@ fun getPhdr (fd : elf_file) (hdr : hdr) i =
                               val ent_skip  = LargeInt.* (i, (#phesz hdr))
                               val ent_off   = LargeInt.+ ((#phoff hdr), ent_skip)
                               val fld_off   = LargeInt.+ (ent_off, off)
-                          in  extract_bin fd (Int64.fromLarge fld_off) wd
+                          in  extract_bin fd (Position.fromLarge fld_off) wd
                           end
         fun int_field loc = toInt endian (ex_field (loc c))
         val p_flags     = int_field flags_loc
         val p_offset    = int_field offset_loc
         val p_filesz    = int_field filesz_loc
-        val offset      = Int64.fromLarge (IntInf.toLarge p_offset)
+        val offset      = Position.fromLarge (IntInf.toLarge p_offset)
         val nbytes      = IntInf.toInt p_filesz
     in { ptype  = toPType (int_field ptype_loc)
        , offset = p_offset
@@ -309,7 +309,7 @@ fun printSegment (segm : segm) =
              ^ "\n")
     ; print ("\tFileSize: "
              ^ (Int.fmt StringCvt.HEX (Word8Vector.length (#bytes segm)))
-             ^ " (" ^ (IntInf.toString (Word8Vector.length (#bytes segm))) ^ ")"
+             ^ " (" ^ (Int.toString (Word8Vector.length (#bytes segm))) ^ ")"
              ^ "\n")
     )
 
@@ -330,10 +330,10 @@ fun extractSection fd (sect : sect) =
     case #stype sect of
         SHT_NOBITS => ""
       | _ =>
-        ( let val ofs  = Posix.IO.lseek(fd, Int64.fromInt (#soffs sect), Posix.IO.SEEK_SET)
-              val fvec = Posix.IO.readVec(fd, #ssize sect)
-              val flen = Vector.length fvec
-              val elen = #ssize sect
+        ( let val ofs  = Posix.IO.lseek(fd, Position.fromLarge (#soffs sect), Posix.IO.SEEK_SET)
+              val fvec = Posix.IO.readVec(fd, LargeInt.toInt (#ssize sect))
+              val flen = Word8Vector.length fvec
+              val elen = LargeInt.toInt (#ssize sect)
           in  if flen <> elen
               then raise Fail ("Error extracting contents from "
                                ^ (stypeToString (#stype sect))
@@ -358,7 +358,7 @@ fun getShdr (fd : elf_file) (hdr : hdr) i =
                               val ent_skip  = LargeInt.* (i, (#shesz hdr))
                               val ent_off   = LargeInt.+ ((#shoff hdr), ent_skip)
                               val fld_off   = LargeInt.+ (ent_off, off)
-                          in  extract_bin fd (Int64.fromLarge fld_off) wd
+                          in  extract_bin fd (Position.fromLarge fld_off) wd
                           end
         fun int_field loc = toInt endian (ex_field (loc c))
     in { snmidx = int_field snmidx_loc
@@ -393,7 +393,7 @@ fun getNamedSections fd (hdr : hdr) (sects : sect list) =
                                                        ^ (Int.toString shsndx)
                                                        ^ "in Elf-header")
         val shs_buf  = extractSection fd shs_sect
-        fun nm sect  = extractCString shs_buf (#snmidx sect)
+        fun nm sect  = extractCString shs_buf (LargeInt.toInt (#snmidx sect))
     in  List.map (fn s => (nm s, s)) sects
     end
 
@@ -429,17 +429,17 @@ fun syvalue_loc c = if c = BIT_32 then ( 4,4) else ( 8,8)
 fun sysize_loc  c = if c = BIT_32 then ( 8,4) else (16,8)
 fun syinfo_loc  c = if c = BIT_32 then (12,1) else ( 4,1)
 fun syshndx_loc c = if c = BIT_32 then (14,2) else ( 6,2)
-fun getSym (fd : elf_file) (hdr : hdr) (symtab : sect) str_buf i =
+fun getSym (fd : elf_file) (hdr : hdr) (symtab : sect) str_buf (i : int) =
     let val c           = #class  hdr
         val endian      = #endian hdr
         fun ex_field f  = let val (off, wd) = f
-                              val ent_skip  = LargeInt.* (i, (#sentsz symtab))
+                              val ent_skip  = LargeInt.* (LargeInt.fromInt i, (#sentsz symtab))
                               val ent_off   = LargeInt.+ ((#soffs symtab), ent_skip)
                               val fld_off   = LargeInt.+ (ent_off, off)
-                          in  extract_bin fd (Int64.fromLarge fld_off) wd
+                          in  extract_bin fd (Position.fromLarge fld_off) wd
                           end
         fun int_field loc = toInt endian (ex_field (loc c))
-        val name_ofs      = int_field syname_loc
+        val name_ofs      = IntInf.toInt (int_field syname_loc)
     in { syname  = extractCString str_buf name_ofs
        , syshndx = int_field syshndx_loc
        , syvalue = int_field syvalue_loc
@@ -468,7 +468,7 @@ fun getSyms fd hdr (symtab : sect) (strtab : sect) =
         val nsyms     = if syment_sz = LargeInt.toLarge 0
                         then 0
                         else LargeInt.quot (symtab_sz, syment_sz)
-        val sym_idxs  = List.tabulate (nsyms, (fn i => Int.toLarge i))
+        val sym_idxs  = List.tabulate (LargeInt.toInt nsyms, (fn i => i))
         val str_buf   = extractSection fd strtab
     in List.map (getSym fd hdr symtab str_buf) sym_idxs
     end
