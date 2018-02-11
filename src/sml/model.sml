@@ -529,7 +529,7 @@ fun processOption (s: string) =
     in  loop []
     end
 
-fun main () =
+fun main_wrapped () =
     case getArguments () of
         ["--help"] => printUsage ()
       | l =>
@@ -564,3 +564,7 @@ fun main () =
                    else doElf (IntInf.toInt c) (List.hd l) d
                  )
         end
+
+fun main () =
+    main_wrapped ()
+    handle e => print ("Exception error:" ^ (exnMessage e) ^ "\n")
