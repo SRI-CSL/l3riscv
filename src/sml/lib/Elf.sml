@@ -160,7 +160,7 @@ fun stypeToString t =
 (* binary processing utilities *)
 
 fun extract_bin fd (ofs : Position.int) (width : int) : Word8Vector.vector =
-    let val ofs  = Posix.IO.lseek(fd, ofs, Posix.IO.SEEK_SET)
+    let val res  = Posix.IO.lseek(fd, ofs, Posix.IO.SEEK_SET)
     in  Posix.IO.readVec(fd, width) (* TODO: handle under-reads. *)
     end
 
