@@ -245,15 +245,12 @@ string extStatusName(e::ExtStatus) =
 construct InterruptType
 { I_U_Software
 , I_S_Software
-, I_H_Software
 , I_M_Software
 , I_U_Timer
 , I_S_Timer
-, I_H_Timer
 , I_M_Timer
 , I_U_External
 , I_S_External
-, I_H_External
 , I_M_External
 }
 
@@ -261,17 +258,14 @@ exc_code interruptIndex(i::InterruptType) =
     match i
     { case I_U_Software => 0x0
       case I_S_Software => 0x1
-      case I_H_Software => 0x2
       case I_M_Software => 0x3
 
       case I_U_Timer    => 0x4
       case I_S_Timer    => 0x5
-      case I_H_Timer    => 0x6
       case I_M_Timer    => 0x7
 
       case I_U_External => 0x8
       case I_S_External => 0x9
-      case I_H_External => 0xa
       case I_M_External => 0xb
     }
 
@@ -1871,7 +1865,7 @@ bool globallyEnabled(delegate::Privilege, cur::Privilege) =
 { match i
   { case I_M_External => Some(I_M_Software, Machine)
     case I_M_Software => Some(I_M_Timer,    Machine)
-    case I_M_Timer    => Some(I_H_External, Supervisor)
+    case I_M_Timer    => Some(I_S_External, Supervisor)
 
     case I_S_External => Some(I_S_Software, Supervisor)
     case I_S_Software => Some(I_S_Timer,    Supervisor)
@@ -2307,8 +2301,7 @@ paddr32 option translate32(vAddr::vaddr32, ac::accessType, priv::Privilege, mxr:
            -- update dirty bit in page table and TLB if needed
            ; pte_new = updatePTE32(ent.pte_32, ac)
            ; when IsSome(pte_new)
-             do { pte = ValOf(pte_new)
-                ; rawWriteData(ZeroExtend(ent.pteAddr_32), ZeroExtend(ent.&pte_32), 4)
+             do { rawWriteData(ZeroExtend(ent.pteAddr_32), ZeroExtend(ent.&pte_32), 4)
                 ; var tlb = TLB32
                 ; tlb([idx]) <- Some(ent)
                 ; TLB32 <- tlb
@@ -2549,8 +2542,7 @@ paddr39 option translate39(vAddr::vaddr39, ac::accessType, priv::Privilege, mxr:
            -- update dirty bit in page table and TLB if needed
            ; pte_new = updatePTE39(ent.pte_39, ac)
            ; when IsSome(pte_new)
-             do { pte = ValOf(pte_new)
-                ; rawWriteData(ZeroExtend(ent.pteAddr_39), ZeroExtend(ent.&pte_39), 8)
+             do { rawWriteData(ZeroExtend(ent.pteAddr_39), ZeroExtend(ent.&pte_39), 8)
                 ; var tlb = TLB39
                 ; tlb([idx]) <- Some(ent)
                 ; TLB39 <- tlb
