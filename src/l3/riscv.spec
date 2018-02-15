@@ -375,14 +375,11 @@ register mstatus :: regType     -- Machine Status
 , 16-15 : M_XS      -- extension context status
 , 14-13 : M_FS      -- floating-point context status
 , 12-11 : M_MPP     -- per-privilege pre-trap privilege modes
-,  10-9 : M_HPP
 ,     8 : M_SPP
 ,     7 : M_MPIE    -- per-privilege pre-trap interrupt enables
-,     6 : M_HPIE
 ,     5 : M_SPIE
 ,     4 : M_UPIE
 ,     3 : M_MIE     -- per-privilege interrupt enables
-,     2 : M_HIE
 ,     1 : M_SIE
 ,     0 : M_UIE
 }
@@ -757,23 +754,18 @@ record UserCSR
 
 -- update utilities
 
-bool isValidHPP(p::bits(2)) = privilege(p) != Machine
-
 mstatus update_mstatus(orig::mstatus, v::mstatus) =
 { var m = orig
 -- interrupt enables
 ; m.M_UIE   <- v.M_UIE
 ; m.M_SIE   <- v.M_SIE
-; m.M_HIE   <- v.M_HIE
 ; m.M_MIE   <- v.M_MIE
 -- pre-trap interrupt enables
 ; m.M_UPIE  <- v.M_UPIE
 ; m.M_SPIE  <- v.M_SPIE
-; m.M_HPIE  <- v.M_HPIE
 ; m.M_MPIE  <- v.M_MPIE
 -- pre-trap privilege modes
 ; m.M_SPP   <- v.M_SPP
-; m.M_HPP   <- if isValidHPP(v.M_HPP) then v.M_HPP else orig.M_HPP
 ; m.M_MPP   <- v.M_MPP
 
 -- update extension context status
@@ -805,18 +797,6 @@ mstatus menter(v::mstatus, p::Privilege) =
               }
 ; m.M_MPP <- privLevel(p)
 ; m.M_MIE <- false
-; m
-}
-
-mstatus henter(v::mstatus, p::Privilege) =
-{ var m = v
-; m.M_HPIE <- match p
-              { case User       => m.M_UIE
-                case Supervisor => m.M_SIE
-                case Machine    => #INTERNAL_ERROR("Invalid privilege for henter")
-              }
-; m.M_HPP <- privLevel(p)
-; m.M_HIE <- false
 ; m
 }
 
@@ -854,18 +834,6 @@ mstatus mret(v::mstatus) =
   }
 ; m.M_MPP  <- privLevel(User)
 ; m.M_MPIE <- true
-; m
-}
-
-mstatus hret(v::mstatus) =
-{ var m = v
-; match privilege(m.M_HPP)
-  { case User       => m.M_UIE  <- m.M_HPIE
-    case Supervisor => m.M_SIE  <- m.M_HPIE
-    case _          => #INTERNAL_ERROR("Invalid mstatus for HRET")
-  }
-; m.M_HPP  <- privLevel(User)
-; m.M_HPIE <- true
 ; m
 }
 
