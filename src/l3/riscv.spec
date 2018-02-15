@@ -48,8 +48,8 @@ type amo      = bits(1)
 construct accessType { Read, Write, ReadWrite, Execute }
 construct fetchType  { Instruction, Data }
 
-type asid32   = bits(10)
-type asid64   = bits(26)
+type asid32   = bits(9)
+type asid64   = bits(16)
 
 -- RV64* base.
 
@@ -635,14 +635,16 @@ mie of_sie(v::sie, orig::mie) =
 ; m
 }
 
-register sptbr32 :: word
-{ 31-22 : ASID_32
+register satp32 :: word
+{ 31    : MODE_32
+, 30-22 : ASID_32
 , 21-0  : PPN_32
 }
 
-register sptbr64 :: regType
-{ 63-38 : ASID_64
-, 37-0  : PPN_64
+register satp64 :: regType
+{ 63-60 : MODE_64
+, 59-44 : ASID_64
+, 43-0  : PPN_64
 }
 
 record SupervisorCSR
@@ -657,7 +659,7 @@ record SupervisorCSR
   stval         :: regType
   sip           :: sip
 
-  sptbr         :: regType      -- memory protection and translation
+  satp          :: regType      -- address translation and protection
 }
 
 -- User-Level CSRs
@@ -1026,10 +1028,10 @@ bool isFPEnabled() =
     MCSR.misa.F
 
 asid32 curAsid32() =
-    sptbr32(SCSR.sptbr<31:0>).ASID_32
+    satp32(SCSR.satp<31:0>).ASID_32
 
 asid64 curAsid64() =
-    sptbr64(SCSR.sptbr).ASID_64
+    satp64(SCSR.satp).ASID_64
 
 ---------------------------------------------------------------------------
 -- Floating Point
@@ -1231,7 +1233,7 @@ component CSRMap(csr::csreg) :: regType
         case 0x144, true    => SignExtend(ip_to_32(&to_sip(c_MCSR(procID).mip)))
 
         -- supervisor protection and translation
-        case 0x180, _       => c_SCSR(procID).sptbr
+        case 0x180, _       => c_SCSR(procID).satp
 
         -- supervisor counter/timers
         case 0xD00, false   =>             c_MCSR(procID).mcycle   + c_MCSR(procID).mscycle_delta
@@ -1369,8 +1371,8 @@ component CSRMap(csr::csreg) :: regType
 
         -- supervisor protection and translation
         -- TODO: does this update flush the TLB cache?  does it flush the data cache?
-        case 0x180, false   => c_SCSR(procID).sptbr     <- &sptbr64(value)
-        case 0x180, true    => c_SCSR(procID).sptbr     <- SignExtend(&sptbr32(value<31:0>))
+        case 0x180, false   => c_SCSR(procID).satp      <- &satp64(value)
+        case 0x180, true    => c_SCSR(procID).satp      <- SignExtend(&satp32(value<31:0>))
 
         -- supervisor counters/timers are SRO
 
@@ -1462,7 +1464,7 @@ string csrName(csr::csreg) =
       case 0x144  => "sip"
 
       -- supervisor protection and translation
-      case 0x180  => "sptbr"
+      case 0x180  => "satp"
 
       -- supervisor counters/timers
       case 0xD00  => "scycle"
@@ -2097,7 +2099,7 @@ register SV32_PTE   :: pte32
 }
 
 paddr32 curPTB32() =
-    (ZeroExtend(sptbr32(SCSR.sptbr<31:0>).PPN_32) << PAGESIZE_BITS)
+    (ZeroExtend(satp32(SCSR.satp<31:0>).PPN_32) << PAGESIZE_BITS)
 
 -- 32-bit page table walker.  This returns the physical address for
 -- the input vaddr32 as the first element of the returned tuple.  The
@@ -2338,7 +2340,7 @@ register SV39_PTE   :: pte39
 }
 
 paddr39 curPTB39() =
-    (ZeroExtend(sptbr64(SCSR.sptbr).PPN_64) << PAGESIZE_BITS)
+    (ZeroExtend(satp64(SCSR.satp).PPN_64) << PAGESIZE_BITS)
 
 -- 64-bit page table walker.  This returns the physical address for
 -- the input vaddr39 as the first element of the returned tuple.  The
