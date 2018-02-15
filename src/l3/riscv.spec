@@ -5,7 +5,7 @@
 --
 -- Copyright (C) 2014, 2015 Anthony Fox, University of Cambridge
 -- Copyright (C) 2014, 2015 Alexandre Joannou, University of Cambridge
--- Copyright (C) 2015-2017, SRI International.
+-- Copyright (C) 2015-2018, SRI International.
 --
 -- This software was developed by SRI International and the University
 -- of Cambridge Computer Laboratory under DARPA/AFRL contract
@@ -23,9 +23,9 @@
 -- Basic types
 ---------------------------------------------------------------------------
 
-type id       = bits(8)           -- max 256 cores
+type id       = bits(8)         -- max 256 cores
 type reg      = bits(5)
-type creg     = bits(12)
+type csreg    = bits(12)        -- CSR address space
 
 type byte     = bits(8)
 type half     = bits(16)
@@ -79,33 +79,33 @@ memWidth DOUBLEWORD = 7
 -- Processor architecture
 ---------------------------------------------------------------------------
 
-type arch_base = bits(2)
+type arch_xlen = bits(2)
 
 construct Architecture
 {
-  RV32I, RV64I, RV128I
+  RV32, RV64, RV128
 }
 
-arch_base archBase(a::Architecture) =
+arch_xlen archBase(a::Architecture) =
     match a
-    { case RV32I      => 0
-      case RV64I      => 2
-      case RV128I     => 3
+    { case RV32       => 1
+      case RV64       => 2
+      case RV128      => 3
     }
 
-Architecture architecture(ab::arch_base) =
-    match ab
-    { case 0          => RV32I
-      case 2          => RV64I
-      case 3          => RV128I
-      case _          => #UNDEFINED("Unknown architecture: " : [[ab] :: nat])
+Architecture architecture(xlen::arch_xlen) =
+    match xlen
+    { case 1          => RV32
+      case 2          => RV64
+      case 3          => RV128
+      case _          => #UNDEFINED("Unknown architecture: " : [[xlen] :: nat])
     }
 
 string archName(a::Architecture) =
     match a
-    { case RV32I      => "RV32I"
-      case RV64I      => "RV64I"
-      case RV128I     => "RV128I"
+    { case RV32       => "RV32"
+      case RV64       => "RV64"
+      case RV128      => "RV128"
     }
 
 ---------------------------------------------------------------------------
@@ -344,15 +344,18 @@ string excName(e::ExceptionType) =
 -- Machine-Level CSRs
 
 register misa :: regType        -- Machine ISA
-{ 63-62 : ArchBase  -- base architecture, machine mode on reset
+{ 63-62 : MXL       -- machine XLEN
 ,    23 : X         -- non-standard extensions
 ,    20 : U         -- user-mode
 ,    18 : S         -- supervisor-mode
 ,    13 : N         -- user-level interrupts
 ,    12 : M         -- integer multiply/divide
-,     8 : I         -- integer base ISA support
+,     8 : I         -- RV32I/RV64I base ISA
+,     7 : H         -- hypervisor
+,     6 : G         -- additional standard extensions
 ,     5 : F         -- single-precision floating-point
 ,     3 : D         -- double-precision floating-point
+,     2 : C         -- compressed (RVC)
 ,     0 : A         -- atomics
 }
 
@@ -483,15 +486,8 @@ record MachineCSR
   mscratch      :: regType      -- trap handling
   mepc          :: regType
   mcause        :: mcause
-  mbadaddr      :: regType
+  mtval         :: regType
   mip           :: mip
-
-  mbase         :: regType      -- protection and translation
-  mbound        :: regType
-  mibase        :: regType
-  mibound       :: regType
-  mdbase        :: regType
-  mdbound       :: regType
 
   mcycle        :: regType      -- timers and counters
   mtime         :: regType
@@ -658,7 +654,7 @@ record SupervisorCSR
   sscratch      :: regType      -- trap handling
   sepc          :: regType
   scause        :: mcause
-  sbadaddr      :: regType
+  stval         :: regType
   sip           :: sip
 
   sptbr         :: regType      -- memory protection and translation
@@ -752,7 +748,7 @@ record UserCSR
   uscratch      :: regType      -- trap handling
   uepc          :: regType
   ucause        :: mcause
-  ubadaddr      :: regType
+  utval         :: regType
 
   fpcsr         :: FPCSR        -- floating-point
 }
@@ -1021,10 +1017,10 @@ component curPrivilege :: Privilege
 -- machine state utilities
 
 Architecture curArch() =
-    architecture(MCSR.misa.ArchBase)
+    architecture(MCSR.misa.MXL)
 
 bool in32BitMode() =
-    curArch() == RV32I
+    curArch() == RV32
 
 bool isFPEnabled() =
     MCSR.misa.F
@@ -1131,15 +1127,15 @@ unit setFP_Inexact() =
 type csrRW    = bits(2)         -- read/write check
 type csrPR    = bits(2)         -- privilege check
 
-csrRW csrRW(csr::creg)  = csr<11:10>
-csrPR csrPR(csr::creg)  = csr<9:8>
+csrRW csrRW(csr::csreg)  = csr<11:10>
+csrPR csrPR(csr::csreg)  = csr<9:8>
 
 -- this only checks register-level access.  some registers have
 -- additional bit-specific read/write controls.
 bool check_CSR_access(rw::csrRW, pr::csrPR, p::Privilege, a::accessType) =
     (a == Read or rw != 0b11) and (privLevel(p) >=+ pr)
 
-bool is_CSR_defined(csr::creg) =
+bool is_CSR_defined(csr::csreg) =
     -- user-mode
     csr == 0x000  or  csr == 0x004 or csr == 0x005
  or (csr >= 0x001 and csr <= 0x003 and isFPEnabled())
@@ -1179,7 +1175,7 @@ bool is_CSR_defined(csr::creg) =
       or (csr >= 0x784 and csr <= 0x786)
       or (csr >= 0x788 and csr <= 0x78A)) and in32BitMode())
 
-component CSRMap(csr::creg) :: regType
+component CSRMap(csr::csreg) :: regType
 { value =
   -- Implementation note: in 32-bit mode, 32-bit CSR values are
   -- sign-extended so that the sign-bit is preserved.
@@ -1196,7 +1192,7 @@ component CSRMap(csr::creg) :: regType
         case 0x041, _       => c_UCSR(procID).uepc
         case 0x042, false   => c_UCSR(procID).&ucause
         case 0x042, true    => SignExtend(cause_to_32(c_UCSR(procID).&ucause))
-        case 0x043, _       => c_UCSR(procID).ubadaddr
+        case 0x043, _       => c_UCSR(procID).utval
         case 0x044, false   => &to_uip(c_MCSR(procID).mip)
         case 0x044, true    => SignExtend(&to_uip(c_MCSR(procID).mip))
 
@@ -1230,7 +1226,7 @@ component CSRMap(csr::creg) :: regType
         case 0x141, _       => c_SCSR(procID).sepc
         case 0x142, false   => c_SCSR(procID).&scause
         case 0x142, true    => SignExtend(cause_to_32(c_SCSR(procID).&scause))
-        case 0x143, _       => c_SCSR(procID).sbadaddr
+        case 0x143, _       => c_SCSR(procID).stval
         case 0x144, false   => &to_sip(c_MCSR(procID).mip)
         case 0x144, true    => SignExtend(ip_to_32(&to_sip(c_MCSR(procID).mip)))
 
@@ -1270,17 +1266,12 @@ component CSRMap(csr::creg) :: regType
         case 0x341, _       => c_MCSR(procID).mepc
         case 0x342, false   => c_MCSR(procID).&mcause
         case 0x342, true    => SignExtend(cause_to_32(c_MCSR(procID).&mcause))
-        case 0x343, _       => c_MCSR(procID).mbadaddr
+        case 0x343, _       => c_MCSR(procID).mtval
         case 0x344, false   => c_MCSR(procID).&mip
         case 0x344, true    => SignExtend(ip_to_32(c_MCSR(procID).&mip))
 
         -- machine protection and translation
-        case 0x380, _       => c_MCSR(procID).mbase
-        case 0x381, _       => c_MCSR(procID).mbound
-        case 0x382, _       => c_MCSR(procID).mibase
-        case 0x383, _       => c_MCSR(procID).mibound
-        case 0x384, _       => c_MCSR(procID).mdbase
-        case 0x385, _       => c_MCSR(procID).mdbound
+        -- TODO
 
         -- machine counter/timers
         case 0xF00, false   => c_MCSR(procID).mcycle
@@ -1338,7 +1329,7 @@ component CSRMap(csr::creg) :: regType
         case 0x041, _       => c_UCSR(procID).uepc      <- (value && SignExtend(0b100`3)) -- no 16-bit instr support
         case 0x042, false   => c_UCSR(procID).&ucause   <- value
         case 0x042, true    => c_UCSR(procID).&ucause   <- cause_of_32(value<31:0>)
-        case 0x043, _       => c_UCSR(procID).ubadaddr  <- value
+        case 0x043, _       => c_UCSR(procID).utval     <- value
         case 0x044, false   => c_MCSR(procID).mip       <- of_uip(uip(value), c_MCSR(procID).mip)
         case 0x044, true    => c_MCSR(procID).mip       <- of_uip(uip(ip_of_32(value<31:0>)), c_MCSR(procID).mip)
 
@@ -1372,7 +1363,7 @@ component CSRMap(csr::creg) :: regType
         case 0x141, _       => c_SCSR(procID).sepc      <- (value && SignExtend(0b100`3)) -- no 16-bit instr support
         case 0x142, false   => c_SCSR(procID).&scause   <- value
         case 0x142, true    => c_SCSR(procID).&scause   <- cause_of_32(value<31:0>)
-        case 0x143, _       => c_SCSR(procID).sbadaddr  <- value
+        case 0x143, _       => c_SCSR(procID).stval     <- value
         case 0x144, false   => c_MCSR(procID).mip       <- of_sip(sip(value), c_MCSR(procID).mip)
         case 0x144, true    => c_MCSR(procID).mip       <- of_sip(sip(ip_of_32(value<31:0>)), c_MCSR(procID).mip)
 
@@ -1401,17 +1392,12 @@ component CSRMap(csr::creg) :: regType
         case 0x341, _       => c_MCSR(procID).mepc      <- (value && SignExtend(0b100`3))  -- no 16-bit instr support
         case 0x342, false   => c_MCSR(procID).&mcause   <- value
         case 0x342, true    => c_MCSR(procID).&mcause   <- cause_of_32(value<31:0>)
-        case 0x343, _       => c_MCSR(procID).mbadaddr  <- value
+        case 0x343, _       => c_MCSR(procID).mtval     <- value
         case 0x344, false   => c_MCSR(procID).&mip      <- value
         case 0x344, true    => c_MCSR(procID).&mip      <- ip_of_32(value<31:0>)
 
         -- machine protection and translation
-        case 0x380, _       => c_MCSR(procID).mbase     <- value
-        case 0x381, _       => c_MCSR(procID).mbound    <- value
-        case 0x382, _       => c_MCSR(procID).mibase    <- value
-        case 0x383, _       => c_MCSR(procID).mibound   <- value
-        case 0x384, _       => c_MCSR(procID).mdbase    <- value
-        case 0x385, _       => c_MCSR(procID).mdbound   <- value
+        -- TODO
 
         -- machine counters/timers are MRO
 
@@ -1441,7 +1427,7 @@ component CSRMap(csr::creg) :: regType
       }
 }
 
-string csrName(csr::creg) =
+string csrName(csr::csreg) =
     match csr
     { -- user trap setup
       case 0x000  => "ustatus"
@@ -1472,7 +1458,7 @@ string csrName(csr::creg) =
       case 0x140  => "sscratch"
       case 0x141  => "sepc"
       case 0x142  => "scause"
-      case 0x143  => "sbadaddr"
+      case 0x143  => "stval"
       case 0x144  => "sip"
 
       -- supervisor protection and translation
@@ -1504,16 +1490,11 @@ string csrName(csr::creg) =
       case 0x340  => "mscratch"
       case 0x341  => "mepc"
       case 0x342  => "mcause"
-      case 0x343  => "mbadaddr"
+      case 0x343  => "mtval"
       case 0x344  => "mip"
 
       -- machine protection and translation
-      case 0x380  => "mbase"
-      case 0x381  => "mbound"
-      case 0x382  => "mibase"
-      case 0x383  => "mibound"
-      case 0x384  => "mdbase"
-      case 0x385  => "mdbound"
+      -- TODO
 
       -- machine counters/timers
       case 0xF00  => "mcycle"
@@ -1634,7 +1615,7 @@ unit recordFetchException(pc::regType) =
 string hex32(x::word)  = PadLeft(#"0", 8, [x])
 string hex64(x::dword) = PadLeft(#"0", 16, [x])
 
-string log_w_csr(csr::creg, data::regType) =
+string log_w_csr(csr::csreg, data::regType) =
     "CSR (" : csrName(csr) : ") <- 0x" : hex64(data)
 
 string reg(r::reg) =
@@ -1820,7 +1801,7 @@ unit excHandler(intr::bool, ec::exc_code, fromPriv::Privilege, toPriv::Privilege
                        ; MCSR.mepc              <- epc
                        ; MCSR.mcause.M_Intr     <- intr
                        ; MCSR.mcause.M_ExcCause <- ZeroExtend(ec)
-                       ; MCSR.mbadaddr          <- if IsSome(badaddr) then ValOf(badaddr) else SignExtend(0b1`1)
+                       ; MCSR.mtval             <- if IsSome(badaddr) then ValOf(badaddr) else SignExtend(0b1`1)
                        ; PC                     <- MCSR.mtvec
                        }
     case Supervisor => { MCSR.mstatus           <- senter(MCSR.mstatus, fromPriv)
@@ -1902,14 +1883,14 @@ bool globallyEnabled(delegate::Privilege, cur::Privilege) =
 -- CSR access with logging
 ---------------------------------------------------------------------------
 
-component CSR(n::creg) :: regType
+component CSR(n::csreg) :: regType
 { value        = CSRMap(n)
   assign value =  { CSRMap(n) <- value
                   ; mark_log(LOG_REG, log_w_csr(n, value))
                   }
 }
 
-unit writeCSR(csr::creg, val::regType) =
+unit writeCSR(csr::csreg, val::regType) =
 { CSR(csr)      <- val;
   Delta.addr    <- Some(ZeroExtend(csr));
   Delta.data2   <- Some(CSR(csr))   -- Note that writes to CSR are intercepted
@@ -5171,10 +5152,10 @@ string pLRtype(o::string, aq::amo, rl::amo, rd::reg, rs1::reg) =
 string pItype(o::string, rd::reg, rs1::reg, i::bits(N)) =
     instr(o) : " " : reg(rd) : ", " : reg(rs1) : ", " : imm(i)
 
-string pCSRtype(o::string, rd::reg, rs1::reg, csr::creg) =
+string pCSRtype(o::string, rd::reg, rs1::reg, csr::csreg) =
     instr(o) : " " : reg(rd) : ", " : reg(rs1) : ", " : csrName(csr)
 
-string pCSRItype(o::string, rd::reg, i::bits(N), csr::creg) =
+string pCSRItype(o::string, rd::reg, i::bits(N), csr::csreg) =
     instr(o) : " " : reg(rd) : ", " : imm(i) : ", " : csrName(csr)
 
 string pStype(o::string, rs1::reg, rs2::reg, i::bits(N)) =
@@ -5741,11 +5722,19 @@ unit Next =
 }
 
 unit initIdent(arch::Architecture) =
-{ MCSR.misa.ArchBase    <- archBase(arch)
+{ MCSR.misa.MXL         <- archBase(arch)
+; MCSR.misa.X           <- false
 ; MCSR.misa.U           <- true
 ; MCSR.misa.S           <- true
+; MCSR.misa.N           <- true
 ; MCSR.misa.M           <- true
 ; MCSR.misa.I           <- true
+; MCSR.misa.H           <- false
+; MCSR.misa.G           <- false
+; MCSR.misa.F           <- true
+; MCSR.misa.D           <- true
+; MCSR.misa.C           <- false
+; MCSR.misa.A           <- true
 
 ; MCSR.mvendorid        <- MVENDORID
 ; MCSR.marchid          <- MARCHID

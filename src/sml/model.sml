@@ -356,7 +356,7 @@ fun setupElf file dis =
         val tohost = List.find (match_symb "tohost") symbs
     in  set_tohost tohost
       ; initCores ( if (#class hdr) = Elf.BIT_32
-                    then riscv.RV32I else riscv.RV64I
+                    then riscv.RV32 else riscv.RV64
                   , IntInf.fromInt pc
                   )
       ; print ("L3RISCV: pc set to 0x" ^ (hx64 (Word64.fromInt pc))
