@@ -142,63 +142,46 @@ string privName(p::Privilege) =
     }
 
 ---------------------------------------------------------------------------
--- Memory management and virtualization
+-- S-mode address translation and page protection
 ---------------------------------------------------------------------------
 
-type vm_mode    = bits(5)
+type satp_mode  = bits(4)
 
-construct VM_Mode
-{ Mbare
-, Mbb
-, Mbbid
+construct SATP_Mode
+{ Sbare
 , Sv32
 , Sv39
 , Sv48
-, Sv57
-, Sv64
+-- todo: Sv57, Sv64
 }
 
-VM_Mode vmType(vm::vm_mode) =
-    match vm
-    { case  0     => Mbare
-      case  1     => Mbb
-      case  2     => Mbbid
-      case  8     => Sv32
-      case  9     => Sv39
-      case 10     => Sv48
-      case 11     => Sv57
-      case 12     => Sv64
-      case  _     => #UNDEFINED("Unknown address translation mode: " : [[vm]::nat])
-    }
-
-bool isValidVM(vm::vm_mode) =
-    match vm
-    { case 0 or 1 or 2 or 8 or 9 or 10 or 11 or 12 => true
-      case _                                       => false
-    }
-
-vm_mode vmMode(vm::VM_Mode) =
-    match vm
-    { case Mbare  => 0
-      case Mbb    => 1
-      case Mbbid  => 2
-      case Sv32   => 8
-      case Sv39   => 9
-      case Sv48   => 10
-      case Sv57   => 11
-      case Sv64   => 12
-    }
-
-string vmModeName(vm::VM_Mode) =
-    match vm
-    { case Mbare  => "Mbare"
-      case Mbb    => "Mbb"
-      case Mbbid  => "Mbbid"
+string satpModeName(m::SATP_Mode) =
+    match m
+    { case Sbare  => "Bare"
       case Sv32   => "Sv32"
       case Sv39   => "Sv39"
       case Sv48   => "Sv48"
-      case Sv57   => "Sv57"
-      case Sv64   => "Sv64"
+    }
+
+SATP_Mode satpMode_ofbits(m::satp_mode, a::Architecture) =
+    match m, a
+    { case  0, _    => Sbare
+      case  1, RV32 => Sv32
+      case  8, RV64 => Sv39
+      case  9, RV64 => Sv48
+      -- todo: Sv57, Sv64
+      case  _     => #UNDEFINED("Unknown address translation mode: " : [[m]::nat])
+    }
+
+satp_mode satpMode_tobits(m::SATP_Mode, a::Architecture) =
+    match m, a
+    { case Sbare, _   => 0
+      case Sv32, RV32 => 1
+      case Sv39, RV64 => 8
+      case Sv48, RV64 => 9
+      -- todo: Sv57, Sv64
+      case  _     => #UNDEFINED("Unsupported address translation mode: "
+                                : satpModeName(m) : " in " : archName(a))
     }
 
 ---------------------------------------------------------------------------
@@ -368,9 +351,10 @@ regType MIMPID    = 0
 
 register mstatus :: regType     -- Machine Status
 {    63 : M_SD      -- extended context dirty status
-, 28-24 : M_VM      -- memory management and virtualization
+, 35-34 : M_SXL     -- effective XLEN/base ISA in S-mode
+, 33-32 : M_UXL     -- effective XLEN/base ISA in U-mode
 ,    19 : M_MXR     -- make executable readable
-,    18 : M_PUM     -- protect user memory
+,    18 : M_SUM     -- permit supervisor access to user memory
 ,    17 : M_MPRV    -- load/store memory privilege
 , 16-15 : M_XS      -- extension context status
 , 14-13 : M_FS      -- floating-point context status
@@ -388,46 +372,42 @@ word  status_to_32(v::dword) = [v<63>]::bits(1) : 0x0`2  : v<28:0>
 dword status_of_32(v::word)  = [v<31>]::bits(1) : 0x0`32 : v<30:0>
 
 register medeleg :: regType     -- Exception Trap Delegation
-{    11 : M_MEnvCall
-,    10 : M_HEnvCall
+{    15 : M_SAMO_Page_Fault
+,    13 : M_Load_Page_Fault
+,    12 : M_Fetch_Page_Fault
+,    11 : M_MEnvCall
 ,     9 : M_SEnvCall
 ,     8 : M_UEnvCall
-,     7 : M_SAMO_Access
-,     6 : M_SAMO_Addr
-,     5 : M_Load_Access
+,     7 : M_SAMO_Access_Fault
+,     6 : M_SAMO_Addr_Align
+,     5 : M_Load_Access_Fault
 ,     4 : M_Load_Addr_Align
 ,     3 : M_Breakpoint
 ,     2 : M_Illegal_Instr
-,     1 : M_Fetch_Fault
+,     1 : M_Fetch_Access_Fault
 ,     0 : M_Fetch_Addr_Align
 }
 
 register mideleg :: regType     -- Interrupt Trap Delegation
 {    11 : M_MEIP   -- external interrupts
-,    10 : M_HEIP
 ,     9 : M_SEIP
 ,     8 : M_UEIP
 ,     7 : M_MTIP   -- timer interrupts
-,     6 : M_HTIP
 ,     5 : M_STIP
 ,     4 : M_UTIP
 ,     3 : M_MSIP   -- software interrupts
-,     2 : M_HSIP
 ,     1 : M_SSIP
 ,     0 : M_USIP
 }
 
 register mip :: regType         -- Interrupt Pending
 {    11 : M_MEIP   -- external interrupts
-,    10 : M_HEIP
 ,     9 : M_SEIP
 ,     8 : M_UEIP
 ,     7 : M_MTIP   -- timer interrupts
-,     6 : M_HTIP
 ,     5 : M_STIP
 ,     4 : M_UTIP
 ,     3 : M_MSIP   -- software interrupts
-,     2 : M_HSIP
 ,     1 : M_SSIP
 ,     0 : M_USIP
 }
@@ -437,15 +417,12 @@ dword ip_of_32(v::word)  = ZeroExtend(v<11:0>)
 
 register mie :: regType         -- Interrupt Enable
 {    11 : M_MEIE    -- external interrupts
-,    10 : M_HEIE
 ,     9 : M_SEIE
 ,     8 : M_UEIE
 ,     7 : M_MTIE    -- timer interrupts
-,     6 : M_HTIE
 ,     5 : M_STIE
 ,     4 : M_UTIE
 ,     3 : M_MSIE    -- software interrupts
-,     2 : M_HSIE
 ,     1 : M_SSIE
 ,     0 : M_USIE
 }
@@ -507,7 +484,9 @@ record MachineCSR
 
 register sstatus :: regType
 {    63 : S_SD      -- extended context dirty status
-,    18 : S_PUM     -- protect user memory
+, 33-32 : S_UXL     -- permit supervisor user-memory access
+,    19 : S_MXR     -- make executable readable
+,    18 : S_SUM     -- permit supervisor access to user memory
 , 16-15 : S_XS      -- extension context status
 , 14-13 : S_FS      -- floating-point context status
 ,     8 : S_SPP     -- pre-trap privilege modes
@@ -520,7 +499,9 @@ register sstatus :: regType
 sstatus to_sstatus(v::mstatus) =
 { var s = sstatus(0)
 ; s.S_SD    <- v.M_SD
-; s.S_PUM   <- v.M_PUM
+; s.S_UXL   <- v.M_UXL
+; s.S_MXR   <- v.M_MXR
+; s.S_SUM   <- v.M_SUM
 ; s.S_XS    <- v.M_XS
 ; s.S_FS    <- v.M_FS
 ; s.S_SPP   <- v.M_SPP
@@ -534,7 +515,9 @@ sstatus to_sstatus(v::mstatus) =
 mstatus of_sstatus(v::sstatus, orig::mstatus) =
 { var m = mstatus(&orig)
 ; m.M_SD    <- v.S_SD
-; m.M_PUM   <- v.S_PUM
+; m.M_UXL   <- v.S_UXL
+; m.M_MXR   <- v.S_MXR
+; m.M_SUM   <- v.S_SUM
 ; m.M_XS    <- v.S_XS
 ; m.M_FS    <- v.S_FS
 ; m.M_SPP   <- v.S_SPP
@@ -633,15 +616,15 @@ mie of_sie(v::sie, orig::mie) =
 }
 
 register satp32 :: word
-{ 31    : MODE_32
-, 30-22 : ASID_32
-, 21-0  : PPN_32
+{ 31    : SATP32_MODE
+, 30-22 : SATP32_ASID
+, 21-0  : SATP32_PPN
 }
 
 register satp64 :: regType
-{ 63-60 : MODE_64
-, 59-44 : ASID_64
-, 43-0  : PPN_64
+{ 63-60 : SATP64_MODE
+, 59-44 : SATP64_ASID
+, 43-0  : SATP64_PPN
 }
 
 record SupervisorCSR
@@ -776,12 +759,8 @@ mstatus update_mstatus(orig::mstatus, v::mstatus) =
 
 -- memory privilege settings
 ; m.M_MPRV  <- v.M_MPRV
-; m.M_PUM   <- v.M_PUM
+; m.M_SUM   <- v.M_SUM
 ; m.M_MXR   <- v.M_MXR
-
--- ensure a valid address translation mode
-; when isValidVM(v.M_VM)
-  do m.M_VM <- v.M_VM
 
 ; m
 }
@@ -996,10 +975,10 @@ bool isFPEnabled() =
     MCSR.misa.F
 
 asid32 curAsid32() =
-    satp32(SCSR.satp<31:0>).ASID_32
+    satp32(SCSR.satp<31:0>).SATP32_ASID
 
 asid64 curAsid64() =
-    satp64(SCSR.satp).ASID_64
+    satp64(SCSR.satp).SATP64_ASID
 
 ---------------------------------------------------------------------------
 -- Floating Point
@@ -2019,17 +1998,17 @@ register memPerm :: permType
 , 0 : Mem_R
 }
 
-bool checkMemPermission(ac::accessType, priv::Privilege, mxr::bool, pum::bool, p::memPerm) =
+bool checkMemPermission(ac::accessType, priv::Privilege, mxr::bool, sum::bool, p::memPerm) =
 { match ac, priv
   { case Read,      User        => (p.Mem_R or (mxr and p.Mem_X)) and p.Mem_U
     case Write,     User        => p.Mem_W and p.Mem_U
     case ReadWrite, User        => (p.Mem_R or (mxr and p.Mem_X)) and p.Mem_W and p.Mem_U
     case Execute,   User        => p.Mem_X and p.Mem_U
-    case Read,      Supervisor  => (p.Mem_R or (mxr and p.Mem_X)) and !(p.Mem_U and pum)
-    case Write,     Supervisor  => p.Mem_W and !(p.Mem_U and pum)
-    case ReadWrite, Supervisor  => (p.Mem_R or (mxr and p.Mem_X)) and p.Mem_W and !(p.Mem_U and pum)
-    case Execute,   Supervisor  => p.Mem_X and !(p.Mem_U and pum)
-    case _,         Machine     => #INTERNAL_ERROR("machine 32-bit mem perm check")    -- should not happen
+    case Read,      Supervisor  => (p.Mem_R or (mxr and p.Mem_X)) and (!p.Mem_U or sum)
+    case Write,     Supervisor  => p.Mem_W and (!p.Mem_U or sum)
+    case ReadWrite, Supervisor  => (p.Mem_R or (mxr and p.Mem_X)) and p.Mem_W and (!p.Mem_U or sum)
+    case Execute,   Supervisor  => p.Mem_X and !p.Mem_U
+    case _,         Machine     => #INTERNAL_ERROR("machine mem perm check")    -- should not happen
   }
 }
 
@@ -2059,6 +2038,7 @@ register SV32_Paddr :: paddr32
 
 register SV32_PTE   :: pte32
 { 31-10 : PTE32_PPNi   -- PPN[1,0]
+,   9-8 : PTE32_RSW    -- reserved for supervisor software
 ,     7 : PTE32_D      -- dirty
 ,     6 : PTE32_A      -- accessed
 ,     5 : PTE32_G      -- global
@@ -2067,7 +2047,7 @@ register SV32_PTE   :: pte32
 }
 
 paddr32 curPTB32() =
-    (ZeroExtend(satp32(SCSR.satp<31:0>).PPN_32) << PAGESIZE_BITS)
+    (ZeroExtend(satp32(SCSR.satp<31:0>).SATP32_PPN) << PAGESIZE_BITS)
 
 -- 32-bit page table walker.  This returns the physical address for
 -- the input vaddr32 as the first element of the returned tuple.  The
@@ -2077,7 +2057,7 @@ paddr32 curPTB32() =
 -- mapping is marked as a global mapping.
 
 (paddr32 * SV32_PTE * paddr32 * nat * bool) option
-walk32(vaddr::vaddr32, ac::accessType, priv::Privilege, mxr::bool, pum::bool,
+walk32(vaddr::vaddr32, ac::accessType, priv::Privilege, mxr::bool, sum::bool,
        ptb::paddr32, level::nat, global::bool) =
 { va        = SV32_Vaddr(vaddr)
 ; pt_ofs    = ZeroExtend((va.VA32_VPNi >>+ (level * VPN32_LEVEL_BITS))<(VPN32_LEVEL_BITS-1):0>) << PTE32_LOG_SIZE
@@ -2089,21 +2069,21 @@ walk32(vaddr::vaddr32, ac::accessType, priv::Privilege, mxr::bool, pum::bool,
                         : " pt_ofs=" : [[pt_ofs]::nat]
                         : " pte_addr=0x" : PadLeft(#"0", 16, [pte_addr])
                         : " pte=0x" : PadLeft(#"0", 16, [&pte])])
-; if (not pte.PTE32_V) or (mperm.Mem_W and not mperm.Mem_R)
+; if (not pte.PTE32_V)
   then { mark_log(LOG_ADDRTR, "walk32: invalid PTE")
        ; None
        }
-  else { if not (mperm.Mem_R or mperm.Mem_X)
+  else { if isPTEPtr(&mperm)
          then { -- ptr to next level
                 if level == 0
                 then { mark_log(LOG_ADDRTR, "last-level PTE contains a pointer!")
                      ; None
                      }
-                else walk32(vaddr, ac, priv, mxr, pum,
+                else walk32(vaddr, ac, priv, mxr, sum,
                             ZeroExtend(pte.PTE32_PPNi << PAGESIZE_BITS), level - 1, global or pte.PTE32_G)
               }
          else { -- leaf PTE
-                if not checkMemPermission(ac, priv, mxr, pum, mperm)
+                if not checkMemPermission(ac, priv, mxr, sum, mperm)
                 then { mark_log(LOG_ADDRTR, "PTE permission check failure!")
                      ; None
                      }
@@ -2134,9 +2114,9 @@ SV32_PTE option updatePTE32(pte::SV32_PTE, ac::accessType) =
 
 -- 32-bit TLB
 ---------------------------------------------------------------------------
--- The spec does not mention a TLB, but we would like to capture part
--- of the semantics of SFENCE.  The TLB also improves simulation
--- speed.
+-- The spec discusses but does not specify a TLB, and we would like to
+-- capture part of the semantics of SFENCE.  A TLB also improves
+-- simulation speed.
 
 -- This implementation stores the global mapping bit from the PTE in
 -- the TLB.  This causes an asymmetry between TLB lookup and TLB
@@ -2243,11 +2223,11 @@ component TLB32 :: TLB32_Map
 
 -- Sv32 address translation
 
-paddr32 option translate32(vAddr::vaddr32, ac::accessType, priv::Privilege, mxr::bool, pum::bool, level::nat) =
+paddr32 option translate32(vAddr::vaddr32, ac::accessType, priv::Privilege, mxr::bool, sum::bool, level::nat) =
 { asid = curAsid32()
 ; match lookupTLB32(asid, vAddr, TLB32)
   { case Some(ent, idx) =>
-    { if checkMemPermission(ac, priv, mxr, pum, memPerm(ent.pte_32.PTE32_PERM))
+    { if checkMemPermission(ac, priv, mxr, sum, memPerm(ent.pte_32.PTE32_PERM))
       then { mark_log(LOG_ADDRTR, "TLB32 hit!")
            -- update dirty bit in page table and TLB if needed
            ; pte_new = updatePTE32(ent.pte_32, ac)
@@ -2265,7 +2245,7 @@ paddr32 option translate32(vAddr::vaddr32, ac::accessType, priv::Privilege, mxr:
     }
     case None =>
     { mark_log(LOG_ADDRTR, "TLB32 miss!")
-    ; match walk32(vAddr, ac, priv, mxr, pum, curPTB32(), level, false)
+    ; match walk32(vAddr, ac, priv, mxr, sum, curPTB32(), level, false)
       { case Some(pAddr, pte, pteAddr, i, global)  =>
         { TLB32 <- addToTLB32(asid, vAddr, pAddr, pte, pteAddr, i, global, TLB32)
         ; Some(pAddr)
@@ -2285,21 +2265,22 @@ nat PTE39_LOG_SIZE    = 3
 nat SV39_LEVELS       = 3
 
 type vaddr39  = bits(39)
-type paddr39  = bits(50)
+type paddr39  = bits(56)
 type pte39    = dword
 
 register SV39_Vaddr :: vaddr39
-{ 38-12 : VA39_VPNi    -- VPN[1,0]
+{ 38-12 : VA39_VPNi    -- VPN[2,0]
 , 11-0  : VA39_PgOfs   -- page offset
 }
 
 register SV39_Paddr :: paddr39
-{ 49-12 : PA39_PPNi    -- PPN[1,0]
+{ 55-12 : PA39_PPNi    -- PPN[2,0]
 , 11-0  : PA39_PgOfs   -- page offset
 }
 
 register SV39_PTE   :: pte39
-{ 47-10 : PTE39_PPNi   -- PPN[1,0]
+{ 53-10 : PTE39_PPNi   -- PPN[2,0]
+,   9-8 : PTE39_RSW    -- reserved for software use
 ,     7 : PTE39_D      -- dirty
 ,     6 : PTE39_A      -- accessed
 ,     5 : PTE39_G      -- global
@@ -2308,7 +2289,7 @@ register SV39_PTE   :: pte39
 }
 
 paddr39 curPTB39() =
-    (ZeroExtend(satp64(SCSR.satp).PPN_64) << PAGESIZE_BITS)
+    (ZeroExtend(satp64(SCSR.satp).SATP64_PPN) << PAGESIZE_BITS)
 
 -- 64-bit page table walker.  This returns the physical address for
 -- the input vaddr39 as the first element of the returned tuple.  The
@@ -2318,7 +2299,7 @@ paddr39 curPTB39() =
 -- mapping is marked as a global mapping.
 
 (paddr39 * SV39_PTE * paddr39 * nat * bool) option
-walk39(vaddr::vaddr39, ac::accessType, priv::Privilege, mxr::bool, pum::bool,
+walk39(vaddr::vaddr39, ac::accessType, priv::Privilege, mxr::bool, sum::bool,
        ptb::paddr39, level::nat, global::bool) =
 { va        = SV39_Vaddr(vaddr)
 ; pt_ofs    = ZeroExtend((va.VA39_VPNi >>+ (level * VPN39_LEVEL_BITS))<(VPN39_LEVEL_BITS-1):0>) << PTE39_LOG_SIZE
@@ -2330,21 +2311,21 @@ walk39(vaddr::vaddr39, ac::accessType, priv::Privilege, mxr::bool, pum::bool,
                         : " pt_ofs=" : [[pt_ofs]::nat]
                         : " pte_addr=0x" : PadLeft(#"0", 16, [pte_addr])
                         : " pte=0x" : PadLeft(#"0", 16, [&pte])])
-; if (not pte.PTE39_V) or (mperm.Mem_W and not mperm.Mem_R)
+; if (not pte.PTE39_V)
   then { mark_log(LOG_ADDRTR, "walk39: invalid PTE")
        ; None
        }
-  else { if not (mperm.Mem_R or mperm.Mem_X)
+  else { if isPTEPtr(&mperm)
          then { -- ptr to next level
                 if level == 0
                 then { mark_log(LOG_ADDRTR, "last-level PTE contains a pointer!")
                      ; None
                      }
-                else walk39(vaddr, ac, priv, mxr, pum,
+                else walk39(vaddr, ac, priv, mxr, sum,
                             ZeroExtend(pte.PTE39_PPNi << PAGESIZE_BITS), level - 1, global or pte.PTE39_G)
               }
          else { -- leaf PTE
-                if not checkMemPermission(ac, priv, mxr, pum, mperm)
+                if not checkMemPermission(ac, priv, mxr, sum, mperm)
                 then { mark_log(LOG_ADDRTR, "PTE permission check failure!")
                      ; None
                      }
@@ -2375,22 +2356,6 @@ SV39_PTE option updatePTE39(pte::SV39_PTE, ac::accessType) =
 
 -- 64-bit TLB
 ---------------------------------------------------------------------------
--- The spec does not mention a TLB, but we would like to capture part
--- of the semantics of SFENCE.  The TLB also improves simulation
--- speed.
-
--- This implementation stores the global mapping bit from the PTE in
--- the TLB.  This causes an asymmetry between TLB lookup and TLB
--- flush, due to the spec's treatment of an ASID=0 in SFENCE.VM:
---
--- * in TLB lookup, the global bit is used to check for a global
---   match, and this global bit when set overrides the input ASID.
---
--- * in TLB flush, an input ASID of 0 overrides the global bit when
---   checking if a TLB entry needs to be flushed.
-
--- Each TLBEntry also stores the full PTE and its pAddr, so that it
--- can write back the PTE when its dirty bit needs to be updated.
 
 record TLB39_Entry
 { asid_39       :: asid64
@@ -2484,11 +2449,11 @@ component TLB39 :: TLB39_Map
 
 -- Sv39 address translation
 
-paddr39 option translate39(vAddr::vaddr39, ac::accessType, priv::Privilege, mxr::bool, pum::bool, level::nat) =
+paddr39 option translate39(vAddr::vaddr39, ac::accessType, priv::Privilege, mxr::bool, sum::bool, level::nat) =
 { asid = curAsid64()
 ; match lookupTLB39(asid, vAddr, TLB39)
   { case Some(ent, idx) =>
-    { if checkMemPermission(ac, priv, mxr, pum, memPerm(ent.pte_39.PTE39_PERM))
+    { if checkMemPermission(ac, priv, mxr, sum, memPerm(ent.pte_39.PTE39_PERM))
       then { mark_log(LOG_ADDRTR, "TLB39 hit!")
            -- update dirty bit in page table and TLB if needed
            ; pte_new = updatePTE39(ent.pte_39, ac)
@@ -2506,7 +2471,7 @@ paddr39 option translate39(vAddr::vaddr39, ac::accessType, priv::Privilege, mxr:
     }
     case None =>
     { mark_log(LOG_ADDRTR, "TLB39 miss!")
-    ; match walk39(vAddr, ac, priv, mxr, pum, curPTB39(), level, false)
+    ; match walk39(vAddr, ac, priv, mxr, sum, curPTB39(), level, false)
       { case Some(pAddr, pte, pteAddr, i, global)  =>
         { TLB39 <- addToTLB39(asid, vAddr, pAddr, pte, pteAddr, i, global, TLB39)
         ; Some(pAddr)
@@ -2517,8 +2482,28 @@ paddr39 option translate39(vAddr::vaddr39, ac::accessType, priv::Privilege, mxr:
   }
 }
 
--- address translation dispatcher
+-- address translation mode
+--
+-- The address translation mode is derived from satp.  How wide satp
+-- is, and its mode, depend on the effective ISA derived from M_SXL.
+-- However, we should not check M_SXL if we don't need to, since it
+-- may not have a valid value if we are in pure M-mode.
+SATP_Mode translationMode(priv::Privilege) =
+    if priv == Machine then Sbare -- no translation
+    else { arch = architecture(MCSR.mstatus.M_SXL)
+         ; match arch
+           { case RV32  => if satp32(SCSR.satp<31:0>).SATP32_MODE
+                           then Sv32 else Sbare
+             case RV64  => satpMode_ofbits(satp64(SCSR.satp).SATP64_MODE, arch)
+             case RV128 => #UNDEFINED("Unsupported address translation arch: "
+                                      : archName(arch))
+           }
+         }
 
+-- top-level address translation dispatcher
+--
+-- vAddr here is assumed to be appropriately formatted for the
+-- current M_UXL.
 pAddr option translateAddr(vAddr::regType, ac::accessType, ft::fetchType) =
 { priv = match ft
          { case Instruction => curPrivilege
@@ -2527,30 +2512,23 @@ pAddr option translateAddr(vAddr::regType, ac::accessType, ft::fetchType) =
                                else curPrivilege
          }
 ; mxr  = MCSR.mstatus.M_MXR
-; pum  = MCSR.mstatus.M_PUM
-; match vmType(MCSR.mstatus.M_VM), priv
-  { case Mbare, _
-    or       _,    Machine  => Some(vAddr)  -- no translation
+; sum  = MCSR.mstatus.M_SUM
+; mode = translationMode(priv)
+; match mode
+  { case Sbare  => Some(vAddr)  -- no translation
 
-    {- Comment out base/bound modes since there are no tests for them.
+    case Sv32   => match translate32(vAddr<31:0>, ac, priv, mxr, sum, SV32_LEVELS)
+                   { case Some(pa32)  => Some(ZeroExtend(pa32))
+                     case None        => None
+                   }
+    case Sv39   => match translate39(vAddr<38:0>, ac, priv, mxr, sum, SV39_LEVELS)
+                   { case Some(pa39)  => Some(ZeroExtend(pa39))
+                     case None        => None
+                   }
 
-    case Mbb,   Machine
-    or   Mbbid, Machine     => Some(vAddr)
+--  case Sv48   => translate64(vAddr, ft, ac, priv, 3)
 
-     -}
-
-    case Sv32,  _           => match translate32(vAddr<31:0>, ac, priv, mxr, pum, SV32_LEVELS)
-                               { case Some(pa32)  => Some(ZeroExtend(pa32))
-                                 case None        => None
-                               }
-    case Sv39,  _           => match translate39(vAddr<38:0>, ac, priv, mxr, pum, SV39_LEVELS)
-                               { case Some(pa39)  => Some(ZeroExtend(pa39))
-                                 case None        => None
-                               }
-
---  case Sv48,  _           => translate64(vAddr, ft, ac, priv, 3)
-
-    case     _,          _  => None
+    case     _  => None
   }
 }
 
@@ -4727,12 +4705,23 @@ define System > CSRRCI(rd::reg, zimm::reg, csr::imm12) =
 -----------------------------------
 define System > SFENCE_VM(rs1::reg) =
 { addr = if rs1 == 0 then None else Some(GPR(rs1))
-; match vmType(MCSR.mstatus.M_VM)
-  { case Sv32 => { a = if IsSome(addr) then Some(ValOf(addr)<31:0>) else None
-                 ; TLB32 <- flushTLB32(curAsid32(), a, TLB32)
+; arch = architecture(MCSR.mstatus.M_SXL)
+; mode = match arch
+         { case RV32  => if satp32(SCSR.satp<31:0>).SATP32_MODE
+                         then Sv32 else Sbare
+           case RV64  => satpMode_ofbits(satp64(SCSR.satp).SATP64_MODE, arch)
+           case RV128 => -- FIXME: the spec is not clear what happens
+                         -- when satp does not contain a sensible value
+                         #INTERNAL_ERROR("sfence.vm: undefined satp spec error")
+         }
+; match mode
+  { case Sv32 => { addr = if IsSome(addr) then Some(ValOf(addr)<31:0>) else None
+                 ; asid = satp32(SCSR.satp<31:0>).SATP32_ASID
+                 ; TLB32 <- flushTLB32(asid, addr, TLB32)
                  }
-    case Sv39 => { a = if IsSome(addr) then Some(ValOf(addr)<38:0>) else None
-                 ; TLB39 <- flushTLB39(curAsid64(), a, TLB39)
+    case Sv39 => { addr = if IsSome(addr) then Some(ValOf(addr)<38:0>) else None
+                 ; asid = satp64(SCSR.satp).SATP64_ASID
+                 ; TLB39 <- flushTLB39(asid, addr, TLB39)
                  }
     case _    => #INTERNAL_ERROR("sfence.vm: unimplemented VM model") -- FIXME
   }
@@ -5662,12 +5651,14 @@ unit Next =
     case Some(Uret), None =>
              { NextFetch    <- None
              ; MCSR.mstatus <- uret(MCSR.mstatus)
+             ; mark_log(LOG_INSN, ["trapping from " : privName(curPrivilege) : " to " : privName(User)])
              ; curPrivilege <- User
              ; PC           <- UCSR.uepc
              }
     case Some(Sret), None =>
              { NextFetch    <- None
              ; MCSR.mstatus <- sret(MCSR.mstatus)
+             ; mark_log(LOG_INSN, ["trapping from " : privName(curPrivilege) : " to " : privName(if MCSR.mstatus.M_SPP then Supervisor else User)])
              ; curPrivilege <- if MCSR.mstatus.M_SPP then Supervisor else User
              ; PC           <- SCSR.sepc
              }
@@ -5676,6 +5667,7 @@ unit Next =
     case Some(Mret), None =>
              { NextFetch    <- None
              ; MCSR.mstatus <- mret(MCSR.mstatus)
+             ; mark_log(LOG_INSN, ["trapping from " : privName(curPrivilege) : " to " : privName(privilege(MCSR.mstatus.M_MPP))])
              ; curPrivilege <- privilege(MCSR.mstatus.M_MPP)
              ; PC           <- MCSR.mepc
              }
@@ -5715,7 +5707,6 @@ unit initMachine(hartid::id) =
 { -- Startup in Mbare machine mode, with interrupts disabled.
   curPrivilege          <- Machine
 ; MCSR.&mstatus         <- 0
-; MCSR.mstatus.M_VM     <- vmMode(Mbare)
   -- initialize extension context state
 ; MCSR.mstatus.M_FS     <- ext_status(Initial)
 ; MCSR.mstatus.M_XS     <- ext_status(Off)
