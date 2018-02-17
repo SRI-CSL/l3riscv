@@ -83,7 +83,8 @@ fun storeVecInMemHelper vec (base : int) (i : int) =
         val bytes1  = if !be then bytes0 else rev bytes0
         val bits64  = BitsN.concat bytes1
         val addr    = IntInf.fromInt (base + j)
-    in  if   j < Word8Vector.length vec
+        val vlen    = Word8Vector.length vec
+    in  if   j < vlen
         then ( riscv.rawWriteMem (BitsN.fromInt (addr, IntInf.fromInt 64), bits64)
              ; storeVecInMemHelper vec base (i+1)
              )
@@ -134,6 +135,7 @@ fun dumpRegisters core =
     let val savedCore   = currentCore ()
         val pc          = riscv.Map.lookup(!riscv.c_PC, core)
     in  riscv.scheduleCore core
+      ; printLog ()
       ; print "======   Registers   ======\n"
       ; print ("Core = " ^ IntInf.toString core ^ "\n")
       ; let val w   = #rinstr (riscv.Delta ())
@@ -309,7 +311,8 @@ fun loadElf segms dis =
                            val mem_end = IntInf.toInt (IntInf.+ (!mem_base_addr, !mem_size))
                        in
                            if !trace_elf
-                           then ( print ( "Loading segment ...\n")
+                           then ( print ("Loading segment @ vaddr=" ^ hxi vaddr
+                                          ^ ", " ^ Int.toString memsz ^ " bytes ...\n")
                                 ; Elf.printSegment s
                                 )
                            else ()
@@ -490,7 +493,7 @@ fun printUsage () =
           \Arguments:\n\
           \  --dis    <bool>      only disassemble loaded code\n\
           \  --cycles <number>    upper bound on instruction cycles\n\
-          \  --trace  <level>     verbosity level (0 default, 2 maximum)\n\
+          \  --trace  <level>     verbosity level (0 default, 4 maximum)\n\
           \  --multi  <#cores>    number of cores (1 default)\n\
           \  --check  <bool>      check execution against external verifier\n\
           \  --boot   <bool>      set starting pc to reset address x1000 (false default)\n\
