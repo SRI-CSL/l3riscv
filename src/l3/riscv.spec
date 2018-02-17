@@ -847,7 +847,6 @@ construct instrResult
 { Trap            :: SynchronousException
 , Uret
 , Sret
-, Hret
 , Mret
 , BranchTo        :: regType
 }
@@ -4606,12 +4605,6 @@ define System > SRET   =
     NextFetch <- Some(Sret)
 
 -----------------------------------
--- HRET
------------------------------------
-define System > HRET   =
-    NextFetch <- Some(Hret)
-
------------------------------------
 -- MRET
 -----------------------------------
 define System > MRET   =
@@ -5043,7 +5036,6 @@ instruction decode_SYSTEM(w::word) =
 
      case '000000000010  00000 000 00000 11100 11' => System(  URET)
      case '000100000010  00000 000 00000 11100 11' => System(  SRET)
-     case '001000000010  00000 000 00000 11100 11' => System(  HRET)
      case '001100000010  00000 000 00000 11100 11' => System(  MRET)
 
      case '000100000101  00000 000 00000 11100 11' => System(   WFI)
@@ -5339,7 +5331,6 @@ string instructionToString(i::instruction) =
      case System(EBREAK)                    => pN0type("EBREAK")
      case System(  URET)                    => pN0type("URET")
      case System(  SRET)                    => pN0type("SRET")
-     case System(  HRET)                    => pN0type("HRET")
      case System(  MRET)                    => pN0type("MRET")
 
      case System(   WFI)                    => pN0type("WFI")
@@ -5565,7 +5556,6 @@ word Encode(i::instruction) =
      case System(EBREAK)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x001)
      case System(  URET)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x002)
      case System(  SRET)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x102)
-     case System(  HRET)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x202)
      case System(  MRET)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x302)
 
      case System(   WFI)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x105)
@@ -5662,8 +5652,6 @@ unit Next =
              ; curPrivilege <- if MCSR.mstatus.M_SPP then Supervisor else User
              ; PC           <- SCSR.sepc
              }
-    case Some(Hret), None =>
-             #INTERNAL_ERROR("hret not implemented")
     case Some(Mret), None =>
              { NextFetch    <- None
              ; MCSR.mstatus <- mret(MCSR.mstatus)
