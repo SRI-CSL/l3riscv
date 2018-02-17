@@ -811,7 +811,7 @@ mstatus mret(v::mstatus) =
     case Supervisor => m.M_SIE  <- m.M_MPIE
     case Machine    => m.M_MIE  <- m.M_MPIE
   }
-; m.M_MPP  <- privLevel(User)
+; m.M_MPP  <- privLevel(User)  -- todo: need to check config if U-mode is supported
 ; m.M_MPIE <- true
 ; m
 }
@@ -5640,23 +5640,26 @@ unit Next =
              }
     case Some(Uret), None =>
              { NextFetch    <- None
-             ; MCSR.mstatus <- uret(MCSR.mstatus)
-             ; mark_log(LOG_INSN, ["trapping from " : privName(curPrivilege) : " to " : privName(User)])
+             ; mark_log(LOG_INSN, ["ret-ing from " : privName(curPrivilege)
+                                   : " to " : privName(User)])
              ; curPrivilege <- User
+             ; MCSR.mstatus <- uret(MCSR.mstatus)
              ; PC           <- UCSR.uepc
              }
     case Some(Sret), None =>
              { NextFetch    <- None
-             ; MCSR.mstatus <- sret(MCSR.mstatus)
-             ; mark_log(LOG_INSN, ["trapping from " : privName(curPrivilege) : " to " : privName(if MCSR.mstatus.M_SPP then Supervisor else User)])
+             ; mark_log(LOG_INSN, ["ret-ing from " : privName(curPrivilege)
+                                   : " to " : privName(if MCSR.mstatus.M_SPP then Supervisor else User)])
              ; curPrivilege <- if MCSR.mstatus.M_SPP then Supervisor else User
+             ; MCSR.mstatus <- sret(MCSR.mstatus)
              ; PC           <- SCSR.sepc
              }
     case Some(Mret), None =>
              { NextFetch    <- None
-             ; MCSR.mstatus <- mret(MCSR.mstatus)
-             ; mark_log(LOG_INSN, ["trapping from " : privName(curPrivilege) : " to " : privName(privilege(MCSR.mstatus.M_MPP))])
+             ; mark_log(LOG_INSN, ["ret-ing from " : privName(curPrivilege)
+                                   : " to " : privName(privilege(MCSR.mstatus.M_MPP))])
              ; curPrivilege <- privilege(MCSR.mstatus.M_MPP)
+             ; MCSR.mstatus <- mret(MCSR.mstatus)
              ; PC           <- MCSR.mepc
              }
     case Some(BranchTo(pc)), None =>
