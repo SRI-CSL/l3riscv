@@ -5674,6 +5674,8 @@ unit Next =
   }
 }
 
+-- todo: This needs to be parameterized by an isa string, or
+-- initialized from outside the model.
 unit initIdent(arch::Architecture) =
 { MCSR.misa.MXL         <- archBase(arch)
 ; MCSR.misa.X           <- false
@@ -5702,6 +5704,9 @@ unit initMachine(hartid::id) =
 ; MCSR.mstatus.M_FS     <- ext_status(Initial)
 ; MCSR.mstatus.M_XS     <- ext_status(Off)
 ; MCSR.mstatus.M_SD     <- false
+  -- initialize *-xlen.
+; MCSR.mstatus.M_SXL    <- MCSR.misa.MXL
+; MCSR.mstatus.M_UXL    <- MCSR.misa.MXL
 
   -- Setup hartid
 ; MCSR.mhartid          <- ZeroExtend(hartid)
