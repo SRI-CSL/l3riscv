@@ -363,7 +363,8 @@ fun setupElf file dis =
                   , IntInf.fromInt pc
                   )
       ; print ("L3RISCV: pc set to 0x" ^ (hx64 (Word64.fromInt pc))
-               ^ (if !boot then " [boot]\n" else " [elf]\n"))
+               ^ (if !boot then " [boot-entry] " else " [elf-entry]")
+               ^ " in file " ^ file ^ "\n")
       ; if !trace_elf
         then ( print "Loading elf file ...\n"
              ; Elf.printHeader hdr
