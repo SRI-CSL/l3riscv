@@ -34,8 +34,8 @@ Building
 
 - $ make
 
-This will build the interpreter 'l3riscv' and a verification library
-'libl3riscv.so' in the top-level directory.
+This will build the interpreter in 'l3riscv.poly' (when compiled with Poly/ML)
+and/or 'l3riscv.mlton' (when compiled with mlton).
 
 Using the interpreter
 ---------------------
@@ -47,9 +47,6 @@ Using the interpreter
 - Disassemble a RISC-V ELF binary:
 
   $ ./l3riscv --dis true  <riscv-binary>
-
-There is initial but undocumented support for verifying the interpreter against
-another interpreter.
 
 Note that the interpreter cannot currently boot an OS since the SBI spec for
 RISC-V has not yet been released.
@@ -76,15 +73,8 @@ Known Issues
   supervisor-mode and machine-mode resp.) expect a trap, and fail otherwise.
   Both approaches are supported by the RISC-V specification.
 
-- The verification API is evolving and its implementation is incomplete; in
-  particular, the handling of external interrupts.  However, it is complete
-  enough for most basic verification purposes (e.g. testcases).
-
 Credits
 -------
 
 This model started out as a port of the L3 MIPS model to RISC-V. The original
 l3mips model is at https://github.com/acjf3/l3mips
-
-The verification library API originates from Bluespec, Inc, and forms part of
-the tandem-verification infrastructure for their RISC-V processors.

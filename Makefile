@@ -20,7 +20,6 @@ SMLLIB=$(patsubst %, $(SMLLIBDIR)/%, $(SMLLIBSRC))
 SMLSRCBASE+=riscv.sig riscv.sml
 SMLSRCBASE+=model.sml mlton_run.sml poly_run.sml
 SMLSRCBASE+=l3riscv.mlb
-SMLSRCBASE+=riscv_oracle.c
 MLBFILE=l3riscv.mlb
 SMLSRC=$(patsubst %, $(SMLSRCDIR)/%, $(SMLSRCBASE))
 
