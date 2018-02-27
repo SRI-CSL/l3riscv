@@ -4,7 +4,8 @@
 #include <iostream>
 
 tv_spike_t::tv_spike_t(const char *isa)
-  : memif(this), tohost_addr(0), fromhost_addr(0), debug_log(true)
+  : memif(this), tohost_addr(0), fromhost_addr(0),
+    verbose_verify(true), debug_log(true)
 {
   cpu = new processor_t(isa, this, /*hartid*/ 0, /*halted*/ false);
   debug_mmu = new mmu_t(this, /*processor_t**/NULL);
@@ -125,4 +126,185 @@ bool tv_spike_t::exited(int& exit_code)
     return true;
   }
   return false;
+}
+
+bool tv_spike_t::check_pc(uint64_t val)
+{
+  uint64_t model_val = cpu->get_state()->pc;
+  bool chk = model_val == val;
+
+  if (verbose_verify && !chk)
+    log_check("PC", 0, model_val, val);
+  return chk;
+}
+
+bool tv_spike_t::check_gpr(size_t regno, uint64_t val)
+{
+  uint64_t model_val = uint64_t(-1);
+  bool chk = false;
+  if (regno < NXPR) {
+    model_val = cpu->get_state()->XPR[regno];
+    chk = model_val == val;
+  }
+  if (verbose_verify && !chk)
+    log_check("GPR", regno, model_val, val);
+  return chk;
+}
+
+bool tv_spike_t::check_csr(size_t regno, uint64_t val)
+{
+  uint64_t model_val = read_csr(regno);
+  bool chk = model_val == val;
+  if (verbose_verify && !chk)
+    log_check("CSR", regno, model_val, val);
+  return chk;
+}
+
+bool tv_spike_t::check_priv(uint8_t val)
+{
+  uint8_t model_val = cpu->get_state()->prv;
+  bool chk = model_val == val;
+  if (verbose_verify && !chk)
+    log_check("PRIV", 0, model_val, val);
+  return chk;
+}
+
+
+// This will need to be kept manually in sync with upstream, until we can get a
+// suitable api/patch accepted.
+reg_t tv_spike_t::read_csr(size_t which)
+{
+  unsigned xlen = cpu->get_xlen();
+  unsigned max_xlen = cpu->get_max_xlen();
+  state_t* state = cpu->get_state();
+  reg_t isa = cpu->get_isa();
+
+  if (which >= CSR_HPMCOUNTER3 && which <= CSR_HPMCOUNTER31)
+    return 0;
+  if (xlen == 32 && which >= CSR_HPMCOUNTER3H && which <= CSR_HPMCOUNTER31H)
+    return 0;
+  if (which >= CSR_MHPMCOUNTER3 && which <= CSR_MHPMCOUNTER31)
+    return 0;
+  if (cpu->get_xlen() == 32 && which >= CSR_MHPMCOUNTER3H && which <= CSR_MHPMCOUNTER31H)
+    return 0;
+  if (which >= CSR_MHPMEVENT3 && which <= CSR_MHPMEVENT31)
+    return 0;
+  switch (which) {
+  case CSR_FFLAGS:
+    return state->fflags;
+  case CSR_FRM:
+    return state->frm;
+  case CSR_FCSR:
+    return (state->fflags << FSR_AEXC_SHIFT) | (state->frm << FSR_RD_SHIFT);
+  case CSR_INSTRET:
+  case CSR_CYCLE:
+    return state->minstret;
+  case CSR_MINSTRET:
+  case CSR_MCYCLE:
+    return state->minstret;
+  case CSR_INSTRETH:
+  case CSR_CYCLEH:
+    return state->minstret >> 32;
+  case CSR_MINSTRETH:
+  case CSR_MCYCLEH:
+    return state->minstret >> 32;
+  case CSR_SCOUNTEREN: return state->scounteren;
+  case CSR_MCOUNTEREN: return state->mcounteren;
+  case CSR_SSTATUS: {
+    reg_t mask = SSTATUS_SIE | SSTATUS_SPIE | SSTATUS_SPP | SSTATUS_FS
+                 | SSTATUS_XS | SSTATUS_SUM | SSTATUS_UXL;
+    reg_t sstatus = state->mstatus & mask;
+    if ((sstatus & SSTATUS_FS) == SSTATUS_FS ||
+        (sstatus & SSTATUS_XS) == SSTATUS_XS)
+      sstatus |= (xlen == 32 ? SSTATUS32_SD : SSTATUS64_SD);
+    return sstatus;
+  }
+  case CSR_SIP: return state->mip & state->mideleg;
+  case CSR_SIE: return state->mie & state->mideleg;
+  case CSR_SEPC: return state->sepc;
+  case CSR_STVAL: return state->stval;
+  case CSR_STVEC: return state->stvec;
+  case CSR_SCAUSE:
+    if (max_xlen > xlen)
+      return state->scause | ((state->scause >> (max_xlen-1)) << (xlen-1));
+    return state->scause;
+  case CSR_SATP:
+    return state->satp;
+  case CSR_SSCRATCH: return state->sscratch;
+  case CSR_MSTATUS: return state->mstatus;
+  case CSR_MIP: return state->mip;
+  case CSR_MIE: return state->mie;
+  case CSR_MEPC: return state->mepc;
+  case CSR_MSCRATCH: return state->mscratch;
+  case CSR_MCAUSE: return state->mcause;
+  case CSR_MTVAL: return state->mtval;
+  case CSR_MISA: return isa;
+  case CSR_MARCHID: return 0;
+  case CSR_MIMPID: return 0;
+  case CSR_MVENDORID: return 0;
+  case CSR_MHARTID: return 0;
+  case CSR_MTVEC: return state->mtvec;
+  case CSR_MEDELEG: return state->medeleg;
+  case CSR_MIDELEG: return state->mideleg;
+  case CSR_TSELECT: return state->tselect;
+  case CSR_TDATA1:
+      if (state->tselect < state->num_triggers) {
+        reg_t v = 0;
+        mcontrol_t *mc = &state->mcontrol[state->tselect];
+        v = set_field(v, MCONTROL_TYPE(xlen), mc->type);
+        v = set_field(v, MCONTROL_DMODE(xlen), mc->dmode);
+        v = set_field(v, MCONTROL_MASKMAX(xlen), mc->maskmax);
+        v = set_field(v, MCONTROL_SELECT, mc->select);
+        v = set_field(v, MCONTROL_TIMING, mc->timing);
+        v = set_field(v, MCONTROL_ACTION, mc->action);
+        v = set_field(v, MCONTROL_CHAIN, mc->chain);
+        v = set_field(v, MCONTROL_MATCH, mc->match);
+        v = set_field(v, MCONTROL_M, mc->m);
+        v = set_field(v, MCONTROL_H, mc->h);
+        v = set_field(v, MCONTROL_S, mc->s);
+        v = set_field(v, MCONTROL_U, mc->u);
+        v = set_field(v, MCONTROL_EXECUTE, mc->execute);
+        v = set_field(v, MCONTROL_STORE, mc->store);
+        v = set_field(v, MCONTROL_LOAD, mc->load);
+        return v;
+      } else {
+        return 0;
+      }
+      break;
+  case CSR_TDATA2:
+    if (state->tselect < state->num_triggers) {
+      return state->tdata2[state->tselect];
+    } else {
+      return 0;
+    }
+    break;
+  case CSR_TDATA3: return 0;
+  case CSR_DCSR:
+    {
+      uint32_t v = 0;
+      v = set_field(v, DCSR_XDEBUGVER, 1);
+      v = set_field(v, DCSR_EBREAKM, state->dcsr.ebreakm);
+      v = set_field(v, DCSR_EBREAKH, state->dcsr.ebreakh);
+      v = set_field(v, DCSR_EBREAKS, state->dcsr.ebreaks);
+      v = set_field(v, DCSR_EBREAKU, state->dcsr.ebreaku);
+      v = set_field(v, DCSR_STOPCYCLE, 0);
+      v = set_field(v, DCSR_STOPTIME, 0);
+      v = set_field(v, DCSR_CAUSE, state->dcsr.cause);
+      v = set_field(v, DCSR_STEP, state->dcsr.step);
+      v = set_field(v, DCSR_PRV, state->dcsr.prv);
+      return v;
+    }
+  case CSR_DPC:
+    return state->dpc;
+  case CSR_DSCRATCH:
+    return state->dscratch;
+  }
+  return reg_t(-1);
+}
+
+void tv_spike_t::log_check(const char *regfile, size_t regno,
+                           uint64_t model_val, uint64_t val)
+{
+  fprintf(stderr, " %s reg %ld: expected %0" PRIx64 " got %" PRIx64 "\n",
+          regfile, regno, model_val, val);
 }

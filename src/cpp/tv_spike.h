@@ -50,6 +50,15 @@ public:
   // misc
   bool exited(int& exit_code);
 
+  // verification API
+  bool set_verbose(bool enable);
+
+  bool check_pc(uint64_t pc);
+  bool check_gpr(size_t regno, uint64_t val);
+  bool check_csr(size_t regno, uint64_t val);
+  bool check_priv(uint8_t prv);
+  //bool check_fpr(size_t regno, uint64_t val);
+
 private:
   std::vector<std::pair<reg_t, mem_t*>> mem_regions;
   mmu_t* debug_mmu; // used for initialization of memory regions
@@ -63,8 +72,15 @@ private:
   addr_t fromhost_addr;
   reg_t  entry;
 
+  // verification API
+  bool verbose_verify;
+
   // miscellaneous
   bool debug_log;
+
+  // internal
+  reg_t read_csr(size_t which);
+  void  log_check(const char *regfile, size_t regno, uint64_t model_val, uint64_t val);
 };
 
 #endif // __TV_SPIKE_H_
