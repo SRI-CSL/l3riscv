@@ -176,12 +176,6 @@ fun verifierTrace (lvl, str) =
 (* Tandem verification:
    client interface: disabled pending a new implementation *)
 
-fun initChecker () =
-    ()
-
-fun loadChecker filename =
-    ()
-
 fun doCheck () =
     if true
     then ()
@@ -282,7 +276,7 @@ fun initPlatform cores =
                          ((if !check then 0xaaaaaaaaAAAAAAAA else 0x0)
                          , 64))
     ; if !check
-      then initChecker ()
+      then Oracle.init ()
       else ()
     ; if !boot
       then insertBootCode ()
@@ -385,7 +379,7 @@ fun setupElf file dis =
 fun doElf cycles file dis =
     ( setupElf file dis
     ; if !check
-      then loadChecker file
+      then Oracle.loadElf file
       else ()
     ; if dis
       then printLog ()

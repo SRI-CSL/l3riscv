@@ -74,5 +74,5 @@ val () =
              NONE   => print ("No use-file found for main module\n")
           |  SOME p => print ("Cur file: '" ^ p ^ "'\n")); *)
         useSigSml lib_path "Elf";
-        List.app (useSigSml cur_path) ["riscv", "model"]
+        List.app (useSigSml cur_path) ["riscv", "oracle", "poly_spike", "model"]
     end

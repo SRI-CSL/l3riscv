@@ -18,7 +18,7 @@ SMLLIB=$(patsubst %, $(SMLLIBDIR)/%, $(SMLLIBSRC))
 # generating the sml source list
 #######################################
 SMLSRCBASE+=riscv.sig riscv.sml
-SMLSRCBASE+=model.sml mlton_run.sml poly_run.sml
+SMLSRCBASE+=model.sml mlton_run.sml poly_run.sml oracle.sig poly_spike.sml
 SMLSRCBASE+=l3riscv.mlb
 MLBFILE=l3riscv.mlb
 SMLSRC=$(patsubst %, $(SMLSRCDIR)/%, $(SMLSRCBASE))
