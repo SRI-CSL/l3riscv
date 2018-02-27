@@ -35,6 +35,9 @@ val loadElf : string -> unit =
 val setVerbose : bool -> unit =
     buildCall1 (getSym "tv_set_verbose", cInt, cVoid) o fromBool
 
+val reset : unit -> unit =
+    buildCall0 (getSym "tv_reset", (), cVoid)
+
 val isDone : unit -> bool =
     toBool o buildCall0 (getSym "tv_is_done", (), cInt)
 

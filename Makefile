@@ -42,10 +42,19 @@ MLTON_LIB_OPTS = -mlb-path-var 'L3LIBDIR '$(L3LIBDIR)
 #######################################
 POLYC = polyc
 
+# Spike-based Tandem Verification library
+#######################################
+CSRCDIR=src/cpp
+TVSPIKE_SRCBASE = tv_spike_intf.h tv_spike_intf.c tv_spike.cc tv_spike.h
+TVSPIKE_SRC     = $(patsubst %, $(CSRCDIR)/%, $(TVSPIKE_SRCBASE))
+TVSPIKE_INC     = -I $(CSRCDIR)
+TVSPIKE_INC    += -I $(RISCV)/include
+TVSPIKE_LIBS    = -L $(RISCV)/lib -lfesvr -lriscv
+
 # make targets
 #######################################
 
-all: l3riscv.poly l3riscv.mlton ilspec holspec
+all: l3riscv.poly tv_spike.so l3riscv.mlton ilspec holspec
 
 ${SMLSRCDIR}/riscv.sig ${SMLSRCDIR}/riscv.sml: ${L3SRC}
 	echo 'SMLExport.spec ("${L3SRC}", "${SMLSRCDIR}/riscv intinf")' | l3
@@ -57,6 +66,9 @@ l3riscv.mlton: ${SMLLIB} ${SMLSRC} Makefile
 	$(MLTON) $(MLTON_OPTS) \
               $(MLTON_LIB_OPTS) \
               -output $@ ${SMLSRCDIR}/$(MLBFILE) $(L3LIBDIR)/sse_float.c $(L3LIBDIR)/mlton_sse_float.c
+
+tv_spike.so: ${TVSPIKE_SRC} Makefile
+	g++ -Wall -o $@ -shared -fPIC ${TVSPIKE_INC} ${TVSPIKE_LIBS} ${TVSPIKE_SRC}
 
 #libl3riscv.so: ${SMLLIB} ${SMLSRC} Makefile
 #	$(MLTON) $(MLTON_OPTS) \
@@ -74,6 +86,7 @@ holspec: ${L3SRC}
 
 clean:
 	rm -f l3riscv libl3riscv.so
+	rm -f tv_spike.so
 	rm -f ${SMLSRCDIR}/riscv.sig ${SMLSRCDIR}/riscv.sml
 	rm -f ${ILSRCDIR}/riscv.l3
 	rm -f ${HOLSRCDIR}/riscvLib.sig ${HOLSRCDIR}/riscvLib.sml ${HOLSRCDIR}/riscvScript.sml
