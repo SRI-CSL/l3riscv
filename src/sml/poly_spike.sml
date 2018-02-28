@@ -3,25 +3,20 @@ struct
 
 open Foreign
 
-local
-    val libRef : library option ref = ref NONE
-in
+(*
+ * The code in this library is executed at compile-time, due to the
+ * way Poly/ML compiler works.  So, loadLibrary of tv_spike.so is actually
+ * performed during compilation.  In l3riscv/Makefile, we ensure that
+ * tv_spike.so has already been built and placed in the proper location,
+ * so that the loadLibrary succeeds when this file is compiled.
+ * We are assuming that getDir() returns the location of the Makefile,
+ * which works even when built using 'make -C ...'.
+ *)
 fun getLib () =
-    case (! libRef) of
-        NONE =>
-        let val cur_file = PolyML.getUseFileName ()
-            val cur_dir  = case cur_file of
-                               NONE => "."
-                             | SOME p => OS.Path.dir p
-            val lib_file = OS.Path.joinDirFile {dir  = cur_dir,
-                                                file = "tvspike.so"}
-            val lib      = loadLibrary lib_file
-        in libRef := SOME lib
-         ; lib
-        end
-     |  SOME lib => lib
+    loadLibrary (OS.Path.joinDirFile {dir  = OS.FileSys.getDir (),
+                                      file = "tv_spike.so"})
+
 val getSym = getSymbol (getLib ())
-end
 
 fun toBool i   = if i = 0 then false else true
 fun fromBool b = if b     then 1     else 0
