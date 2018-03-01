@@ -1,3 +1,12 @@
+(* Copyright (C) 2018 SRI International.
+ *
+ * This software was developed by SRI International and the University of
+ * Cambridge Computer Laboratory under DARPA/AFRL contract FA8650-18-C-7809
+ * ("CIFV").
+ *
+ * See the LICENSE file for details.
+ *)
+
 structure Oracle :> Oracle =
 struct
 
