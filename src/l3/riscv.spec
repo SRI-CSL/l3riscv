@@ -1604,10 +1604,16 @@ unit recordMCauseEPC(mc::mcause, epc::regType) =
 ; Delta.mepc        <- Some(epc)
 }
 
+unit recordMTval(v::regType) =
+{ Delta.mtval       <- Some(v) }
+
 unit recordSCauseEPC(sc::mcause, epc::regType) =
 { Delta.scause      <- Some(&sc)
 ; Delta.sepc        <- Some(epc)
 }
+
+unit recordSTval(v::regType) =
+{ Delta.stval       <- Some(v) }
 
 unit recordFetch(instr::word) =
 { Delta.instr       <- instr }
@@ -1830,25 +1836,34 @@ unit excHandler(intr::bool, ec::exc_code, fromPriv::Privilege, toPriv::Privilege
                        ; MCSR.mcause.M_ExcCause <- ZeroExtend(ec)
                        ; MCSR.mtval             <- if IsSome(badaddr)
                                                    then ValOf(badaddr)
-                                                   else SignExtend(0b1`1)
+                                                   else SignExtend(0b0`1)
                        ; PC                     <- MCSR.mtvec
 
-                       ; recordMStatus(MCSR.mstatus)
                        ; recordMCauseEPC(MCSR.mcause, epc)
+                       ; recordMTval(MCSR.mtval)
+                       ; recordMStatus(MCSR.mstatus)
                        }
     case Supervisor => { MCSR.mstatus           <- senter(MCSR.mstatus, fromPriv)
                        ; SCSR.sepc              <- epc
                        ; SCSR.scause.M_Intr     <- intr
                        ; SCSR.scause.M_ExcCause <- ZeroExtend(ec)
+                       ; SCSR.stval             <- if IsSome(badaddr)
+                                                   then ValOf(badaddr)
+                                                   else SignExtend(0b0`1)
+
                        ; PC                     <- SCSR.stvec
 
-                       ; recordMStatus(MCSR.mstatus)
                        ; recordSCauseEPC(SCSR.scause, epc)
+                       ; recordSTval(SCSR.stval)
+                       ; recordMStatus(MCSR.mstatus)
                        }
     case User       => { MCSR.mstatus           <- uenter(MCSR.mstatus, fromPriv)
                        ; UCSR.uepc              <- epc
                        ; UCSR.ucause.M_Intr     <- intr
                        ; UCSR.ucause.M_ExcCause <- ZeroExtend(ec)
+                       ; UCSR.utval             <- if IsSome(badaddr)
+                                                   then ValOf(badaddr)
+                                                   else SignExtend(0b0`1)
                        ; PC                     <- UCSR.utvec
 
                        ; recordMStatus(MCSR.mstatus)
