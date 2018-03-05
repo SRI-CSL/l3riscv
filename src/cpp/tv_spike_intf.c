@@ -34,57 +34,59 @@
 #include "tv_spike_intf.h"
 #include "tv_spike.h"
 
-void tv_init(void)
+tv_spike_t* tv_init(const char *isa)
 {
-  fprintf(stderr, "%s()\n", __func__);
+  tv_spike_t *tvs = new tv_spike_t(isa);
+  fprintf(stderr, "%s(%s) -> %p\n", __func__, isa, tvs);
+  return tvs;
 }
 
-void tv_load_elf(const char *filename)
+void tv_load_elf(tv_spike_t* tvs, const char *filename)
 {
-  fprintf(stderr, "%s(%s)\n", __func__, filename);
+  fprintf(stderr, "%s(%p, %s)\n", __func__, tvs, filename);
 }
 
-void tv_set_verbose(int enable)
+void tv_set_verbose(tv_spike_t* tvs, int enable)
 {
-  fprintf(stderr, "%s(%d)\n", __func__, enable);
+  fprintf(stderr, "%s(%p, %d)\n", __func__, tvs, enable);
 }
 
-void tv_reset(void)
+void tv_reset(tv_spike_t* tvs)
 {
-  fprintf(stderr, "%s()\n", __func__);
+  fprintf(stderr, "%s(%p)\n", __func__, tvs);
 }
 
-void tv_step(void)
+void tv_step(tv_spike_t* tvs)
 {
-  fprintf(stderr, "%s()\n", __func__);
+  fprintf(stderr, "%s(%p)\n", __func__, tvs);
 }
 
-int tv_is_done(void)
+int tv_is_done(tv_spike_t* tvs)
 {
-  fprintf(stderr, "%s()\n", __func__);
+  fprintf(stderr, "%s(%p)\n", __func__, tvs);
   return 0;
 }
 
-int tv_check_priv(uint8_t priv)
+int tv_check_priv(tv_spike_t* tvs, uint8_t priv)
 {
-  fprintf(stderr, "%s(%d)\n", __func__, priv);
+  fprintf(stderr, "%s(%p, %d)\n", __func__, tvs, priv);
   return 0;
 }
 
-int tv_check_pc(uint64_t val)
+int tv_check_pc(tv_spike_t* tvs, uint64_t val)
 {
-  fprintf(stderr, "%s(%0" PRIx64 ")\n", __func__, val);
+  fprintf(stderr, "%s(%p, %0" PRIx64 ")\n", __func__, tvs, val);
   return 0;
 }
 
-int tv_check_gpr(size_t regno, uint64_t val)
+int tv_check_gpr(tv_spike_t* tvs, size_t regno, uint64_t val)
 {
-  fprintf(stderr, "%s(%ld, %0" PRIx64 ")\n", __func__, regno, val);
+  fprintf(stderr, "%s(%p, %ld, %0" PRIx64 ")\n", __func__, tvs, regno, val);
   return 0;
 }
 
-int tv_check_csr(size_t regno, uint64_t val)
+int tv_check_csr(tv_spike_t* tvs, size_t regno, uint64_t val)
 {
-  fprintf(stderr, "%s(%ld, %0" PRIx64 ")\n", __func__, regno, val);
+  fprintf(stderr, "%s(%p, %ld, %0" PRIx64 ")\n", __func__, tvs, regno, val);
   return 0;
 }

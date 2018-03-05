@@ -36,30 +36,31 @@
 
 #include <stdlib.h>
 #include <inttypes.h>
+#include "tv_spike.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-void tv_init(void);
+tv_spike_t* tv_init(const char *isa);
 
-void tv_load_elf(const char *filename);
+void tv_load_elf(tv_spike_t* tvs, const char *filename);
 
-void tv_set_verbose(int enable);
+void tv_set_verbose(tv_spike_t* tvs, int enable);
 
-void tv_reset(void);
+void tv_reset(tv_spike_t *tvs);
 
-void tv_step(void);
+void tv_step(tv_spike_t *tvs);
 
-int  tv_is_done(void);
+int  tv_is_done(tv_spike_t *tvs);
 
-int  tv_check_priv(uint8_t prv);
+int  tv_check_priv(tv_spike_t *tvs, uint8_t prv);
 
-int  tv_check_pc(uint64_t val);
+int  tv_check_pc(tv_spike_t *tvs, uint64_t val);
 
-int  tv_check_gpr(size_t regno, uint64_t val);
+int  tv_check_gpr(tv_spike_t *tvs, size_t regno, uint64_t val);
 
-int  tv_check_csr(size_t regno, uint64_t val);
+int  tv_check_csr(tv_spike_t *tvs, size_t regno, uint64_t val);
 
 #ifdef __cplusplus
 }

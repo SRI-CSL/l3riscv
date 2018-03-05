@@ -14,15 +14,17 @@
 
 signature Oracle =
 sig
+    type t
+
     (* initialization and lifecycle *)
-    val init       : unit -> unit
-    val setVerbose : bool -> unit
-    val loadElf    : string -> unit (* TODO: cross-check the parsed entry point? *)
-    val isDone     : unit -> bool
+    val init       : string     -> t
+    val setVerbose : t * bool   -> unit
+    val loadElf    : t * string -> unit (* TODO: cross-check the parsed entry point? *)
+    val isDone     : t          -> bool
 
     (* checks *)
-    val checkPC   : IntInf.int       -> bool
-    val checkPriv : riscv.Privilege  -> bool
-    val checkGPR  : int * IntInf.int -> bool
-    val checkCSR  : int * IntInf.int -> bool
+    val checkPC    : t * IntInf.int       -> bool
+    val checkPriv  : t * riscv.Privilege  -> bool
+    val checkGPR   : t * int * IntInf.int -> bool
+    val checkCSR   : t * int * IntInf.int -> bool
 end

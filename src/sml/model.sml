@@ -35,6 +35,7 @@ val trace_lvl   = ref (0 : int)
 val trace_elf   = ref false
 
 val check           = ref false
+val checker         = ref (NONE : Oracle.t option)
 val checker_exit_pc = ref (Word64.fromInt (~1))
 
 val verifier_mode       = ref false
@@ -177,6 +178,14 @@ fun verifierTrace (lvl, str) =
 (* Tandem verification:
    client interface: disabled pending a new implementation *)
 
+fun setChecker hndl =
+    checker := SOME hndl
+
+fun getChecker () =
+    case (! checker) of
+        NONE   => failExit "Verification oracle not initialized!"
+     |  SOME h => h
+
 fun doCheck () =
     if true
     then ()
@@ -277,7 +286,7 @@ fun initPlatform cores =
                          ((if !check then 0xaaaaaaaaAAAAAAAA else 0x0)
                          , 64))
     ; if !check
-      then Oracle.init ()
+      then setChecker (Oracle.init ("RV64IMAFD"))
       else ()
     ; if !boot
       then insertBootCode ()
@@ -380,7 +389,7 @@ fun setupElf file dis =
 fun doElf cycles file dis =
     ( setupElf file dis
     ; if !check
-      then Oracle.loadElf file
+      then Oracle.loadElf (getChecker (), file)
       else ()
     ; if dis
       then printLog ()
