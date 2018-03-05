@@ -52,6 +52,12 @@ tv_spike_t::tv_spike_t(const char *isa)
   }
 }
 
+tv_spike_t::~tv_spike_t()
+{
+  delete cpu;
+  delete debug_mmu;
+}
+
 reg_t tv_spike_t::init_elf(const char *elf_file)
 {
   std::map<std::string, uint64_t> symbols = load_elf(elf_file, &memif, &entry);

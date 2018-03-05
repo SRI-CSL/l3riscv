@@ -90,3 +90,8 @@ int tv_check_csr(tv_spike_t* tvs, size_t regno, uint64_t val)
   fprintf(stderr, "%s(%p, %ld, %0" PRIx64 ")\n", __func__, tvs, regno, val);
   return 0;
 }
+
+void tv_free(tv_spike_t *tvs)
+{
+  delete tvs;
+}

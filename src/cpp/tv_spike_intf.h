@@ -62,6 +62,8 @@ int  tv_check_gpr(tv_spike_t *tvs, size_t regno, uint64_t val);
 
 int  tv_check_csr(tv_spike_t *tvs, size_t regno, uint64_t val);
 
+void tv_free(tv_spike_t *tvs);
+
 #ifdef __cplusplus
 }
 #endif

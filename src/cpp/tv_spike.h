@@ -51,6 +51,7 @@ class tv_spike_t : public simif_t, public chunked_memif_t
 {
 public:
   tv_spike_t(const char *isa);
+  virtual ~tv_spike_t();
 
   /* initialization */
   reg_t init_elf(const char *elf_file);
