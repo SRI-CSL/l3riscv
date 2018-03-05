@@ -44,6 +44,10 @@ type imm12    = bits(12)
 type imm20    = bits(20)
 type amo      = bits(1)
 
+-- floating point types
+
+construct fpType { FP_single, FP_double }
+
 -- memory and caches
 
 construct accessType { Read, Write, ReadWrite, Execute }
@@ -389,6 +393,12 @@ register medeleg :: regType     -- Exception Trap Delegation
 ,     0 : M_Fetch_Addr_Align
 }
 
+medeleg sanitize_medeleg(d::medeleg) =
+{ var md = d
+; md.M_MEnvCall <- false    -- cannot delegate M-mode EnvCalls
+; md
+}
+
 register mideleg :: regType     -- Interrupt Trap Delegation
 {    11 : M_MEIP   -- external interrupts
 ,     9 : M_SEIP
@@ -540,6 +550,12 @@ register sedeleg :: regType     -- Exception Trap Delegation
 ,     2 : S_Illegal_Instr
 ,     1 : S_Fetch_Fault
 ,     0 : S_Fetch_Addr_Align
+}
+
+sedeleg sanitize_sedeleg(d::sedeleg) =
+{ var sd = d
+; sd.S_SEnvCall <- false    -- cannot delegate S-mode EnvCalls
+; sd
 }
 
 register sideleg :: regType     -- Interrupt Trap Delegation
@@ -1301,7 +1317,7 @@ component CSRMap(csr::csreg) :: regType
         -- supervisor trap setup
         case 0x100, false   => c_MCSR(procID).mstatus   <- of_sstatus(sstatus(value), c_MCSR(procID).mstatus)
         case 0x100, true    => c_MCSR(procID).mstatus   <- of_sstatus(sstatus(status_of_32(value<31:0>)), c_MCSR(procID).mstatus)
-        case 0x102, _       => c_SCSR(procID).&sedeleg  <- value
+        case 0x102, _       => c_SCSR(procID).sedeleg   <- sanitize_sedeleg(sedeleg(value))
         case 0x103, _       => c_SCSR(procID).&sideleg  <- value
         case 0x104, false   => c_MCSR(procID).mie       <- of_sie(sie(value), c_MCSR(procID).mie)
         case 0x104, true    => c_MCSR(procID).mie       <- of_sie(sie(ie_of_32(value<31:0>)), c_MCSR(procID).mie)
@@ -1330,7 +1346,7 @@ component CSRMap(csr::csreg) :: regType
         --  for now, we don't check for valid values.
         case 0x300, false   => c_MCSR(procID).&mstatus  <- value
         case 0x300, true    => c_MCSR(procID).&mstatus  <- status_of_32(value<31:0>)
-        case 0x302, _       => c_MCSR(procID).&medeleg  <- value
+        case 0x302, _       => c_MCSR(procID).medeleg   <- sanitize_medeleg(medeleg(value))
         case 0x303, _       => c_MCSR(procID).&mideleg  <- value
         case 0x304, false   => c_MCSR(procID).&mie      <- value
         case 0x304, true    => c_MCSR(procID).&mie      <- ie_of_32(value<31:0>)
@@ -1489,35 +1505,67 @@ string csrName(csr::csreg) =
 ---------------------------------------------------------------------------
 -- Tandem verification
 ---------------------------------------------------------------------------
--- This describes the state update due to every retired instruction,
--- which can be verified against an external oracle.  Currently, the
--- Cissr tool from Bluespec fills the role, and the record below is
--- designed against its API.
+-- The execution context for each instruction, as well as its
+-- side-effects, are captured in a record, to be used to verify or
+-- verify against another implementation.
 
 record StateDelta
-{ exc_taken     :: bool                 -- whether an exception (interrupt/trap) was taken
-  fetch_exc     :: bool                 -- whether that exception occured on fetch
-                                --   if so, the retired instruction (rinstr) is undefined
-  pc            :: regType              -- PC of retired instruction
-  rinstr        :: word                 -- the retired instruction
+{ -- execution context
+  priv          :: priv_level   -- the privilege level of execution
 
-  addr          :: regType option       -- address argument for instruction:
-                                --   new control flow target for jump, exception branch, ERET
-                                --   memory address for memory ops and AMOs
-                                --   CSR register address for CSR instructions
+  pc            :: regType      -- the PC of the instruction: this
+                                -- could be either a virtual or
+                                -- physical address, depending on the
+                                -- privilege level
 
-  data1         :: regType option       -- data result for instruction:
-                                --   new value for rd for ALU ops, LOAD, LOAD_FP, LR, SC, CSR ops
-                                --   new csr_status for exceptions and ERET
+  instr         :: word         -- the fetched instruction, if any
 
-  data2         :: regType option       -- data argument for instruction:
-                                --   new csr_cause for exceptions
-                                --   new memory value for STORE, STORE_FP, SC, AMOs
-                                --   argument for CSR ops
+  -- memory side-effects
 
-  fp_data       :: fpval option         -- floating point value
+  mem_addr      :: regType option   -- any address value computed for
+                                    -- the instruction (including
+                                    -- loads/stores and control transfer)
 
-  st_width      :: word option          -- width of store (optimization for sub-word store checks)
+  mem_access    :: accessType option    -- type of access
+                                    -- loads are Read, stores are Write,
+                                    -- AMOs are ReadWrite, control transfer is Execute
+
+                                -- any value accessed at that address
+  mem_val       :: (regType * memWidth) option
+
+
+  -- GPR side-effects
+                                -- the register and the value written
+  reg_effect    :: (reg * regType) option
+
+  -- FPR side-effects
+                                -- the register and the value written
+  freg_effect   :: (reg * fpval * fpType) option
+                                -- TODO: fpcsr
+
+  -- CSR side-effects (non-exceptional execution)
+
+                                -- the CSR address and the value written
+  csr_effect    :: (csreg * regType) option
+
+  -- Exceptions
+
+  exc_taken     :: bool         -- whether an exception (interrupt/trap) was taken
+  fetch_exc     :: bool         -- whether that exception occured on fetch
+                                --   if so, the instruction (instr) is undefined
+
+                                -- CSRs after the exception has been registered
+  mepc          :: regType option
+  mcause        :: regType option
+  mtval         :: regType option
+
+  sepc          :: regType option
+  scause        :: regType option
+  stval         :: regType option
+
+  -- mstatus can be updated for many reasons (e.g. writing FPR
+  -- can modify M_FS and M_SD), so it is always tracked.
+  mstatus       :: regType
 }
 
 declare c_update :: id -> StateDelta
@@ -1527,36 +1575,66 @@ component Delta :: StateDelta
   assign value = c_update(procID) <- value
 }
 
-unit setupDelta(pc::regType, instr::word) =
-{ Delta.exc_taken <- false
-; Delta.fetch_exc <- false
-; Delta.pc        <- pc
-; Delta.rinstr    <- instr
-; Delta.addr      <- None
-; Delta.data1     <- None
-; Delta.data2     <- None
-; Delta.fp_data   <- None
-; Delta.st_width  <- None
+unit initDelta(pc::regType, p::Privilege) =
+{ Delta.priv        <- privLevel(p)
+; Delta.pc          <- pc
+; Delta.instr       <- ZeroExtend(0b0`1)
+
+; Delta.mem_addr    <- None
+; Delta.mem_access  <- None
+; Delta.mem_val     <- None
+
+; Delta.reg_effect  <- None
+; Delta.freg_effect <- None
+; Delta.csr_effect  <- None
+
+; Delta.exc_taken   <- false
+; Delta.fetch_exc   <- false
+; Delta.mepc        <- None
+; Delta.mcause      <- None
+; Delta.mtval       <- None
+-- mstatus is explicitly recorded on changes.
 }
 
-unit recordLoad(addr::vAddr, val::regType) =
-{ Delta.addr      <- Some(addr)
-; Delta.data1     <- Some(val)
+unit recordMStatus(ms::mstatus) =
+{ Delta.mstatus     <- &ms }
+
+unit recordMCauseEPC(mc::mcause, epc::regType) =
+{ Delta.mcause      <- Some(&mc)
+; Delta.mepc        <- Some(epc)
 }
 
-unit recordStore(addr::vAddr, val::regType, width::word) =
-{ Delta.addr      <- Some(addr)
-; Delta.data2     <- Some(val)
-; Delta.st_width  <- Some(width)
+unit recordSCauseEPC(sc::mcause, epc::regType) =
+{ Delta.scause      <- Some(&sc)
+; Delta.sepc        <- Some(epc)
+}
+
+unit recordFetch(instr::word) =
+{ Delta.instr       <- instr }
+
+unit recordLoad(addr::vAddr, val::regType, width::memWidth) =
+{ Delta.mem_addr    <- Some(addr)
+; Delta.mem_access  <- Some(Read)
+; Delta.mem_val     <- Some(val, width)
+}
+
+unit recordStore(addr::vAddr, val::regType, width::memWidth) =
+{ Delta.mem_addr    <- Some(addr)
+; Delta.mem_access  <- Some(Write)
+; Delta.mem_val     <- Some(val, width)
+}
+
+unit recordAMOStore(addr::vAddr, val::regType, width::memWidth) =
+{ Delta.mem_addr    <- Some(addr)
+; Delta.mem_access  <- Some(ReadWrite)
+; Delta.mem_val     <- Some(val, width)
 }
 
 unit recordException() =
-{ Delta.exc_taken <- true }
+{ Delta.exc_taken   <- true }
 
-unit recordFetchException(pc::regType) =
-{ Delta.fetch_exc <- true
-; Delta.pc        <- pc
-}
+unit recordFetchException() =
+{ Delta.fetch_exc   <- true }
 
 ---------------------------------------------------------------------------
 -- Logging
@@ -1750,20 +1828,30 @@ unit excHandler(intr::bool, ec::exc_code, fromPriv::Privilege, toPriv::Privilege
                        ; MCSR.mepc              <- epc
                        ; MCSR.mcause.M_Intr     <- intr
                        ; MCSR.mcause.M_ExcCause <- ZeroExtend(ec)
-                       ; MCSR.mtval             <- if IsSome(badaddr) then ValOf(badaddr) else SignExtend(0b1`1)
+                       ; MCSR.mtval             <- if IsSome(badaddr)
+                                                   then ValOf(badaddr)
+                                                   else SignExtend(0b1`1)
                        ; PC                     <- MCSR.mtvec
+
+                       ; recordMStatus(MCSR.mstatus)
+                       ; recordMCauseEPC(MCSR.mcause, epc)
                        }
     case Supervisor => { MCSR.mstatus           <- senter(MCSR.mstatus, fromPriv)
                        ; SCSR.sepc              <- epc
                        ; SCSR.scause.M_Intr     <- intr
                        ; SCSR.scause.M_ExcCause <- ZeroExtend(ec)
                        ; PC                     <- SCSR.stvec
+
+                       ; recordMStatus(MCSR.mstatus)
+                       ; recordSCauseEPC(SCSR.scause, epc)
                        }
     case User       => { MCSR.mstatus           <- uenter(MCSR.mstatus, fromPriv)
                        ; UCSR.uepc              <- epc
                        ; UCSR.ucause.M_Intr     <- intr
                        ; UCSR.ucause.M_ExcCause <- ZeroExtend(ec)
                        ; PC                     <- UCSR.utvec
+
+                       ; recordMStatus(MCSR.mstatus)
                        }
   }
 ; curPrivilege <- toPriv
@@ -1840,12 +1928,11 @@ component CSR(n::csreg) :: regType
 }
 
 unit writeCSR(csr::csreg, val::regType) =
-{ CSR(csr)      <- val;
-  Delta.addr    <- Some(ZeroExtend(csr));
-  Delta.data2   <- Some(CSR(csr))   -- Note that writes to CSR are intercepted
-                                    -- and controlled by CSRMap, so we need to
-                                    -- use what was finally written to the
-                                    -- CSR, and not val itself.
+{ CSR(csr)          <- val;
+  -- Note that writes to CSR are intercepted and controlled by CSRMap,
+  -- so we need to use what was finally written to the CSR, and not
+  -- val itself.
+  Delta.csr_effect  <- Some(csr, CSR(csr))
 }
 
 ---------------------------------------------------------------------------
@@ -1861,8 +1948,8 @@ component GPR(n::reg) :: regType
 }
 
 unit writeRD(rd::reg, val::regType) =
-{ GPR(rd)       <- val
-; Delta.data1   <- Some(val)
+{ GPR(rd)           <- val
+; Delta.reg_effect  <- Some(rd, val)
 }
 
 component FPRS(n::reg) :: word
@@ -1883,14 +1970,14 @@ unit writeFPRS(rd::reg, val::word) =
 { FPRS(rd)          <- val
 ; MCSR.mstatus.M_FS <- ext_status(Dirty)
 ; MCSR.mstatus.M_SD <- true
-; Delta.data1       <- Some(ZeroExtend(val))
+; Delta.freg_effect <- Some(rd, ZeroExtend(val), FP_single)
 }
 
 unit writeFPRD(rd::reg, val::regType) =
 { FPRD(rd)          <- val
 ; MCSR.mstatus.M_FS <- ext_status(Dirty)
 ; MCSR.mstatus.M_SD <- true
-; Delta.data1       <- Some(val)
+; Delta.freg_effect <- Some(rd, val, FP_double)
 }
 
 ---------------------------------------------------------------------------
@@ -2545,11 +2632,11 @@ bool matchLoadReservation(vAddr::vAddr) =
 
 unit branchTo(newPC::regType) =
 { NextFetch             <- Some(BranchTo(newPC))
-; Delta.addr            <- Some(newPC)
+; Delta.mem_addr        <- Some(newPC)
+; Delta.mem_access      <- Some(Execute)
 }
 
-unit noBranch(nextPC::regType) =
-{ Delta.addr <- Some(nextPC) }
+unit noBranch(nextPC::regType) = ()
 
 ---------------------------------------------------------------------------
 -- Integer Computational Instructions
@@ -3052,7 +3139,7 @@ define Load > LW(rd::reg, rs1::reg, offs::imm12) =
 ; match translateAddr(vAddr, Read, Data)
   { case Some(pAddr) => { val       = SignExtend(rawReadData(pAddr)<31:0>)
                         ; GPR(rd)  <- val
-                        ; recordLoad(vAddr, val)
+                        ; recordLoad(vAddr, val, WORD)
                         }
     case None        => signalAddressException(E_Load_Fault, vAddr)
   }
@@ -3068,7 +3155,7 @@ define Load > LWU(rd::reg, rs1::reg, offs::imm12) =
        ; match translateAddr(vAddr, Read, Data)
          { case Some(pAddr) => { val        = ZeroExtend(rawReadData(pAddr)<31:0>)
                                ; GPR(rd)   <- val
-                               ; recordLoad(vAddr, val)
+                               ; recordLoad(vAddr, val, WORD)
                                }
            case None        => signalAddressException(E_Load_Fault, vAddr)
          }
@@ -3083,7 +3170,7 @@ define Load > LH(rd::reg, rs1::reg, offs::imm12) =
 ; match translateAddr(vAddr, Read, Data)
   { case Some(pAddr) => { val       = SignExtend(rawReadData(pAddr)<15:0>)
                         ; GPR(rd)  <- val
-                        ; recordLoad(vAddr, val)
+                        ; recordLoad(vAddr, val, HALFWORD)
                         }
     case None        => signalAddressException(E_Load_Fault, vAddr)
   }
@@ -3097,7 +3184,7 @@ define Load > LHU(rd::reg, rs1::reg, offs::imm12) =
 ; match translateAddr(vAddr, Read, Data)
   { case Some(pAddr) => { val       = ZeroExtend(rawReadData(pAddr)<15:0>)
                         ; GPR(rd)  <- val
-                        ; recordLoad(vAddr, val)
+                        ; recordLoad(vAddr, val, HALFWORD)
                         }
     case None        => signalAddressException(E_Load_Fault, vAddr)
   }
@@ -3111,7 +3198,7 @@ define Load > LB(rd::reg, rs1::reg, offs::imm12) =
 ; match translateAddr(vAddr, Read, Data)
   { case Some(pAddr) => { val       = SignExtend(rawReadData(pAddr)<7:0>)
                         ; GPR(rd)  <- val
-                        ; recordLoad(vAddr, val)
+                        ; recordLoad(vAddr, val, BYTE)
                         }
     case None        => signalAddressException(E_Load_Fault, vAddr)
   }
@@ -3125,7 +3212,7 @@ define Load > LBU(rd::reg, rs1::reg, offs::imm12) =
 ; match translateAddr(vAddr, Read, Data)
   { case Some(pAddr) => { val       = ZeroExtend(rawReadData(pAddr)<7:0>)
                         ; GPR(rd)  <- val
-                        ; recordLoad(vAddr, val)
+                        ; recordLoad(vAddr, val, BYTE)
                         }
     case None        => signalAddressException(E_Load_Fault, vAddr)
   }
@@ -3141,7 +3228,7 @@ define Load > LD(rd::reg, rs1::reg, offs::imm12) =
          ; match translateAddr(vAddr, Read, Data)
            { case Some(pAddr) => { val      = rawReadData(pAddr)
                                  ; GPR(rd) <- val
-                                 ; recordLoad(vAddr, val)
+                                 ; recordLoad(vAddr, val, DOUBLEWORD)
                                  }
              case None        => signalAddressException(E_Load_Fault, vAddr)
            }
@@ -3155,7 +3242,7 @@ define Store > SW(rs1::reg, rs2::reg, offs::imm12) =
 ; match translateAddr(vAddr, Write, Data)
   { case Some(pAddr) => { data = GPR(rs2)
                         ; rawWriteData(pAddr, data, 4)
-                        ; recordStore(vAddr, data, 4)
+                        ; recordStore(vAddr, data, WORD)
                         }
     case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
   }
@@ -3169,7 +3256,7 @@ define Store > SH(rs1::reg, rs2::reg, offs::imm12) =
 ; match translateAddr(vAddr, Write, Data)
   { case Some(pAddr) => { data = GPR(rs2)
                         ; rawWriteData(pAddr, data, 2)
-                        ; recordStore(vAddr, data, 2)
+                        ; recordStore(vAddr, data, HALFWORD)
                         }
     case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
   }
@@ -3183,7 +3270,7 @@ define Store > SB(rs1::reg, rs2::reg, offs::imm12) =
 ; match translateAddr(vAddr, Write, Data)
   { case Some(pAddr) => { data = GPR(rs2)
                         ; rawWriteData(pAddr, data, 1)
-                        ; recordStore(vAddr, data, 1)
+                        ; recordStore(vAddr, data, BYTE)
                         }
     case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
   }
@@ -3199,7 +3286,7 @@ define Store > SD(rs1::reg, rs2::reg, offs::imm12) =
          ; match translateAddr(vAddr, Write, Data)
            { case Some(pAddr) => { data = GPR(rs2)
                                  ; rawWriteData(pAddr, data, 8)
-                                 ; recordStore(vAddr, data, 8)
+                                 ; recordStore(vAddr, data, DOUBLEWORD)
                                  }
              case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
            }
@@ -3265,7 +3352,7 @@ define AMO > SC_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
        else match translateAddr(vAddr, Write, Data)
             { case Some(pAddr) => { data = GPR(rs2)
                                   ; rawWriteData(pAddr, data, 4)
-                                  ; recordStore(vAddr, data, 4)
+                                  ; recordStore(vAddr, data, WORD)
                                   ; writeRD(rd, 0)
                                   ; ReserveLoad  <- None
                                   }
@@ -3287,7 +3374,7 @@ define AMO > SC_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                 else match translateAddr(vAddr, Write, Data)
                      { case Some(pAddr) => { data = GPR(rs2)
                                            ; rawWriteData(pAddr, data, 4)
-                                           ; recordStore(vAddr, data, 4)
+                                           ; recordStore(vAddr, data, WORD)
                                            ; writeRD(rd, 0)
                                            ; ReserveLoad  <- None
                                            }
@@ -3307,8 +3394,8 @@ define AMO > AMOSWAP_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; data = GPR(rs2)
                              ; GPR(rd) <- memv
                              ; rawWriteData(pAddr, data, 4)
-                             ; recordLoad(vAddr, memv)
-                             ; recordStore(vAddr, data, 4)
+                             ; recordLoad(vAddr, memv, WORD)
+                             ; recordAMOStore(vAddr, data, WORD)
                              }
          case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
@@ -3326,8 +3413,8 @@ define AMO > AMOSWAP_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; data = GPR(rs2)
                              ; GPR(rd) <- memv
                              ; rawWriteData(pAddr, data, 8)
-                             ; recordLoad(vAddr, memv)
-                             ; recordStore(vAddr, data, 8)
+                             ; recordLoad(vAddr, memv, DOUBLEWORD)
+                             ; recordAMOStore(vAddr, data, DOUBLEWORD)
                              }
          case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
@@ -3346,8 +3433,8 @@ define AMO > AMOADD_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; GPR(rd) <- memv
                              ; val  = data + memv
                              ; rawWriteData(pAddr, val, 4)
-                             ; recordLoad(vAddr, memv)
-                             ; recordStore(vAddr, val, 4)
+                             ; recordLoad(vAddr, memv, WORD)
+                             ; recordAMOStore(vAddr, val, WORD)
                              }
          case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
@@ -3366,8 +3453,8 @@ define AMO > AMOADD_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; GPR(rd) <- memv
                              ; val  = data + memv
                              ; rawWriteData(pAddr, val, 8)
-                             ; recordLoad(vAddr, memv)
-                             ; recordStore(vAddr, val, 8)
+                             ; recordLoad(vAddr, memv, DOUBLEWORD)
+                             ; recordAMOStore(vAddr, val, DOUBLEWORD)
                              }
          case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
@@ -3386,8 +3473,8 @@ define AMO > AMOXOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; GPR(rd) <- memv
                              ; val  = data ?? memv
                              ; rawWriteData(pAddr, val, 4)
-                             ; recordLoad(vAddr, memv)
-                             ; recordStore(vAddr, val, 4)
+                             ; recordLoad(vAddr, memv, WORD)
+                             ; recordAMOStore(vAddr, val, WORD)
                              }
          case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
@@ -3406,8 +3493,8 @@ define AMO > AMOXOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; GPR(rd) <- memv
                              ; val  = data ?? memv
                              ; rawWriteData(pAddr, val, 8)
-                             ; recordLoad(vAddr, memv)
-                             ; recordStore(vAddr, val, 8)
+                             ; recordLoad(vAddr, memv, DOUBLEWORD)
+                             ; recordAMOStore(vAddr, val, DOUBLEWORD)
                              }
          case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
@@ -3426,8 +3513,8 @@ define AMO > AMOAND_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; GPR(rd) <- memv
                              ; val  = data && memv
                              ; rawWriteData(pAddr, val, 4)
-                             ; recordLoad(vAddr, memv)
-                             ; recordStore(vAddr, val, 4)
+                             ; recordLoad(vAddr, memv, WORD)
+                             ; recordAMOStore(vAddr, val, WORD)
                              }
          case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
@@ -3446,8 +3533,8 @@ define AMO > AMOAND_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; GPR(rd) <- memv
                              ; val  = data && memv
                              ; rawWriteData(pAddr, val, 8)
-                             ; recordLoad(vAddr, memv)
-                             ; recordStore(vAddr, val, 8)
+                             ; recordLoad(vAddr, memv, DOUBLEWORD)
+                             ; recordAMOStore(vAddr, val, DOUBLEWORD)
                              }
          case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
@@ -3466,8 +3553,8 @@ define AMO > AMOOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; GPR(rd) <- memv
                              ; val  = data || memv
                              ; rawWriteData(pAddr, val, 4)
-                             ; recordLoad(vAddr, memv)
-                             ; recordStore(vAddr, val, 4)
+                             ; recordLoad(vAddr, memv, WORD)
+                             ; recordAMOStore(vAddr, val, WORD)
                              }
          case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
@@ -3486,8 +3573,8 @@ define AMO > AMOOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; GPR(rd) <- memv
                              ; val  = data || memv
                              ; rawWriteData(pAddr, val, 8)
-                             ; recordLoad(vAddr, memv)
-                             ; recordStore(vAddr, val, 8)
+                             ; recordLoad(vAddr, memv, DOUBLEWORD)
+                             ; recordAMOStore(vAddr, val, DOUBLEWORD)
                              }
          case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
@@ -3506,8 +3593,8 @@ define AMO > AMOMIN_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; GPR(rd) <- memv
                              ; val  = SignedMin(data, memv)
                              ; rawWriteData(pAddr, val, 4)
-                             ; recordLoad(vAddr, memv)
-                             ; recordStore(vAddr, val, 4)
+                             ; recordLoad(vAddr, memv, WORD)
+                             ; recordAMOStore(vAddr, val, WORD)
                              }
          case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
@@ -3526,8 +3613,8 @@ define AMO > AMOMIN_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; GPR(rd) <- memv
                              ; val  = SignedMin(data, memv)
                              ; rawWriteData(pAddr, val, 8)
-                             ; recordLoad(vAddr, memv)
-                             ; recordStore(vAddr, val, 8)
+                             ; recordLoad(vAddr, memv, DOUBLEWORD)
+                             ; recordAMOStore(vAddr, val, DOUBLEWORD)
                              }
          case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
@@ -3546,8 +3633,8 @@ define AMO > AMOMAX_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; GPR(rd) <- memv
                              ; val  = SignedMax(data, memv)
                              ; rawWriteData(pAddr, val, 4)
-                             ; recordLoad(vAddr, memv)
-                             ; recordStore(vAddr, val, 4)
+                             ; recordLoad(vAddr, memv, WORD)
+                             ; recordAMOStore(vAddr, val, WORD)
                              }
          case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
@@ -3566,8 +3653,8 @@ define AMO > AMOMAX_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; GPR(rd) <- memv
                              ; val  = SignedMax(data, memv)
                              ; rawWriteData(pAddr, val, 8)
-                             ; recordLoad(vAddr, memv)
-                             ; recordStore(vAddr, val, 8)
+                             ; recordLoad(vAddr, memv, DOUBLEWORD)
+                             ; recordAMOStore(vAddr, val, DOUBLEWORD)
                              }
          case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
@@ -3586,8 +3673,8 @@ define AMO > AMOMINU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; GPR(rd) <- memv
                              ; val  = Min(data, memv)
                              ; rawWriteData(pAddr, val, 4)
-                             ; recordLoad(vAddr, memv)
-                             ; recordStore(vAddr, val, 4)
+                             ; recordLoad(vAddr, memv, WORD)
+                             ; recordAMOStore(vAddr, val, WORD)
                              }
          case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
@@ -3606,8 +3693,8 @@ define AMO > AMOMINU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; GPR(rd) <- memv
                              ; val  = Min(data, memv)
                              ; rawWriteData(pAddr, val, 8)
-                             ; recordLoad(vAddr, memv)
-                             ; recordStore(vAddr, val, 8)
+                             ; recordLoad(vAddr, memv, DOUBLEWORD)
+                             ; recordAMOStore(vAddr, val, DOUBLEWORD)
                              }
          case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
@@ -3626,8 +3713,8 @@ define AMO > AMOMAXU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; GPR(rd) <- memv
                              ; val  = Max(data, memv)
                              ; rawWriteData(pAddr, val, 4)
-                             ; recordLoad(vAddr, memv)
-                             ; recordStore(vAddr, val, 4)
+                             ; recordLoad(vAddr, memv, WORD)
+                             ; recordAMOStore(vAddr, val, WORD)
                              }
          case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
@@ -3646,8 +3733,8 @@ define AMO > AMOMAXU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                              ; GPR(rd) <- memv
                              ; val  = Max(data, memv)
                              ; rawWriteData(pAddr, val, 8)
-                             ; recordLoad(vAddr, memv)
-                             ; recordStore(vAddr, val, 8)
+                             ; recordLoad(vAddr, memv, DOUBLEWORD)
+                             ; recordAMOStore(vAddr, val, DOUBLEWORD)
                              }
          case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
        }
@@ -3669,7 +3756,7 @@ define FPLoad > FLW(rd::reg, rs1::reg, offs::imm12) =
 ; match translateAddr(vAddr, Read, Data)
   { case Some(pAddr) => { val       = rawReadData(pAddr)<31:0>
                         ; FPRS(rd) <- val
-                        ; recordLoad(vAddr, ZeroExtend(val))
+                        ; recordLoad(vAddr, ZeroExtend(val), WORD)
                         }
     case None        => signalAddressException(E_Load_Fault, vAddr)
   }
@@ -3684,7 +3771,7 @@ define FPStore > FSW(rs1::reg, rs2::reg, offs::imm12) =
 ; match translateAddr(vAddr, Write, Data)
   { case Some(pAddr) => { data = FPRS(rs2)
                         ; rawWriteData(pAddr, ZeroExtend(data), 4)
-                        ; recordStore(vAddr, ZeroExtend(data), 4)
+                        ; recordStore(vAddr, ZeroExtend(data), WORD)
                         }
     case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
   }
@@ -4119,7 +4206,7 @@ define FPLoad > FLD(rd::reg, rs1::reg, offs::imm12) =
 ; match translateAddr(vAddr, Read, Data)
   { case Some(pAddr) => { val       = rawReadData(pAddr)
                         ; FPRD(rd) <- val
-                        ; recordLoad(vAddr, val)
+                        ; recordLoad(vAddr, val, DOUBLEWORD)
                         }
     case None        => signalAddressException(E_Load_Fault, vAddr)
   }
@@ -4134,7 +4221,7 @@ define FPStore > FSD(rs1::reg, rs2::reg, offs::imm12) =
 ; match translateAddr(vAddr, Write, Data)
   { case Some(pAddr) => { data = FPRD(rs2)
                         ; rawWriteData(pAddr, data, 8)
-                        ; recordStore(vAddr, data, 8)
+                        ; recordStore(vAddr, data, DOUBLEWORD)
                         }
     case None        => signalAddressException(E_Store_AMO_Fault, vAddr)
   }
@@ -4735,12 +4822,12 @@ define UnknownInstruction =
 
 define Internal > FETCH_MISALIGNED(addr::regType) =
 { signalAddressException(E_Fetch_Misaligned, [addr])
-; recordFetchException(addr)
+; recordFetchException()
 }
 
 define Internal > FETCH_FAULT(addr::regType) =
 { signalAddressException(E_Fetch_Fault, [addr])
-; recordFetchException(addr)
+; recordFetchException()
 }
 
 define Run
@@ -4756,11 +4843,12 @@ construct FetchResult
 
 FetchResult Fetch() =
 { vPC    = PC
+; initDelta(vPC, curPrivilege)
 ; if vPC<1:0> != 0
   then F_Error(Internal(FETCH_MISALIGNED(vPC)))
   else match translateAddr(vPC, Execute, Instruction)
        { case Some(pPC) => { instw = rawReadInst(pPC)
-                           ; setupDelta(vPC, instw)
+                           ; recordFetch(instw)
                            ; F_Result(instw)
                            }
          case None      => F_Error(Internal(FETCH_FAULT(vPC)))
@@ -5082,7 +5170,7 @@ instruction Decode(w::word) =
 -- instruction printer
 
 string imm(i::bits(N))  = "0x" : [i]
-string instr(o::string) = PadRight(#" ", 12, o)
+string pinst(o::string) = PadRight(#" ", 12, o)
 
 string amotype(aq::amo, rl::amo) =
     match aq, rl
@@ -5093,61 +5181,61 @@ string amotype(aq::amo, rl::amo) =
     }
 
 string pRtype(o::string, rd::reg, rs1::reg, rs2::reg) =
-    instr(o) : " " : reg(rd) : ", " : reg(rs1) : ", " : reg(rs2)
+    pinst(o) : " " : reg(rd) : ", " : reg(rs1) : ", " : reg(rs2)
 
 string pARtype(o::string, aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
     pRtype([o : amotype(aq, rl)], rd, rs1, rs2)
 
 string pLRtype(o::string, aq::amo, rl::amo, rd::reg, rs1::reg) =
-    instr([o : amotype(aq, rl)]) : " " : reg(rd) : ", " : reg(rs1)
+    pinst([o : amotype(aq, rl)]) : " " : reg(rd) : ", " : reg(rs1)
 
 string pItype(o::string, rd::reg, rs1::reg, i::bits(N)) =
-    instr(o) : " " : reg(rd) : ", " : reg(rs1) : ", " : imm(i)
+    pinst(o) : " " : reg(rd) : ", " : reg(rs1) : ", " : imm(i)
 
 string pCSRtype(o::string, rd::reg, rs1::reg, csr::csreg) =
-    instr(o) : " " : reg(rd) : ", " : reg(rs1) : ", " : csrName(csr)
+    pinst(o) : " " : reg(rd) : ", " : reg(rs1) : ", " : csrName(csr)
 
 string pCSRItype(o::string, rd::reg, i::bits(N), csr::csreg) =
-    instr(o) : " " : reg(rd) : ", " : imm(i) : ", " : csrName(csr)
+    pinst(o) : " " : reg(rd) : ", " : imm(i) : ", " : csrName(csr)
 
 string pStype(o::string, rs1::reg, rs2::reg, i::bits(N)) =
-    instr(o) : " " : reg(rs2) : ", " : reg(rs1) : ", " : imm(i)
+    pinst(o) : " " : reg(rs2) : ", " : reg(rs1) : ", " : imm(i)
 
 string pSBtype(o::string, rs1::reg, rs2::reg, i::bits(N)) =
-    instr(o) : " " : reg(rs1) : ", " : reg(rs2) : ", " : imm(i<<1)
+    pinst(o) : " " : reg(rs1) : ", " : reg(rs2) : ", " : imm(i<<1)
 
 string pUtype(o::string, rd::reg, i::bits(N)) =
-    instr(o) : " " : reg(rd) : ", " : imm(i)
+    pinst(o) : " " : reg(rd) : ", " : imm(i)
 
 string pUJtype(o::string, rd::reg, i::bits(N)) =
-    instr(o) : " " : reg(rd) : ", " : imm(i<<1)
+    pinst(o) : " " : reg(rd) : ", " : imm(i<<1)
 
 string pN0type(o::string) =
-    instr(o)
+    pinst(o)
 
 string pN1type(o::string, r::reg) =
-    instr(o) : " " : reg(r)
+    pinst(o) : " " : reg(r)
 
 string pFRtype(o::string, rd::reg, rs1::reg, rs2::reg) =
-    instr(o) : " " : fpreg(rd) : ", " : fpreg(rs1) : ", " : fpreg(rs2)
+    pinst(o) : " " : fpreg(rd) : ", " : fpreg(rs1) : ", " : fpreg(rs2)
 
 string pFR1type(o::string, rd::reg, rs::reg) =
-    instr(o) : " " : fpreg(rd) : ", " : fpreg(rs)
+    pinst(o) : " " : fpreg(rd) : ", " : fpreg(rs)
 
 string pFR3type(o::string, rd::reg, rs1::reg, rs2::reg, rs3::reg) =
-    instr(o) : " " : fpreg(rd) : ", " : fpreg(rs1) : ", " : fpreg(rs2) : ", " : fpreg(rs3)
+    pinst(o) : " " : fpreg(rd) : ", " : fpreg(rs1) : ", " : fpreg(rs2) : ", " : fpreg(rs3)
 
 string pFItype(o::string, rd::reg, rs1::reg, i::bits(N)) =
-    instr(o) : " " : fpreg(rd) : ", " : reg(rs1) : ", " : imm(i)
+    pinst(o) : " " : fpreg(rd) : ", " : reg(rs1) : ", " : imm(i)
 
 string pFStype(o::string, rs1::reg, rs2::reg, i::bits(N)) =
-    instr(o) : " " : fpreg(rs2) : ", " : reg(rs1) : ", " : imm(i)
+    pinst(o) : " " : fpreg(rs2) : ", " : reg(rs1) : ", " : imm(i)
 
 string pCFItype(o::string, rd::reg, rs::reg) =
-    instr(o) : " " : fpreg(rd) : ", " : reg(rs)
+    pinst(o) : " " : fpreg(rd) : ", " : reg(rs)
 
 string pCIFtype(o::string, rd::reg, rs::reg) =
-    instr(o) : " " : reg(rd) : ", " : fpreg(rs)
+    pinst(o) : " " : reg(rd) : ", " : fpreg(rs)
 
 string instructionToString(i::instruction) =
    match i
@@ -5646,6 +5734,8 @@ unit Next =
              ; curPrivilege <- User
              ; MCSR.mstatus <- uret(MCSR.mstatus)
              ; PC           <- UCSR.uepc
+
+             ; recordMStatus(MCSR.mstatus)
              }
     case Some(Sret), None =>
              { NextFetch    <- None
@@ -5654,6 +5744,8 @@ unit Next =
              ; curPrivilege <- if MCSR.mstatus.M_SPP then Supervisor else User
              ; MCSR.mstatus <- sret(MCSR.mstatus)
              ; PC           <- SCSR.sepc
+
+             ; recordMStatus(MCSR.mstatus)
              }
     case Some(Mret), None =>
              { NextFetch    <- None
@@ -5662,6 +5754,8 @@ unit Next =
              ; curPrivilege <- privilege(MCSR.mstatus.M_MPP)
              ; MCSR.mstatus <- mret(MCSR.mstatus)
              ; PC           <- MCSR.mepc
+
+             ; recordMStatus(MCSR.mstatus)
              }
     case Some(BranchTo(pc)), None =>
              { incrInstret()
@@ -5678,41 +5772,45 @@ unit Next =
 -- todo: This needs to be parameterized by an isa string, or
 -- initialized from outside the model.
 unit initIdent(arch::Architecture) =
-{ MCSR.misa.MXL         <- archBase(arch)
-; MCSR.misa.X           <- false
-; MCSR.misa.U           <- true
-; MCSR.misa.S           <- true
-; MCSR.misa.N           <- true
-; MCSR.misa.M           <- true
-; MCSR.misa.I           <- true
-; MCSR.misa.H           <- false
-; MCSR.misa.G           <- false
-; MCSR.misa.F           <- true
-; MCSR.misa.D           <- true
-; MCSR.misa.C           <- false
-; MCSR.misa.A           <- true
+{ MCSR.misa.MXL     <- archBase(arch)
+; MCSR.misa.X       <- false
+; MCSR.misa.U       <- true
+; MCSR.misa.S       <- true
+; MCSR.misa.N       <- true
+; MCSR.misa.M       <- true
+; MCSR.misa.I       <- true
+; MCSR.misa.H       <- false
+; MCSR.misa.G       <- false
+; MCSR.misa.F       <- true
+; MCSR.misa.D       <- true
+; MCSR.misa.C       <- false
+; MCSR.misa.A       <- true
 
-; MCSR.mvendorid        <- MVENDORID
-; MCSR.marchid          <- MARCHID
-; MCSR.mimpid           <- MIMPID
+; MCSR.mvendorid    <- MVENDORID
+; MCSR.marchid      <- MARCHID
+; MCSR.mimpid       <- MIMPID
 }
 
 unit initMachine(hartid::id) =
 { -- Startup in Mbare machine mode, with interrupts disabled.
-  curPrivilege          <- Machine
-; MCSR.&mstatus         <- 0
+  curPrivilege      <- Machine
+; var ms = mstatus(0)
+
   -- initialize extension context state
-; MCSR.mstatus.M_FS     <- ext_status(Initial)
-; MCSR.mstatus.M_XS     <- ext_status(Off)
-; MCSR.mstatus.M_SD     <- false
+; ms.M_FS           <- ext_status(Initial)
+; ms.M_XS           <- ext_status(Off)
+; ms.M_SD           <- false
   -- initialize *-xlen.
-; MCSR.mstatus.M_SXL    <- MCSR.misa.MXL
-; MCSR.mstatus.M_UXL    <- MCSR.misa.MXL
+; ms.M_SXL          <- MCSR.misa.MXL
+; ms.M_UXL          <- MCSR.misa.MXL
+
+; MCSR.mstatus      <- ms
+; recordMStatus(ms)
 
   -- Setup hartid
-; MCSR.mhartid          <- ZeroExtend(hartid)
+; MCSR.mhartid      <- ZeroExtend(hartid)
   -- Initialize mtvec to lower address (other option is 0xF...FFE00)
-; MCSR.mtvec            <- ZeroExtend(0x100`16)
+; MCSR.mtvec        <- ZeroExtend(0x100`16)
 }
 -- This initializes each core (via setting procID appropriately) on
 -- startup before execution begins.

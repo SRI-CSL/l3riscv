@@ -139,7 +139,7 @@ fun dumpRegisters core =
       ; printLog ()
       ; print "======   Registers   ======\n"
       ; print ("Core = " ^ IntInf.toString core ^ "\n")
-      ; let val w   = #rinstr (riscv.Delta ())
+      ; let val w   = #instr (riscv.Delta ())
             val i   = riscv.Decode w
         in  print ("Faulting instruction: (0x" ^ hex32 w ^ ") "
                    ^ riscv.instructionToString i
@@ -390,92 +390,7 @@ fun doElf cycles file dis =
 (* Tandem verification:
    server interface: verify against model *)
 
-datatype VerifyMsg = InstrRetire | Reset | WriteMem | WriteGPR | WriteCSR | WriteFPR | WriteFSR | WritePC
-
-fun typeOfMsg m =
-    case m of 0 => SOME InstrRetire
-            | 1 => SOME Reset
-            | 2 => SOME WriteMem
-            | 3 => SOME WriteGPR
-            | 4 => SOME WriteCSR
-            | 5 => SOME WriteFPR
-            | 6 => SOME WriteFSR
-            | 7 => SOME WritePC
-            | _ => NONE
-
-fun strOfMsg m =
-    case m of SOME InstrRetire => "instr-retire"
-            | SOME Reset       => "reset"
-            | SOME WriteMem    => "write-mem"
-            | SOME WriteGPR    => "write-gpr"
-            | SOME WriteCSR    => "write-csr"
-            | SOME WriteFPR    => "write-fpr"
-            | SOME WriteFSR    => "write-fsr"
-            | SOME WritePC     => "write-pc"
-            | NONE             => "unknown"
-
-
-fun doInstrRetire (exc, pc, addr, d1, d2, d3, fpd, v) =
-    let fun toW64 bits      = Word64.fromInt (IntInf.toInt (BitsN.toUInt bits))
-        val rpc             = toW64 (riscv.PC ())
-        fun eqW64 a b       = Word64.compare (a, b) = EQUAL
-        fun checkOpt ot v   = case ot of
-                                  SOME b => eqW64 (toW64 b) v
-                                | NONE   => true
-        fun checkSubOpt optval optwidth v =
-            case (optval, optwidth) of
-                (NONE, _)           => true
-              | (SOME b, NONE)      => eqW64 (toW64 b) v
-              | (SOME b, SOME w)    => let val mask = mkMask64 w
-                                       in  eqW64 (Word64.andb ((toW64 b), mask))
-                                                 (Word64.andb (v,         mask))
-                                       end
-    in  verifierTrace (1, String.concat(["instr-retire: pc=", hx64 pc
-                                         , " addr=", hx64 addr
-                                         , " d1=", hx64 d1
-                                         , " d2=", hx64 d2
-                                         , " d3=", hx64 d3
-                                         , " fpd=", hx64 fpd]))
-      ; (riscv.Next () ; printLog (); print ("\n"))
-        handle riscv.UNDEFINED s =>
-               ( dumpRegisters (currentCore ())
-               ; failExit ("UNDEFINED \"" ^ s ^ "\"\n")
-               )
-             | riscv.INTERNAL_ERROR s =>
-               ( dumpRegisters (currentCore ())
-               ; failExit ("INTERNAL_ERROR \"" ^ s ^ "\"\n")
-               )
-      ; let val delta   = riscv.Delta ()
-            val exc_ok  = if (#exc_taken delta) then exc <> 0x0 else exc = 0x0
-            val pc_ok   = eqW64 (toW64 (#pc delta))     pc
-            val inst_ok = eqW64 (toW64 (#rinstr delta)) d3
-            val addr_ok = checkOpt (#addr delta)    addr
-            val d1_ok   = checkOpt (#data1 delta)   d1
-            val fp_ok   = checkOpt (#fp_data delta) fpd
-            val d2_ok   = checkSubOpt (#data2 delta) (#st_width delta) d2
-            val all_ok  = (exc_ok andalso pc_ok andalso inst_ok andalso addr_ok
-                           andalso d1_ok andalso d2_ok andalso fp_ok)
-        in  if all_ok then 0
-            else ( if exc_ok then ()
-                   else verifierTrace (0, "Exception mis-match")
-                 ; if pc_ok then ()
-                   else verifierTrace (0, "PC mis-match")
-                 ; if inst_ok orelse (#fetch_exc delta) then ()
-                   else verifierTrace (0, "Instruction mis-match")
-                 ; if addr_ok then ()
-                   else verifierTrace (0, "Address mis-match")
-                 ; if d1_ok then ()
-                   else verifierTrace (0, "Data1 mis-match")
-                 ; if d2_ok then ()
-                   else verifierTrace (0, "Data2 mis-match")
-                 ; if fp_ok then ()
-                   else verifierTrace (0, "FP mis-match")
-                 ; dumpRegisters (currentCore ())
-                 ; failExit ("VERIFICATION_FAILURE")
-                 )
-        end
-    end
-
+(* TODO *)
 fun initModel () =
     ()
 
