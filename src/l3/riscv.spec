@@ -1511,7 +1511,7 @@ string csrName(csr::csreg) =
 
 record StateDelta
 { -- execution context
-  priv          :: priv_level   -- the privilege level of execution
+  priv          :: Privilege    -- the privilege level of execution
 
   pc            :: regType      -- the PC of the instruction: this
                                 -- could be either a virtual or
@@ -1575,9 +1575,9 @@ component Delta :: StateDelta
   assign value = c_update(procID) <- value
 }
 
-unit initDelta(pc::regType, p::Privilege) =
-{ Delta.priv        <- privLevel(p)
-; Delta.pc          <- pc
+unit initDelta() =
+{ Delta.priv        <- User
+; Delta.pc          <- ZeroExtend(0b0`1)
 ; Delta.instr       <- ZeroExtend(0b0`1)
 
 ; Delta.mem_addr    <- None
@@ -1594,6 +1594,11 @@ unit initDelta(pc::regType, p::Privilege) =
 ; Delta.mcause      <- None
 ; Delta.mtval       <- None
 -- mstatus is explicitly recorded on changes.
+}
+
+unit recordPC(pc::regType, p::Privilege) =
+{ Delta.priv        <- p
+; Delta.pc          <- pc
 }
 
 unit recordMStatus(ms::mstatus) =
@@ -4858,7 +4863,6 @@ construct FetchResult
 
 FetchResult Fetch() =
 { vPC    = PC
-; initDelta(vPC, curPrivilege)
 ; if vPC<1:0> != 0
   then F_Error(Internal(FETCH_MISALIGNED(vPC)))
   else match translateAddr(vPC, Execute, Instruction)
@@ -5709,7 +5713,8 @@ unit checkTimers() =
 }
 
 unit Next =
-{ match Fetch()
+{ initDelta ()
+; match Fetch()
   { case F_Result(w) =>
     { inst = Decode(w)
     ; mark_log(LOG_INSN, log_instruction(w, inst))
@@ -5782,6 +5787,7 @@ unit Next =
              ; PC           <- PC + 4
              }
   }
+; recordPC(PC, curPrivilege)
 }
 
 -- todo: This needs to be parameterized by an isa string, or

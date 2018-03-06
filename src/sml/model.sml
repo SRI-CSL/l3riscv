@@ -176,31 +176,78 @@ fun verifierTrace (lvl, str) =
     else ()
 
 (* Tandem verification:
-   client interface: disabled pending a new implementation *)
+   client interface: we are a client of an external oracle. *)
 
 fun setChecker hndl =
     checker := SOME hndl
 
 fun getChecker () =
-    case (! checker) of
+    case !checker of
         NONE   => failExit "Verification oracle not initialized!"
      |  SOME h => h
 
+local
+    fun check_pc  t pc =
+        Oracle.checkPC (t, BitsN.toUInt pc)
+    fun check_reg t rdb rvb =
+        let val (rd, rv) = (IntInf.toInt (BitsN.toUInt rdb), BitsN.toUInt rvb)
+        in  Oracle.checkGPR (t, rd, rv)  end
+    fun check_csr t rnb rvb =
+        let val (rn, rv) = (IntInf.toInt (BitsN.toUInt rnb), BitsN.toUInt rvb)
+        in  Oracle.checkCSR (t, rn, rv)  end
+    fun check_failed msg (chks, vals) =
+        ( ListPair.app (fn (c, v) => if v then ()
+                                     else print (" mis-matched " ^ c ^ "\n")
+                       ) (chks, vals)
+        ; if List.exists (fn b => not b) vals
+          then ( print (msg ^ " verification error.\n")
+               ; dumpRegisters (currentCore ())
+               ; failExit "Verification FAILED!\n"
+               )
+          else ()
+        )
+in
+(* TODO: check mstatus and other CSRs on init *)
+fun doInitCheck () =
+    let val t       = getChecker ()
+        val priv_ok = Oracle.checkPriv (t, riscv.curPrivilege ())
+        val pc_ok   = Oracle.checkPC (t, BitsN.toUInt (riscv.PC ()))
+        val regs_ok = ref []
+    in  check_failed "Initialization" ( ["privilege", "pc"]
+                                      , [priv_ok, pc_ok]
+                                      )
+      ; L3.for
+            (IntInf.fromInt 0, IntInf.fromInt 31,
+             fn i =>
+                let val rd = BitsN.fromNat (i, 5)
+                    val rv = riscv.GPR rd
+                in regs_ok := (check_reg t rd rv) :: !regs_ok
+                end
+            )
+      ; check_failed "Initialization" ( (List.map (fn _ => "reg") (!regs_ok))
+                                      , !regs_ok
+                                      )
+    end
 fun doCheck () =
-    if true
-    then ()
-    else ( print "Verification error:\n"
-         ; dumpRegisters (currentCore ())
-         ; failExit "Verification FAILED!\n"
-         )
+    let val delta   = riscv.Delta ()
+        val t       = getChecker ()
+        val priv_ok = Oracle.checkPriv (t, (#priv delta))
+        val pc_ok   = Oracle.checkPC (t, BitsN.toUInt (#pc delta))
+        (* TODO: inst check *)
+        val reg_ok  = case #reg_effect delta of
+                          NONE => true
+                       |  SOME (rd, rv) => check_reg t rd rv
+        val csr_ok  = case #csr_effect delta of
+                          NONE => true
+                       |  SOME (rd, rv) => check_csr t rd rv
+    in  check_failed "State" ( ["privilege", "pc", "reg", "csr"]
+                             , [priv_ok, pc_ok, reg_ok, csr_ok]
+                             )
+    end
+end
 
 fun isCheckerDone () =
-    if !check then
-        let val pc   = BitsN.toUInt (riscv.Map.lookup(!riscv.c_PC, 0))
-            val pc64 = Word64.fromInt (IntInf.toInt pc)
-        in  Word64.compare (!checker_exit_pc, pc64) = EQUAL
-        end
-    else false
+    Oracle.isDone (getChecker ())
 
 (* Code execution *)
 
@@ -209,38 +256,23 @@ fun logLoop mx i =
     ; riscv.Next ()
     ; print ("\n")
     ; printLog ()
-    ; if !check then doCheck() else ()
-    ; if !riscv.done orelse i = mx orelse isCheckerDone ()
+    ; if !check
+      then ( Oracle.step (getChecker ())
+           ; doCheck()
+           )
+      else ()
+    ; if !riscv.done orelse i = mx orelse (!check andalso isCheckerDone ())
       then ( print ("ExitCode: " ^ Nat.toString (riscv.exitCode ()) ^ "\n")
            ; print ("Completed " ^ Int.toString (i + 1) ^ " instructions.\n")
            )
       else logLoop mx (if isLastCore () then (i + 1) else i)
     )
 
-fun decr i = if i <= 0 then i else i - 1
-
-fun silentLoop mx =
-    ( riscv.scheduleCore (nextCoreToSchedule ())
-    ; riscv.Next ()
-    ; riscv.clear_logs ()
-    ; if !check then doCheck() else ()
-    ; if !riscv.done orelse (mx = 1) orelse isCheckerDone ()
-      then let val ec = riscv.exitCode ()
-           in  print ("done: exit code " ^ Nat.toString ec ^ "\n")
-             ; OS.Process.exit (if ec = 0
-                                then OS.Process.success
-                                else OS.Process.failure)
-           end
-      else silentLoop (if isLastCore () then (decr mx) else mx)
-    )
-
 local
     fun t f x = if !time_run then Runtime.time f x else f x
 in
 fun run mx =
-    if   1 <= !trace_lvl
-    then t (logLoop mx) 0
-    else t silentLoop mx
+    t (logLoop mx) 0
 
 fun runWrapped mx =
     run mx
@@ -389,7 +421,10 @@ fun setupElf file dis =
 fun doElf cycles file dis =
     ( setupElf file dis
     ; if !check
-      then Oracle.loadElf (getChecker (), file)
+      then ( Oracle.loadElf (getChecker (), file)
+           ; Oracle.reset (getChecker ())
+           ; doInitCheck ()
+           )
       else ()
     ; if dis
       then printLog ()

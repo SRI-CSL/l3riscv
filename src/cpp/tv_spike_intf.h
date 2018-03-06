@@ -44,9 +44,9 @@ extern "C" {
 
 tv_spike_t* tv_init(const char *isa);
 
-void tv_load_elf(tv_spike_t* tvs, const char *filename);
-
 void tv_set_verbose(tv_spike_t* tvs, int enable);
+
+void tv_load_elf(tv_spike_t* tvs, const char *filename);
 
 void tv_reset(tv_spike_t *tvs);
 

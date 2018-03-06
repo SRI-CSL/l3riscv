@@ -20,7 +20,10 @@ sig
     val init       : string     -> t
     val setVerbose : t * bool   -> unit
     val loadElf    : t * string -> unit (* TODO: cross-check the parsed entry point? *)
+    val reset      : t          -> unit
+    val step       : t          -> unit
     val isDone     : t          -> bool
+
 
     (* checks *)
     val checkPC    : t * IntInf.int       -> bool

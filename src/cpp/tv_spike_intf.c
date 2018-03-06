@@ -41,57 +41,64 @@ tv_spike_t* tv_init(const char *isa)
   return tvs;
 }
 
-void tv_load_elf(tv_spike_t* tvs, const char *filename)
-{
-  fprintf(stderr, "%s(%p, %s)\n", __func__, tvs, filename);
-}
-
 void tv_set_verbose(tv_spike_t* tvs, int enable)
 {
   fprintf(stderr, "%s(%p, %d)\n", __func__, tvs, enable);
+  tvs->set_verbose(enable);
+}
+
+void tv_load_elf(tv_spike_t* tvs, const char *filename)
+{
+  reg_t entry = tvs->init_elf(filename);
+  fprintf(stderr, "%s(%p, %s): %0" PRIx64 "\n",
+          __func__, tvs, filename, entry);
 }
 
 void tv_reset(tv_spike_t* tvs)
 {
   fprintf(stderr, "%s(%p)\n", __func__, tvs);
+  tvs->reset();
 }
 
 void tv_step(tv_spike_t* tvs)
 {
   fprintf(stderr, "%s(%p)\n", __func__, tvs);
+  tvs->step();
 }
 
 int tv_is_done(tv_spike_t* tvs)
 {
+  int exit_code;
   fprintf(stderr, "%s(%p)\n", __func__, tvs);
-  return 0;
+  return tvs->exited(exit_code);
 }
 
 int tv_check_priv(tv_spike_t* tvs, uint8_t priv)
 {
   fprintf(stderr, "%s(%p, %d)\n", __func__, tvs, priv);
-  return 0;
+  return tvs->check_priv(priv);
 }
 
 int tv_check_pc(tv_spike_t* tvs, uint64_t val)
 {
   fprintf(stderr, "%s(%p, %0" PRIx64 ")\n", __func__, tvs, val);
-  return 0;
+  return tvs->check_pc(val);
 }
 
 int tv_check_gpr(tv_spike_t* tvs, size_t regno, uint64_t val)
 {
   fprintf(stderr, "%s(%p, %ld, %0" PRIx64 ")\n", __func__, tvs, regno, val);
-  return 0;
+  return tvs->check_gpr(regno, val);
 }
 
 int tv_check_csr(tv_spike_t* tvs, size_t regno, uint64_t val)
 {
   fprintf(stderr, "%s(%p, %ld, %0" PRIx64 ")\n", __func__, tvs, regno, val);
-  return 0;
+  return tvs->check_csr(regno, val);
 }
 
 void tv_free(tv_spike_t *tvs)
 {
+  fprintf(stderr, "%s(%p)\n", __func__, tvs);
   delete tvs;
 }

@@ -35,15 +35,18 @@ fun fromBool b = if b     then 1     else 0
 val init : string -> t =
     buildCall1 (getSym "tv_init", cString, cPointer)
 
-val loadElf : (t * string) -> unit =
-    buildCall2 (getSym "tv_load_elf", (cPointer, cString), cVoid)
-
 val setVerbose : (t * bool) -> unit =
     buildCall2 (getSym "tv_set_verbose", (cPointer, cInt), cVoid)
     o (fn (t, b) => (t, fromBool b))
 
+val loadElf : (t * string) -> unit =
+    buildCall2 (getSym "tv_load_elf", (cPointer, cString), cVoid)
+
 val reset : t -> unit =
     buildCall1 (getSym "tv_reset", cPointer, cVoid)
+
+val step : t -> unit =
+    buildCall1 (getSym "tv_step", cPointer, cVoid)
 
 val isDone : t -> bool =
     toBool o buildCall1 (getSym "tv_is_done", cPointer, cInt)
