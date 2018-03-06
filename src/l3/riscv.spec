@@ -5844,7 +5844,7 @@ unit initRegs(pc::nat) =
 ; for i in 0 .. 31 do
     fpr([i])   <- 0x0
 
-; NextFetch <- Some(BranchTo([pc]))
+; NextFetch <- None
 ; PC        <- [pc]
 ; done      <- false
 }
