@@ -288,17 +288,25 @@ end
 
 (* Platform initialization *)
 
-fun insertBootCode () =
-    let val auipc_val = IntInf.-(!mem_base_addr, IntInf.fromInt reset_addr)
-        val auipc_imm = BitsN.>>+ (BitsN.fromInt (auipc_val, IntInf.fromInt 32),
-                                   12)
+fun insertResetVec () =
+    (* reset vector from Spike, sim.cc:make_dtb() *)
+    let val rst_vec_sz  = 8 * 4
+        val auipc_imm   = BitsN.B(0x0, 20)
+        val rvsz_imm    = BitsN.fromInt (rst_vec_sz, 12)
+        val mhartid_imm = BitsN.B((0x0F14: IntInf.int), 12)
         val boot_code =
-            [ (* auipc t0, 0x7ffff *)
+            [ (* auipc  t0, 0x0 *)
               riscv.ArithI(riscv.AUIPC(BitsN.fromNat (5, 5), auipc_imm))
-            , (* jr t0 *)
+            , (* addi   a1, t0, reset_vec_size *)
+              riscv.ArithI(riscv.ADDI(BitsN.fromNat (11, 5), (BitsN.fromInt (5, 5), rvsz_imm)))
+            , (* csrr   a0, mhartid *)
+              riscv.System(riscv.CSRRS(BitsN.fromNat (10, 5), (BitsN.fromNat (0, 5), mhartid_imm)))
+            , (* ld     t0, 24(t0)   TODO: xlen=32 => lw t0, 24(t0) *)
+              riscv.Load(riscv.LD(BitsN.fromNat (5, 5), (BitsN.fromNat (5, 5), BitsN.fromNat (24, 12))))
+            , (* jr     t0 *)
               riscv.Branch(riscv.JALR(BitsN.fromNat (0, 5), (BitsN.fromNat (5, 5), BitsN.zero 12)))
             ]
-        val boot_vec = List.map riscv.Encode boot_code
+        (* TODO: add boot-data containing 2 32-bit words for start-address. *)
         fun insert (addr : IntInf.int) insns =
             case insns of
                 i :: tl        => ( riscv.rawWriteData (BitsN.fromInt (addr, 64), (i, 4))
@@ -307,6 +315,7 @@ fun insertBootCode () =
               | []             => ()
     in print ("L3RISCV: Loading reset code at " ^ hxi reset_addr ^ "\n")
      ; insert (IntInf.fromInt reset_addr) (List.map riscv.Encode boot_code)
+     ; printLog ()
     end
 
 fun initPlatform cores =
@@ -321,7 +330,7 @@ fun initPlatform cores =
       then setChecker (Oracle.init ("RV64IMAFD"))
       else ()
     ; if !boot
-      then insertBootCode ()
+      then insertResetVec ()
       else ()
     )
 
