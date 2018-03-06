@@ -1969,7 +1969,7 @@ component GPR(n::reg) :: regType
 
 unit writeRD(rd::reg, val::regType) =
 { GPR(rd)           <- val
-; Delta.reg_effect  <- Some(rd, val)
+; Delta.reg_effect  <- Some(rd, if rd == 0 then 0 else val)
 }
 
 component FPRS(n::reg) :: word
