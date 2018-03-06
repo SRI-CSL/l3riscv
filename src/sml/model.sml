@@ -288,36 +288,6 @@ end
 
 (* Platform initialization *)
 
-fun insertResetVec () =
-    (* reset vector from Spike, sim.cc:make_dtb() *)
-    let val rst_vec_sz  = 8 * 4
-        val auipc_imm   = BitsN.B(0x0, 20)
-        val rvsz_imm    = BitsN.fromInt (rst_vec_sz, 12)
-        val mhartid_imm = BitsN.B((0x0F14: IntInf.int), 12)
-        val boot_code =
-            [ (* auipc  t0, 0x0 *)
-              riscv.ArithI(riscv.AUIPC(BitsN.fromNat (5, 5), auipc_imm))
-            , (* addi   a1, t0, reset_vec_size *)
-              riscv.ArithI(riscv.ADDI(BitsN.fromNat (11, 5), (BitsN.fromInt (5, 5), rvsz_imm)))
-            , (* csrr   a0, mhartid *)
-              riscv.System(riscv.CSRRS(BitsN.fromNat (10, 5), (BitsN.fromNat (0, 5), mhartid_imm)))
-            , (* ld     t0, 24(t0)   TODO: xlen=32 => lw t0, 24(t0) *)
-              riscv.Load(riscv.LD(BitsN.fromNat (5, 5), (BitsN.fromNat (5, 5), BitsN.fromNat (24, 12))))
-            , (* jr     t0 *)
-              riscv.Branch(riscv.JALR(BitsN.fromNat (0, 5), (BitsN.fromNat (5, 5), BitsN.zero 12)))
-            ]
-        (* TODO: add boot-data containing 2 32-bit words for start-address. *)
-        fun insert (addr : IntInf.int) insns =
-            case insns of
-                i :: tl        => ( riscv.rawWriteData (BitsN.fromInt (addr, 64), (i, 4))
-                                  ; insert (IntInf.+ (addr, 4)) tl
-                                  )
-              | []             => ()
-    in print ("L3RISCV: Loading reset code at " ^ hxi reset_addr ^ "\n")
-     ; insert (IntInf.fromInt reset_addr) (List.map riscv.Encode boot_code)
-     ; printLog ()
-    end
-
 fun initPlatform cores =
     ( riscv.print     := debugPrint
     ; riscv.println   := debugPrintln
@@ -328,9 +298,6 @@ fun initPlatform cores =
                          , 64))
     ; if !check
       then setChecker (Oracle.init ("RV64IMAFD"))
-      else ()
-    ; if !boot
-      then insertResetVec ()
       else ()
     )
 
@@ -345,6 +312,49 @@ fun initCores (arch, pc) =
            ; initCores (arch, pc)
            )
     )
+
+(* Spike-compatible reset vector *)
+
+fun insertResetVec pc =
+    (* reset vector from Spike, sim.cc:make_dtb() *)
+    let val rst_vec_sz  = 8 * 4
+        val auipc_imm   = BitsN.B(0x0, 20)
+        val rvsz_imm    = BitsN.fromInt (rst_vec_sz, 12)
+        val mhartid_imm = BitsN.B((0x0F14: IntInf.int), 12)
+        val boot_code   =
+            [ (* auipc  t0, 0x0 *)
+              riscv.ArithI(riscv.AUIPC(BitsN.fromNat (5, 5), auipc_imm))
+            , (* addi   a1, t0, reset_vec_size *)
+              riscv.ArithI(riscv.ADDI(BitsN.fromNat (11, 5), (BitsN.fromInt (5, 5), rvsz_imm)))
+            , (* csrr   a0, mhartid *)
+              riscv.System(riscv.CSRRS(BitsN.fromNat (10, 5), (BitsN.fromNat (0, 5), mhartid_imm)))
+            , (* ld     t0, 24(t0)   TODO: xlen=32 => lw t0, 24(t0) *)
+              riscv.Load(riscv.LD(BitsN.fromNat (5, 5), (BitsN.fromNat (5, 5), BitsN.fromNat (24, 12))))
+            , (* jr     t0 *)
+              riscv.Branch(riscv.JALR(BitsN.fromNat (0, 5), (BitsN.fromNat (5, 5), BitsN.zero 12)))
+            ]
+        val pc_int       = IntInf.fromInt pc
+        val pc_lo        = IntInf.andb (pc_int, 0xFFFFFFFF)
+        val pc_hi        = IntInf.~>> (pc_int, Word.fromInt 32)
+        fun insert (addr : IntInf.int) words =
+            case words of
+                w :: tl        => ( riscv.rawWriteData (BitsN.fromInt (addr, 64), (w, 4))
+                                  ; insert (IntInf.+ (addr, 4)) tl
+                                  )
+              | []             => addr
+    in print ("L3RISCV: Loading reset code at " ^ hxi reset_addr ^ "\n")
+     ; let val pc_addr =
+               insert (IntInf.fromInt reset_addr) (List.map riscv.Encode boot_code)
+       in printLog ()
+        (* the reset-vector terminates with a 64-bit aligned start-address. *)
+        ; insert pc_addr [ BitsN.fromInt (  0x0, 32)  (* align *)
+                         , BitsN.fromInt (pc_lo, 32)
+                         , BitsN.fromInt (pc_hi, 32)
+                         ]
+        ; printLog ()
+       end
+    end
+
 
 (* Program load *)
 
@@ -424,6 +434,12 @@ fun setupElf file dis =
              ; print ("\nMem size: " ^ (hxi64 (!mem_size))
                       ^ " (" ^ (IntInf.fmt StringCvt.DEC (!mem_size)) ^ ")\n")
              )
+        else ()
+      ; printLog ()
+      (* FIXME: this spike-specific behaviour of loading a reset-vector in a debug-rom
+       * should be conditioned by an appropriate flag. *)
+      ; if !boot
+        then insertResetVec (LargeInt.toInt (#entry hdr))
         else ()
     end
 
