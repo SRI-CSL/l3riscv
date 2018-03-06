@@ -52,8 +52,8 @@ val isDone : t -> bool =
     toBool o buildCall1 (getSym "tv_is_done", cPointer, cInt)
 
 val checkPC : (t * IntInf.int) -> bool =
-    toBool o buildCall2 (getSym "tv_check_pc", (cPointer, cUint64), cInt)
-    o (fn (t, i) => (t, IntInf.toInt i))
+    toBool o buildCall2 (getSym "tv_check_pc", (cPointer, cUint64Large), cInt)
+    o (fn (t, i) => (t, IntInf.toLarge i))
 
 val checkPriv : (t * riscv.Privilege) -> bool =
     toBool o buildCall2 (getSym "tv_check_priv", (cPointer, cUint8), cInt)
@@ -62,11 +62,11 @@ val checkPriv : (t * riscv.Privilege) -> bool =
                                |  riscv.Machine    => 3))
 
 val checkGPR : (t * int * IntInf.int) -> bool =
-    toBool o buildCall3 (getSym "tv_check_gpr", (cPointer, cUint64, cUint64), cInt)
-    o (fn (t, rno, rval) => (t, rno, IntInf.toInt rval))
+    toBool o buildCall3 (getSym "tv_check_gpr", (cPointer, cUint64, cUint64Large), cInt)
+    o (fn (t, rno, rval) => (t, rno, IntInf.toLarge rval))
 
 val checkCSR : (t * int * IntInf.int) -> bool =
-    toBool o buildCall3 (getSym "tv_check_csr", (cPointer, cUint64, cUint64), cInt)
-    o (fn (t, rno, rval) => (t, rno, IntInf.toInt rval))
+    toBool o buildCall3 (getSym "tv_check_csr", (cPointer, cUint64, cUint64Large), cInt)
+    o (fn (t, rno, rval) => (t, rno, IntInf.toLarge rval))
 
 end
