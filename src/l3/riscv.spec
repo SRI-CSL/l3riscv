@@ -1650,11 +1650,13 @@ unit recordFetchException() =
 ---------------------------------------------------------------------------
 -- Logging
 ---------------------------------------------------------------------------
-string hex32(x::word)  = PadLeft(#"0", 8, [x])
-string hex64(x::dword) = PadLeft(#"0", 16, [x])
+string hex12(x::bits(12))   = PadLeft(#"0", 3, [x])
+string hex32(x::word)       = PadLeft(#"0", 8, [x])
+string hex64(x::dword)      = PadLeft(#"0", 16, [x])
 
-string log_w_csr(csr::csreg, data::regType) =
-    "CSR (" : csrName(csr) : ") <- 0x" : hex64(data)
+string log_w_csr(csr::csreg, input::regType, final::regType) =
+    [ "CSR (0x" : hex12(csr) : ":" : csrName(csr) : ") <- 0x" : hex64(final)
+      : " (input: 0x" : hex64(input) : ")" ]
 
 string reg(r::reg) =
 { if      r ==  0 then "$0"
@@ -1943,7 +1945,7 @@ bool globallyEnabled(delegate::Privilege, cur::Privilege) =
 component CSR(n::csreg) :: regType
 { value        = CSRMap(n)
   assign value =  { CSRMap(n) <- value
-                  ; mark_log(LOG_REG, log_w_csr(n, value))
+                  ; mark_log(LOG_REG, log_w_csr(n, value, CSRMap(n)))
                   }
 }
 
