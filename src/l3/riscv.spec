@@ -5782,10 +5782,13 @@ unit Next =
              { incrInstret()
              ; NextFetch    <- None
              ; PC           <- pc
+             -- mstatus should not have changed, preserve previous value in the delta
              }
     case None, None =>
              { incrInstret()
              ; PC           <- PC + 4
+             -- mstatus could have changed due to a csr write
+             ; recordMStatus(MCSR.mstatus)
              }
   }
 ; recordPC(PC, curPrivilege)
