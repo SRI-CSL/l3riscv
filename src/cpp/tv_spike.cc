@@ -172,7 +172,8 @@ bool tv_spike_t::check_pc(uint64_t val)
   bool chk = model_val == val;
 
   if (verbose_verify && !chk)
-    log_check("PC", 0, model_val, val);
+    fprintf(stderr, " PC: expected %0" PRIx64 " got %" PRIx64 "\n",
+            model_val, val);
   return chk;
 }
 
@@ -185,7 +186,8 @@ bool tv_spike_t::check_gpr(size_t regno, uint64_t val)
     chk = model_val == val;
   }
   if (verbose_verify && !chk)
-    log_check("GPR", regno, model_val, val);
+    fprintf(stderr, " GPR reg %ld: expected %0" PRIx64 " got %" PRIx64 "\n",
+            regno, model_val, val);
   return chk;
 }
 
@@ -194,7 +196,8 @@ bool tv_spike_t::check_csr(size_t regno, uint64_t val)
   uint64_t model_val = read_csr(regno);
   bool chk = model_val == val;
   if (verbose_verify && !chk)
-    log_check("CSR", regno, model_val, val);
+    fprintf(stderr, " CSR reg %lx: expected %0" PRIx64 " got %" PRIx64 "\n",
+            regno, model_val, val);
   return chk;
 }
 
@@ -203,7 +206,8 @@ bool tv_spike_t::check_priv(uint8_t val)
   uint8_t model_val = cpu->get_state()->prv;
   bool chk = model_val == val;
   if (verbose_verify && !chk)
-    log_check("PRIV", 0, model_val, val);
+    fprintf(stderr, " PRIV: expected %0x got %0x\n",
+            model_val, val);
   return chk;
 }
 
@@ -338,11 +342,4 @@ reg_t tv_spike_t::read_csr(size_t which)
     return state->dscratch;
   }
   return reg_t(-1);
-}
-
-void tv_spike_t::log_check(const char *regfile, size_t regno,
-                           uint64_t model_val, uint64_t val)
-{
-  fprintf(stderr, " %s reg %ld: expected %0" PRIx64 " got %" PRIx64 "\n",
-          regfile, regno, model_val, val);
 }

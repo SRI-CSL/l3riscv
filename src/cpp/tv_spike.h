@@ -113,7 +113,6 @@ private:
 
   // internal
   reg_t read_csr(size_t which);
-  void  log_check(const char *regfile, size_t regno, uint64_t model_val, uint64_t val);
 };
 
 #endif // __TV_SPIKE_H_
