@@ -139,7 +139,9 @@ fun dumpRegisters core =
     in  riscv.scheduleCore core
       ; printLog ()
       ; print "======   Registers   ======\n"
-      ; print ("Core = " ^ IntInf.toString core ^ "\n")
+      ; print ("Core = " ^ IntInf.toString core
+               ^ " at privilege " ^ riscv.privName (riscv.curPrivilege ())
+               ^ "\n")
       ; let val w   = #instr (riscv.Delta ())
             val i   = riscv.Decode w
         in  print ("Faulting instruction: (0x" ^ hex32 w ^ ") "
