@@ -69,31 +69,26 @@ void tv_step(tv_spike_t* tvs)
 int tv_is_done(tv_spike_t* tvs)
 {
   int exit_code;
-  fprintf(stderr, "%s(%p)\n", __func__, tvs);
   return tvs->exited(exit_code);
 }
 
 int tv_check_priv(tv_spike_t* tvs, uint8_t priv)
 {
-  fprintf(stderr, "%s(%p, %d)\n", __func__, tvs, priv);
   return tvs->check_priv(priv);
 }
 
 int tv_check_pc(tv_spike_t* tvs, uint64_t val)
 {
-  fprintf(stderr, "%s(%p, %0" PRIx64 ")\n", __func__, tvs, val);
   return tvs->check_pc(val);
 }
 
 int tv_check_gpr(tv_spike_t* tvs, size_t regno, uint64_t val)
 {
-  fprintf(stderr, "%s(%p, %ld, %0" PRIx64 ")\n", __func__, tvs, regno, val);
   return tvs->check_gpr(regno, val);
 }
 
 int tv_check_csr(tv_spike_t* tvs, size_t regno, uint64_t val)
 {
-  fprintf(stderr, "%s(%p, %ld, %0" PRIx64 ")\n", __func__, tvs, regno, val);
   return tvs->check_csr(regno, val);
 }
 
