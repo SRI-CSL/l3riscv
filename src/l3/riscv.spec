@@ -5818,7 +5818,7 @@ unit initMachine(hartid::id) =
 ; var ms = mstatus(0)
 
   -- initialize extension context state
-; ms.M_FS           <- ext_status(Initial)
+; ms.M_FS           <- ext_status(Off) -- FIXME: Should be Initial?
 ; ms.M_XS           <- ext_status(Off)
 ; ms.M_SD           <- false
   -- initialize *-xlen.
