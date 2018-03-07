@@ -4768,10 +4768,9 @@ define System > CSRRC(rd::reg, rs1::reg, csr::imm12) =
 -----------------------------------
 define System > CSRRWI(rd::reg, zimm::reg, csr::imm12) =
     if checkCSROp(csr, zimm, if zimm == 0 then Read else Write)
-    then { val = CSR(csr)
-         ; when zimm != 0
-           do writeCSR(csr, ZeroExtend(zimm))
-         ; writeRD(rd, val)
+    then { when rd != 0
+           do writeRD(rd, CSR(csr))
+         ; writeCSR(csr, ZeroExtend(zimm))
          }
     else signalException(E_Illegal_Instr)
 
