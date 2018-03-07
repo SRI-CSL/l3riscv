@@ -192,9 +192,28 @@ local
     fun check_reg t rdb rvb =
         let val (rd, rv) = (IntInf.toInt (BitsN.toUInt rdb), BitsN.toUInt rvb)
         in  Oracle.checkGPR (t, rd, rv)  end
-    fun check_csr t rnb rvb =
-        let val (rn, rv) = (IntInf.toInt (BitsN.toUInt rnb), BitsN.toUInt rvb)
+    fun check_csr_int t rn rvb =
+        let val rv = BitsN.toUInt rvb
         in  Oracle.checkCSR (t, rn, rv)  end
+    fun check_csr t rnb rvb =
+        let val rn = IntInf.toInt (BitsN.toUInt rnb)
+        in  check_csr_int t rn rvb  end
+
+    fun check_mstatus t rvb =
+        check_csr_int t 0x300 rvb
+    fun check_mepc    t rvb =
+        check_csr_int t 0x341 rvb
+    fun check_mcause  t rvb =
+        check_csr_int t 0x342 rvb
+    fun check_mtval   t rvb =
+        check_csr_int t 0x343 rvb
+    fun check_sepc    t rvb =
+        check_csr_int t 0x141 rvb
+    fun check_scause  t rvb =
+        check_csr_int t 0x142 rvb
+    fun check_stval   t rvb =
+        check_csr_int t 0x143 rvb
+
     fun check_failed msg (chks, vals) =
         ( ListPair.app (fn (c, v) => if v then ()
                                      else print (" mis-matched " ^ c ^ "\n")
@@ -212,9 +231,10 @@ fun doInitCheck () =
     let val t       = getChecker ()
         val priv_ok = Oracle.checkPriv (t, riscv.curPrivilege ())
         val pc_ok   = Oracle.checkPC (t, BitsN.toUInt (riscv.PC ()))
+        val ms_ok   = check_mstatus t (riscv.reg'mstatus (#mstatus (riscv.MCSR ())))
         val regs_ok = ref []
-    in  check_failed "Initialization" ( ["privilege", "pc"]
-                                      , [priv_ok, pc_ok]
+    in  check_failed "Initialization" ( ["privilege", "pc", "mstatus"]
+                                      , [priv_ok, pc_ok, ms_ok]
                                       )
       ; L3.for
             (IntInf.fromInt 0, IntInf.fromInt 31,
@@ -235,13 +255,41 @@ fun doCheck () =
         val pc_ok   = Oracle.checkPC (t, BitsN.toUInt (#pc delta))
         (* TODO: inst check *)
         val reg_ok  = case #reg_effect delta of
-                          NONE => true
+                          NONE          => true
                        |  SOME (rd, rv) => check_reg t rd rv
         val csr_ok  = case #csr_effect delta of
-                          NONE => true
+                          NONE          => true
                        |  SOME (rd, rv) => check_csr t rd rv
-    in  check_failed "State" ( ["privilege", "pc", "reg", "csr"]
-                             , [priv_ok, pc_ok, reg_ok, csr_ok]
+        val ms_ok   = check_mstatus t (#mstatus delta)
+
+        val mpc_ok  = case #mepc delta of
+                          NONE          => true
+                       |  SOME rv       => check_mepc t rv
+        val mc_ok   = case #mcause delta of
+                          NONE          => true
+                       |  SOME rv       => check_mcause t rv
+        val mtv_ok  = case #mtval delta of
+                          NONE          => true
+                       |  SOME rv       => check_mtval t rv
+
+        val spc_ok  = case #sepc delta of
+                          NONE          => true
+                       |  SOME rv       => check_sepc t rv
+        val sc_ok   = case #scause delta of
+                          NONE          => true
+                       |  SOME rv       => check_scause t rv
+        val stv_ok  = case #stval delta of
+                          NONE          => true
+                       |  SOME rv       => check_stval t rv
+
+    in  check_failed "State" ( [ "privilege", "pc", "reg", "csr", "mstatus"
+                                 , "mepc", "mcause", "mtval"
+                                 , "sepc", "scause", "stval"
+                               ]
+                             , [ priv_ok, pc_ok, reg_ok, csr_ok, ms_ok
+                                 , mpc_ok, mc_ok, mtv_ok
+                                 , spc_ok, sc_ok, stv_ok
+                               ]
                              )
     end
 end
