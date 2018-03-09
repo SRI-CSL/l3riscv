@@ -320,12 +320,32 @@ string excName(e::ExceptionType) =
 --
 -- There are two kinds of projections needed: (i) from machine-level
 -- views to views from lower privilege levels, and (ii) from the
--- 64-bit implementation width to 32-bit views.  We implement views as
--- a projection of kind (i) followed by that of kind (ii).
+-- 64-bit implementation width to 32-bit views.  So, for e.g.
 --
--- Each register definition is followed by any custom projections
--- needed.
-
+--   mstatus-64  ->  sstatus-64  ->  ustatus-64
+--      |               |               |
+--      V               V               V
+--   mstatus-32  ->  sstatus-32  ->  ustatus-32
+--
+-- These two kinds of projections will be called 'lowering' below, and
+-- ideally, the two kinds should commute.  These projections are used
+-- when reading from the underlying 64-bit implementation of the CSR.
+-- Projections going in the other direction are needed when writing a
+-- value to the CSR, and will be called 'lifting' below.
+--
+-- In addition, several fields in machine state registers are WARL or
+-- WLRL, requiring that values written to the registers be legalized.
+-- For each such register, there will be an associated 'legalize_'
+-- function.  These functions will need to be supplied externally, and
+-- will depend on the legal values supported by an implementation (or
+-- misa).  The legalize_ functions generate a legal value from the
+-- current value and the written value.  In more complex cases, they
+-- will also implicitly read the current values of misa, mstatus, etc.
+--
+-- Each register definition below is followed by custom projections
+-- and choice of legalizations if needed.  For now, we typically
+-- implement the simplest legalize_ alternatives.
+--
 -- TODO: writes to WPRI fields are not currently checked for
 -- preservation; adding checks would provide useful diagnostics.
 
@@ -350,9 +370,17 @@ register misa :: regType        -- Machine ISA
 word  isa_to_32(v::dword) = [v<63:62> : 0x0`4  : v<25:0>]
 dword isa_of_32(v::word)  = [v<31:30> : 0x0`36 : v<25:0>]
 
+misa legalize_misa_64(m::misa, v::regType) =
+    -- For now, we ignore all writes.
+    m
+
+misa legalize_misa_32(m::misa, v::word) =
+    legalize_misa_64(m, isa_of_32(v))
+
 regType MVENDORID = 0
 regType MARCHID   = 0
 regType MIMPID    = 0
+
 
 register mstatus :: regType     -- Machine Status
 {    63 : M_SD      -- extended context dirty status
@@ -376,6 +404,18 @@ register mstatus :: regType     -- Machine Status
 word  status_to_32(v::dword) = [v<63>]::bits(1) : 0x0`2  : v<28:0>
 dword status_of_32(v::word)  = [v<31>]::bits(1) : 0x0`32 : v<30:0>
 
+mstatus legalize_mstatus_64(m::mstatus, v::regType) =
+{ -- For now, we don't allow SXL and UXL to be changed, for Spike compatibility.
+  var ms = mstatus(v)
+; ms.M_SXL <- m.M_SXL
+; ms.M_UXL <- m.M_UXL
+; ms
+}
+
+mstatus legalize_mstatus_32(m::mstatus, v::word) =
+    legalize_mstatus_64(m, status_of_32(v))
+
+
 register medeleg :: regType     -- Exception Trap Delegation
 {    15 : M_SAMO_Page_Fault
 ,    13 : M_Load_Page_Fault
@@ -393,11 +433,19 @@ register medeleg :: regType     -- Exception Trap Delegation
 ,     0 : M_Fetch_Addr_Align
 }
 
-medeleg sanitize_medeleg(d::medeleg) =
-{ var md = d
+-- shared between {m,s}{i,e}deleg
+word  deleg_to_32(v::dword) = v<31:0>
+dword deleg_of_32(v::word)  = ZeroExtend(v)
+
+medeleg legalize_medeleg_64(m::medeleg, v::regType) =
+{ var md = medeleg(v)
 ; md.M_MEnvCall <- false    -- cannot delegate M-mode EnvCalls
 ; md
 }
+
+medeleg legalize_medeleg_32(m::medeleg, v::word) =
+    legalize_medeleg_64(m, deleg_of_32(v))
+
 
 register mideleg :: regType     -- Interrupt Trap Delegation
 {    11 : M_MEIP   -- external interrupts
@@ -411,6 +459,16 @@ register mideleg :: regType     -- Interrupt Trap Delegation
 ,     0 : M_USIP
 }
 
+-- just a stub hook for now
+mideleg legalize_mideleg_64(m::mideleg, v::regType) =
+{ var mi = mideleg(v)
+; mi
+}
+
+mideleg legalize_mideleg_32(m::mideleg, v::word) =
+    legalize_mideleg_64(m, deleg_of_32(v))
+
+
 register mip :: regType         -- Interrupt Pending
 {    11 : M_MEIP   -- external interrupts
 ,     9 : M_SEIP
@@ -423,8 +481,27 @@ register mip :: regType         -- Interrupt Pending
 ,     0 : M_USIP
 }
 
-word  ip_to_32(v::dword) = v<31:0>
-dword ip_of_32(v::word)  = ZeroExtend(v<11:0>)
+-- shared across {m,s}i{p,e}
+word  ipe_to_32(v::dword) = v<31:0>
+dword ipe_of_32(v::word)  = ZeroExtend(v<11:0>)
+
+mip legalize_mip_64(mip::mip, v::regType) =
+{ var m = mip
+; var v = mip(v)
+-- MTIP, MEIP and MSIP are read-only for M-mode CSR writes to mip, and
+-- are controlled via writes to memory-mapped control registers.
+; m.M_SEIP <- v.M_SEIP
+; m.M_UEIP <- v.M_UEIP
+; m.M_STIP <- v.M_STIP
+; m.M_UTIP <- v.M_UTIP
+; m.M_SSIP <- v.M_SSIP
+; m.M_USIP <- v.M_USIP
+; m
+}
+
+mip legalize_mip_32(m::mip, v::word) =
+    legalize_mip_64(m, ipe_of_32(v))
+
 
 register mie :: regType         -- Interrupt Enable
 {    11 : M_MEIE    -- external interrupts
@@ -438,14 +515,60 @@ register mie :: regType         -- Interrupt Enable
 ,     0 : M_USIE
 }
 
-word  ie_to_32(v::dword) = v<31:0>
-dword ie_of_32(v::word)  = ZeroExtend(v<31:0>)
+mie legalize_mie_64(mie::mie, v::regType) =
+{ var m = mie
+; var v = mie(v)
+; m.M_MEIE <- v.M_MEIE
+; m.M_MTIE <- v.M_MTIE
+; m.M_MSIE <- v.M_MSIE
+; m.M_SEIE <- v.M_SEIE
+; m.M_UEIE <- v.M_UEIE
+; m.M_STIE <- v.M_STIE
+; m.M_UTIE <- v.M_UTIE
+; m.M_SSIE <- v.M_SSIE
+; m.M_USIE <- v.M_USIE
+; m
+}
 
-register mcounteren :: regType  -- Machine Counter-Enable
-{     2 : M_IR      -- instructions retired
+mie legalize_mie_32(m::mie, v::word) =
+    legalize_mie_64(m, ipe_of_32(v))
+
+
+register mcounteren :: word  -- Machine Counter-Enable
+{    31 : M_HPM31
+,    30 : M_HPM30
+,    29 : M_HPM29
+,    28 : M_HPM28
+,    27 : M_HPM27
+,    26 : M_HPM26
+,    25 : M_HPM25
+,    24 : M_HPM24
+,    23 : M_HPM23
+,    22 : M_HPM22
+,    21 : M_HPM21
+,    20 : M_HPM20
+,    19 : M_HPM19
+,    18 : M_HPM18
+,    17 : M_HPM17
+,    16 : M_HPM16
+,    15 : M_HPM15
+,    14 : M_HPM14
+,    13 : M_HPM13
+,    12 : M_HPM12
+,    11 : M_HPM11
+,    10 : M_HPM10
+,     9 : M_HPM9
+,     8 : M_HPM8
+,     7 : M_HPM7
+,     6 : M_HPM6
+,     5 : M_HPM5
+,     4 : M_HPM4
+,     3 : M_HPM3
+,     2 : M_IR      -- instructions retired
 ,     1 : M_TM      -- time
 ,     0 : M_CY      -- cycles
 }
+
 
 register mcause :: regType      -- Trap Cause
 {    63 : M_Intr
@@ -455,18 +578,26 @@ register mcause :: regType      -- Trap Cause
 word  cause_to_32(v::dword) = [v<63>]::bits(1) : v<30:0>
 dword cause_of_32(v::word)  = [v<31>]::bits(1) : 0x0`32 : v<30:0>
 
+mcause legalize_mcause_64(m::mcause, v::regType) =
+    mcause(v)
+
+mcause legalize_mcause_32(m::mcause, v::word) =
+    legalize_mcause_64(m, cause_of_32(v))
+
+
 record MachineCSR
-{ misa          :: misa         -- information registers
-  mvendorid     :: regType
+{ mvendorid     :: regType      -- information registers
   marchid       :: regType
   mimpid        :: regType
   mhartid       :: regType
 
   mstatus       :: mstatus      -- trap setup
+  misa          :: misa
   medeleg       :: medeleg
   mideleg       :: mideleg
   mie           :: mie
   mtvec         :: regType
+  mcounteren    :: mcounteren
 
   mscratch      :: regType      -- trap handling
   mepc          :: regType
@@ -474,21 +605,11 @@ record MachineCSR
   mtval         :: regType
   mip           :: mip
 
-  mcycle        :: regType      -- timers and counters
-  mtime         :: regType
+  mcycle        :: regType      -- counters
   minstret      :: regType
 
-  mucounteren   :: mcounteren   -- counter setup
-  mscounteren   :: mcounteren
-  mhcounteren   :: mcounteren
-
-  mucycle_delta     :: regType  -- counter-deltas
-  mutime_delta      :: regType
-  muinstret_delta   :: regType
-
-  mscycle_delta     :: regType
-  mstime_delta      :: regType
-  msinstret_delta   :: regType
+  mtime         :: regType         -- this is memory-mapped and not a
+                                   -- CSR, but put here for now
 }
 
 -- Supervisor-Level CSRs
@@ -507,37 +628,44 @@ register sstatus :: regType
 ,     0 : S_UIE
 }
 
-sstatus to_sstatus(v::mstatus) =
+sstatus lower_mstatus(m::mstatus) =
 { var s = sstatus(0)
-; s.S_SD    <- v.M_SD
-; s.S_UXL   <- v.M_UXL
-; s.S_MXR   <- v.M_MXR
-; s.S_SUM   <- v.M_SUM
-; s.S_XS    <- v.M_XS
-; s.S_FS    <- v.M_FS
-; s.S_SPP   <- v.M_SPP
-; s.S_SPIE  <- v.M_SPIE
-; s.S_UPIE  <- v.M_UPIE
-; s.S_SIE   <- v.M_SIE
-; s.S_UIE   <- v.M_UIE
+; s.S_SD    <- m.M_SD
+; s.S_UXL   <- m.M_UXL
+; s.S_MXR   <- m.M_MXR
+; s.S_SUM   <- m.M_SUM
+; s.S_XS    <- m.M_XS
+; s.S_FS    <- m.M_FS
+; s.S_SPP   <- m.M_SPP
+; s.S_SPIE  <- m.M_SPIE
+; s.S_UPIE  <- m.M_UPIE
+; s.S_SIE   <- m.M_SIE
+; s.S_UIE   <- m.M_UIE
 ; s
 }
 
-mstatus of_sstatus(v::sstatus, orig::mstatus) =
-{ var m = mstatus(&orig)
-; m.M_SD    <- v.S_SD
-; m.M_UXL   <- v.S_UXL
-; m.M_MXR   <- v.S_MXR
-; m.M_SUM   <- v.S_SUM
-; m.M_XS    <- v.S_XS
-; m.M_FS    <- v.S_FS
-; m.M_SPP   <- v.S_SPP
-; m.M_SPIE  <- v.S_SPIE
-; m.M_UPIE  <- v.S_UPIE
-; m.M_SIE   <- v.S_SIE
-; m.M_UIE   <- v.S_UIE
+mstatus lift_sstatus(ctx::mstatus, s::sstatus) =
+{ var m = mstatus(&ctx)
+; m.M_SD    <- s.S_SD
+; m.M_UXL   <- s.S_UXL
+; m.M_MXR   <- s.S_MXR
+; m.M_SUM   <- s.S_SUM
+; m.M_XS    <- s.S_XS
+; m.M_FS    <- s.S_FS
+; m.M_SPP   <- s.S_SPP
+; m.M_SPIE  <- s.S_SPIE
+; m.M_UPIE  <- s.S_UPIE
+; m.M_SIE   <- s.S_SIE
+; m.M_UIE   <- s.S_UIE
 ; m
 }
+
+mstatus legalize_sstatus_64(m::mstatus, v::regType) =
+    lift_sstatus(m, sstatus(v))
+
+mstatus legalize_sstatus_32(m::mstatus, v::word) =
+    legalize_sstatus_64(m, status_of_32(v))
+
 
 register sedeleg :: regType     -- Exception Trap Delegation
 {     9 : S_SEnvCall
@@ -552,11 +680,15 @@ register sedeleg :: regType     -- Exception Trap Delegation
 ,     0 : S_Fetch_Addr_Align
 }
 
-sedeleg sanitize_sedeleg(d::sedeleg) =
-{ var sd = d
+sedeleg legalize_sedeleg_64(s::sedeleg, v::regType) =
+{ var sd = sedeleg(v)
 ; sd.S_SEnvCall <- false    -- cannot delegate S-mode EnvCalls
 ; sd
 }
+
+sedeleg legalize_sedeleg_32(s::sedeleg, v::word) =
+    legalize_sedeleg_64(s, deleg_of_32(v))
+
 
 register sideleg :: regType     -- Interrupt Trap Delegation
 {     9 : S_SEIP   -- external interrupts
@@ -567,6 +699,13 @@ register sideleg :: regType     -- Interrupt Trap Delegation
 ,     0 : S_USIP
 }
 
+sideleg legalize_sideleg_64(s::sideleg, v::regType) =
+    -- nop for now
+    sideleg(v)
+
+sideleg legalize_sideleg_32(s::sideleg, v::word) =
+    legalize_sideleg_64(s, deleg_of_32(v))
+
 register sip :: regType         -- Interrupt Pending
 {     9 : S_SEIP   -- external interrupts
 ,     8 : S_UEIP
@@ -576,30 +715,34 @@ register sip :: regType         -- Interrupt Pending
 ,     0 : S_USIP
 }
 
--- TODO: expose other interrupt bits in sip/sie via checking for
--- delegation in mideleg.
-
-sip to_sip(v::mip) =
+sip lower_mip(m::mip, d::mideleg) =
 { var s = sip(0)
-; s.S_SEIP  <- v.M_SEIP
-; s.S_UEIP  <- v.M_UEIP
-; s.S_STIP  <- v.M_STIP
-; s.S_UTIP  <- v.M_UTIP
-; s.S_SSIP  <- v.M_SSIP
-; s.S_USIP  <- v.M_USIP
+; s.S_SEIP  <- m.M_SEIP and d.M_SEIP
+; s.S_UEIP  <- m.M_UEIP and d.M_UEIP
+; s.S_STIP  <- m.M_STIP and d.M_STIP
+; s.S_UTIP  <- m.M_UTIP and d.M_UTIP
+; s.S_SSIP  <- m.M_SSIP and d.M_SSIP
+; s.S_USIP  <- m.M_USIP and d.M_USIP
 ; s
 }
 
-mip of_sip(v::sip, orig::mip) =
-{ var m = mip(&orig)
-; m.M_SEIP  <- v.S_SEIP
-; m.M_UEIP  <- v.S_UEIP
-; m.M_STIP  <- v.S_STIP
-; m.M_UTIP  <- v.S_UTIP
-; m.M_SSIP  <- v.S_SSIP
-; m.M_USIP  <- v.S_USIP
+mip lift_sip(ctx::mip, s::sip, d::mideleg) =
+{ var m = ctx
+; when d.M_SEIP do m.M_SEIP <- s.S_SEIP
+; when d.M_UEIP do m.M_UEIP <- s.S_UEIP
+; when d.M_STIP do m.M_STIP <- s.S_STIP
+; when d.M_UTIP do m.M_UTIP <- s.S_UTIP
+; when d.M_SSIP do m.M_SSIP <- s.S_SSIP
+; when d.M_USIP do m.M_USIP <- s.S_USIP
 ; m
 }
+
+mip legalize_sip_64(m::mip, d::mideleg, v::regType) =
+    lift_sip(m, sip(v), d)
+
+mip legalize_sip_32(m::mip, d::mideleg, v::word) =
+    legalize_sip_64(m, d, ipe_of_32(v))
+
 
 register sie :: regType         -- Interrupt Enable
 {     9 : S_SEIE    -- external interrupts
@@ -610,29 +753,36 @@ register sie :: regType         -- Interrupt Enable
 ,     0 : S_USIE
 }
 
-sie to_sie(v::mie) =
+sie lower_mie(m::mie, d::mideleg) =
 { var s = sie(0)
-; s.S_SEIE  <- v.M_SEIE
-; s.S_UEIE  <- v.M_UEIE
-; s.S_STIE  <- v.M_STIE
-; s.S_UTIE  <- v.M_UTIE
-; s.S_SSIE  <- v.M_SSIE
-; s.S_USIE  <- v.M_USIE
+; s.S_SEIE  <- m.M_SEIE and d.M_SEIP
+; s.S_UEIE  <- m.M_UEIE and d.M_UEIP
+; s.S_STIE  <- m.M_STIE and d.M_STIP
+; s.S_UTIE  <- m.M_UTIE and d.M_UTIP
+; s.S_SSIE  <- m.M_SSIE and d.M_SSIP
+; s.S_USIE  <- m.M_USIE and d.M_USIP
 ; s
 }
 
-mie of_sie(v::sie, orig::mie) =
-{ var m = mie(&orig)
-; m.M_SEIE  <- v.S_SEIE
-; m.M_UEIE  <- v.S_UEIE
-; m.M_STIE  <- v.S_STIE
-; m.M_UTIE  <- v.S_UTIE
-; m.M_SSIE  <- v.S_SSIE
-; m.M_USIE  <- v.S_USIE
+mie lift_sie(ctx::mie, s::sie, d::mideleg) =
+{ var m = ctx
+; when d.M_SEIP do m.M_SEIE <- s.S_SEIE
+; when d.M_UEIP do m.M_UEIE <- s.S_UEIE
+; when d.M_STIP do m.M_STIE <- s.S_STIE
+; when d.M_UTIP do m.M_UTIE <- s.S_UTIE
+; when d.M_SSIP do m.M_SSIE <- s.S_SSIE
+; when d.M_USIP do m.M_USIE <- s.S_USIE
 ; m
 }
 
-register satp32 :: word
+mie legalize_sie_64(m::mie, d::mideleg, v::regType) =
+    lift_sie(m, sie(v), d)
+
+mie legalize_sie_32(m::mie, d::mideleg, v::word) =
+    legalize_sie_64(m, d, ipe_of_32(v))
+
+
+register satp32 :: word         -- Address Translation and Protection
 { 31    : SATP32_MODE
 , 30-22 : SATP32_ASID
 , 21-0  : SATP32_PPN
@@ -645,16 +795,19 @@ register satp64 :: regType
 }
 
 record SupervisorCSR
-{ sstatus       :: sstatus      -- trap setup
+{                               -- trap setup
+  -- sstatus is a restricted view of mstatus
   sedeleg       :: sedeleg
   sideleg       :: sideleg
+  -- sie is a restricted view of mie
   stvec         :: regType
+  scounteren    :: mcounteren
 
   sscratch      :: regType      -- trap handling
   sepc          :: regType
   scause        :: mcause
   stval         :: regType
-  sip           :: sip
+  -- sip is a restricted view of mip
 
   satp          :: regType      -- address translation and protection
 }
@@ -673,29 +826,35 @@ register FPCSR :: word          -- 32-bit control register
 ,   0 : NX          --     inexact
 }
 
--- FIXME: These fields are not specified in the 1.9 privileged spec.
--- SD, XS, FS, if exposed, could enable user-level threads.  But their
--- handling will be complicated due to distinguishing user-updates
--- from physical-register updates.
+-- FIXME: The registers below are not yet fully specified in the
+-- privileged spec.  They will need updating once the 'N' extension is
+-- specified.
 
 register ustatus :: regType     -- Status
 {     4 : U_PIE     -- pre-trap interrupt enable
 ,     0 : U_IE      -- interrupt-enable
 }
 
-ustatus to_ustatus(v::mstatus) =
+ustatus lower_sstatus(v::sstatus) =
 { var u = ustatus(0)
-; u.U_PIE   <- v.M_UPIE
-; u.U_IE    <- v.M_UIE
+; u.U_PIE   <- v.S_UPIE
+; u.U_IE    <- v.S_UIE
 ; u
 }
 
-mstatus of_ustatus(v::ustatus, orig::mstatus) =
-{ var m = mstatus(&orig)
-; m.M_UPIE  <- v.U_PIE
-; m.M_UIE   <- v.U_IE
-; m
+sstatus lift_ustatus(ctx::sstatus, u::ustatus) =
+{ var s = sstatus(&ctx)
+; s.S_UPIE  <- u.U_PIE
+; s.S_UIE   <- u.U_IE
+; s
 }
+
+sstatus legalize_ustatus_64(s::sstatus, v::regType) =
+    lift_ustatus(s, ustatus(v))
+
+sstatus legalize_ustatus_32(s::sstatus, v::word) =
+    legalize_ustatus_64(s, status_of_32(v))
+
 
 register uip :: regType         -- Interrupt Pending
 {     8 : U_EIP     -- external interrupts
@@ -703,21 +862,28 @@ register uip :: regType         -- Interrupt Pending
 ,     0 : U_SIP     -- software interrupts
 }
 
-uip to_uip(v::mip) =
-{ var s = uip(0)
-; s.U_EIP   <- v.M_UEIP
-; s.U_TIP   <- v.M_UTIP
-; s.U_SIP   <- v.M_USIP
+uip lower_sip(s::sip, d::sideleg) =
+{ var u = uip(0)
+; u.U_EIP   <- s.S_UEIP and d.S_UEIP
+; u.U_TIP   <- s.S_UTIP and d.S_UTIP
+; u.U_SIP   <- s.S_USIP and d.S_USIP
+; u
+}
+
+sip lift_uip(ctx::sip, u::uip, d::sideleg) =
+{ var s = sip(&ctx)
+; when d.S_UEIP do s.S_UEIP  <- u.U_EIP
+; when d.S_UTIP do s.S_UTIP  <- u.U_TIP
+; when d.S_USIP do s.S_USIP  <- u.U_SIP
 ; s
 }
 
-mip of_uip(v::uip, orig::mip) =
-{ var m = mip(&orig)
-; m.M_UEIP  <- v.U_EIP
-; m.M_UTIP  <- v.U_TIP
-; m.M_USIP  <- v.U_SIP
-; m
-}
+sip legalize_uip_64(s::sip, d::sideleg, v::regType) =
+    lift_uip(s, uip(v), d)
+
+sip legalize_uip_32(s::sip, d::sideleg, v::word) =
+    legalize_uip_64(s, d, status_of_32(v))
+
 
 register uie :: regType         -- Interrupt Enable
 {     8 : U_EIE     -- external interrupts
@@ -725,21 +891,27 @@ register uie :: regType         -- Interrupt Enable
 ,     0 : U_SIE     -- software interrupts
 }
 
-uie to_uie(v::mie) =
-{ var s = uie(0)
-; s.U_EIE   <- v.M_UEIE
-; s.U_TIE   <- v.M_UTIE
-; s.U_SIE   <- v.M_USIE
+uie lower_sie(s::sie, d::sideleg) =
+{ var u = uie(0)
+; u.U_EIE   <- s.S_UEIE and d.S_UEIP
+; u.U_TIE   <- s.S_UTIE and d.S_UTIP
+; u.U_SIE   <- s.S_USIE and d.S_USIP
+; u
+}
+
+sie lift_uie(ctx::sie, u::uie, d::sideleg) =
+{ var s = sie(&ctx)
+; when d.S_UEIP do s.S_UEIE  <- u.U_EIE
+; when d.S_UTIP do s.S_UTIE  <- u.U_TIE
+; when d.S_USIP do s.S_USIE  <- u.U_SIE
 ; s
 }
 
-mie of_uie(v::uie, orig::mie) =
-{ var m = mie(&orig)
-; m.M_UEIE  <- v.U_EIE
-; m.M_UTIE  <- v.U_TIE
-; m.M_USIE  <- v.U_SIE
-; m
-}
+sie legalize_uie_64(s::sie, d::sideleg, v::regType) =
+    lift_uie(s, uie(v), d)
+
+sie legalize_uie_32(s::sie, d::sideleg, v::word) =
+    legalize_uie_64(s, d, ipe_of_32(v))
 
 record UserCSR
 { utvec         :: regType      -- trap setup
@@ -752,35 +924,6 @@ record UserCSR
   fpcsr         :: FPCSR        -- floating-point
 }
 
--- update utilities
-
-mstatus update_mstatus(orig::mstatus, v::mstatus) =
-{ var m = orig
--- interrupt enables
-; m.M_UIE   <- v.M_UIE
-; m.M_SIE   <- v.M_SIE
-; m.M_MIE   <- v.M_MIE
--- pre-trap interrupt enables
-; m.M_UPIE  <- v.M_UPIE
-; m.M_SPIE  <- v.M_SPIE
-; m.M_MPIE  <- v.M_MPIE
--- pre-trap privilege modes
-; m.M_SPP   <- v.M_SPP
-; m.M_MPP   <- v.M_MPP
-
--- update extension context status
-; m.M_FS    <- v.M_FS
-; m.M_XS    <- v.M_XS
--- update read-only field appropriately
-; m.M_SD    <- extStatus(v.M_XS) == Dirty or extStatus(v.M_FS) == Dirty
-
--- memory privilege settings
-; m.M_MPRV  <- v.M_MPRV
-; m.M_SUM   <- v.M_SUM
-; m.M_MXR   <- v.M_MXR
-
-; m
-}
 
 -- utilities for privilege transitions
 
@@ -1100,45 +1243,101 @@ csrPR csrPR(csr::csreg)  = csr<9:8>
 bool check_CSR_access(rw::csrRW, pr::csrPR, p::Privilege, a::accessType) =
     (a == Read or rw != 0b11) and (privLevel(p) >=+ pr)
 
-bool is_CSR_defined(csr::csreg) =
+-- TODO
+bool check_hpmcounter_access(ncounter::csreg, p::Privilege)
+     = false
+
+bool is_CSR_defined(csr::csreg, p::Privilege) =
     -- user-mode
-    csr == 0x000  or  csr == 0x004 or csr == 0x005
- or (csr >= 0x001 and csr <= 0x003 and isFPEnabled())
- or (csr >= 0x040 and csr <= 0x044)
- or (csr == 0xC00 and c_MCSR(procID).mucounteren.M_CY)
- or (csr == 0xC01 and c_MCSR(procID).mucounteren.M_TM)
- or (csr == 0xC02 and c_MCSR(procID).mucounteren.M_IR)
- or ((   (csr == 0xC80 and c_MCSR(procID).mucounteren.M_CY)
-      or (csr == 0xC81 and c_MCSR(procID).mucounteren.M_TM)
-      or (csr == 0xC82 and c_MCSR(procID).mucounteren.M_IR)) and in32BitMode())
+    csr == 0x000  or  csr == 0x004 or csr == 0x005    -- trap setup
+ or (csr >= 0x001 and csr <= 0x003 and isFPEnabled()) -- FP
+ or (csr >= 0x040 and csr <= 0x044)                   -- trap handling
+
+ -- basic and hpm counters, for all privileges
+ or (csr >= 0xC00 and csr <= 0xC1F and check_hpmcounter_access(csr - 0xC00, p))
+ -- RV32I, upper counter bits
+ or (csr >= 0xC80 and csr <= 0xC9F and check_hpmcounter_access(csr - 0xC80, p)
+     and in32BitMode())
 
     -- supervisor-mode
- or (csr >= 0x100 and csr <= 0x105 and csr != 0x101)
- or (csr >= 0x140 and csr <= 0x144)
- or (csr == 0x180)
- or (csr == 0xD00 and c_MCSR(procID).mscounteren.M_CY)
- or (csr == 0xD01 and c_MCSR(procID).mscounteren.M_TM)
- or (csr == 0xD02 and c_MCSR(procID).mscounteren.M_IR)
- or ((   (csr == 0xD80 and c_MCSR(procID).mucounteren.M_CY)
-      or (csr == 0xD81 and c_MCSR(procID).mucounteren.M_TM)
-      or (csr == 0xD82 and c_MCSR(procID).mucounteren.M_IR)) and in32BitMode())
+ or (csr >= 0x100 and csr <= 0x105 and csr != 0x101)  -- trap setup
+ or (csr >= 0x140 and csr <= 0x144)                   -- trap handling
+ or (csr == 0x180)                                    -- address translation
 
     -- machine-mode
- or (csr >= 0x300 and csr <= 0x305 and csr != 0x301)
- or (csr >= 0x310 and csr <= 0x312)
- or (csr >= 0x340 and csr <= 0x344)
- or (csr >= 0x380 and csr <= 0x385)
- or (csr >= 0xF00 and csr <= 0xF02)
- or (csr >= 0xF10 and csr <= 0xF14)
- or (csr >= 0xF80 and csr <= 0xF82 and in32BitMode())
+ or (csr >= 0xF11 and csr <= 0xF14)                   -- info
+ or (csr >= 0x300 and csr <= 0x306)                   -- trap setup
+ or (csr >= 0x340 and csr <= 0x344)                   -- trap handling
+ or (csr >= 0x3A0 and csr <= 0x3A3 and in32BitMode()) -- memory protection configuration
+ or (csr == 0x3A0 or  csr == 0x3A2)
+ or (csr >= 0x3B0 and csr <= 0x3BF)                   -- memory protection addresses
+ or (csr >= 0xB00 and csr <= 0xB1F)                   -- counters
+ or (csr >= 0xB80 and csr <= 0xB9F and in32BitMode())
+ or (csr >= 0x323 and csr <= 0x33F)                   -- counter setup
 
- or (csr >= 0x700 and csr <= 0x702)
- or (csr >= 0x704 and csr <= 0x706)
- or (csr >= 0x708 and csr <= 0x70A)
 
- or ((   (csr >= 0x780 and csr <= 0x782)
-      or (csr >= 0x784 and csr <= 0x786)
-      or (csr >= 0x788 and csr <= 0x78A)) and in32BitMode())
+-- CSR conversion helpers
+
+uip uip_of_mip(i::id) =
+{ var sip = lower_mip(c_MCSR(i).mip, c_MCSR(i).mideleg)
+; lower_sip(sip, c_SCSR(i).sideleg)
+}
+
+uie uie_of_mie(i::id) =
+{ var sie = lower_mie(c_MCSR(i).mie, c_MCSR(i).mideleg)
+; lower_sie(sie, c_SCSR(i).sideleg)
+}
+
+mstatus mstatus_of_ustatus_64(i::id, v::regType) =
+{ var m = c_MCSR(i).mstatus
+; var s = lower_mstatus(m)
+; s = legalize_ustatus_64(s, v)
+; lift_sstatus(m, s)
+}
+
+mstatus mstatus_of_ustatus_32(i::id, v::word) =
+{ var m = c_MCSR(i).mstatus
+; var s = lower_mstatus(m)
+; s = legalize_ustatus_32(s, v)
+; lift_sstatus(m, s)
+}
+
+mip mip_of_uip_64(i::id, v::regType) =
+{ var m  = c_MCSR(i).mip
+; var md = c_MCSR(i).mideleg
+; var sd = c_SCSR(i).sideleg
+; var s  = lower_mip(m, md)
+; s      = legalize_uip_64(s, sd, v)
+; lift_sip(m, s, md)
+}
+
+mip mip_of_uip_32(i::id, v::word) =
+{ var m  = c_MCSR(i).mip
+; var md = c_MCSR(i).mideleg
+; var sd = c_SCSR(i).sideleg
+; var s  = lower_mip(m, md)
+; s      = legalize_uip_32(s, sd, v)
+; lift_sip(m, s, md)
+}
+
+mie mie_of_uie_64(i::id, v::regType) =
+{ var m  = c_MCSR(i).mie
+; var md = c_MCSR(i).mideleg
+; var sd = c_SCSR(i).sideleg
+; var s  = lower_mie(m, md)
+; s      = legalize_uie_64(s, sd, v)
+; lift_sie(m, s, md)
+}
+
+mie mie_of_uie_32(i::id, v::word) =
+{ var m  = c_MCSR(i).mie
+; var md = c_MCSR(i).mideleg
+; var sd = c_SCSR(i).sideleg
+; var s  = lower_mie(m, md)
+; s      = legalize_uie_32(s, sd, v)
+; lift_sie(m, s, md)
+}
+
 
 component CSRMap(csr::csreg) :: regType
 { value =
@@ -1146,10 +1345,10 @@ component CSRMap(csr::csreg) :: regType
   -- sign-extended so that the sign-bit is preserved.
       match csr, in32BitMode()
       { -- user trap setup
-        case 0x000, false   => &to_ustatus(c_MCSR(procID).mstatus)
-        case 0x000, true    => SignExtend(status_to_32(&to_ustatus(c_MCSR(procID).mstatus)))
-        case 0x004, false   => &to_uie(c_MCSR(procID).mie)
-        case 0x004, true    => SignExtend(ie_to_32(&to_uie(c_MCSR(procID).mie)))
+        case 0x000, false   => &lower_sstatus(lower_mstatus(c_MCSR(procID).mstatus))
+        case 0x000, true    => SignExtend(status_to_32(&lower_sstatus(lower_mstatus(c_MCSR(procID).mstatus))))
+        case 0x004, false   => &uie_of_mie(procID)
+        case 0x004, true    => SignExtend(ipe_to_32(&uie_of_mie(procID)))
         case 0x005, _       => c_UCSR(procID).utvec
 
         -- user trap handling
@@ -1158,33 +1357,33 @@ component CSRMap(csr::csreg) :: regType
         case 0x042, false   => c_UCSR(procID).&ucause
         case 0x042, true    => SignExtend(cause_to_32(c_UCSR(procID).&ucause))
         case 0x043, _       => c_UCSR(procID).utval
-        case 0x044, false   => &to_uip(c_MCSR(procID).mip)
-        case 0x044, true    => SignExtend(&to_uip(c_MCSR(procID).mip))
+        case 0x044, false   => &uip_of_mip(procID)
+        case 0x044, true    => SignExtend(ipe_to_32(&uip_of_mip(procID)))
 
         -- user floating-point context
         case 0x001, _       => ZeroExtend(c_UCSR(procID).&fpcsr<4:0>)
         case 0x002, _       => ZeroExtend(c_UCSR(procID).fpcsr.FRM)
         case 0x003, _       => ZeroExtend(c_UCSR(procID).&fpcsr<7:0>)
 
-        -- user counter/timers
-        case 0xC00, false   =>             c_MCSR(procID).mcycle   + c_MCSR(procID).mucycle_delta
-        case 0xC00, true    => SignExtend((c_MCSR(procID).mcycle   + c_MCSR(procID).mucycle_delta)<31:0>)
-        case 0xC01, false   =>             c_MCSR(procID).mtime    + c_MCSR(procID).mutime_delta
-        case 0xC01, true    => SignExtend((c_MCSR(procID).mtime    + c_MCSR(procID).mutime_delta)<31:0>)
-        case 0xC02, false   =>             c_MCSR(procID).minstret + c_MCSR(procID).muinstret_delta
-        case 0xC02, true    => SignExtend((c_MCSR(procID).minstret + c_MCSR(procID).muinstret_delta)<31:0>)
-        case 0xC80, true    => SignExtend((c_MCSR(procID).mcycle   + c_MCSR(procID).mucycle_delta)<63:32>)
-        case 0xC81, true    => SignExtend((c_MCSR(procID).mtime    + c_MCSR(procID).mutime_delta)<63:32>)
-        case 0xC82, true    => SignExtend((c_MCSR(procID).minstret + c_MCSR(procID).muinstret_delta)<63:32>)
+        -- counter/timers
+        case 0xC00, _       =>            c_MCSR(procID).mcycle
+        case 0xC01, _       =>            c_MCSR(procID).mtime
+        case 0xC02, _       =>            c_MCSR(procID).minstret
+        -- TODO: other hpm counters
+        case 0xC80, true    => SignExtend(c_MCSR(procID).mcycle<63:32>)
+        case 0xC81, true    => SignExtend(c_MCSR(procID).mtime<63:32>)
+        case 0xC82, true    => SignExtend(c_MCSR(procID).minstret<63:32>)
+        -- TODO: other hpm counters
 
         -- supervisor trap setup
-        case 0x100, false   => &to_sstatus(c_MCSR(procID).mstatus)
-        case 0x100, true    => SignExtend(status_to_32(&to_sstatus(c_MCSR(procID).mstatus)))
+        case 0x100, false   => &lower_mstatus(c_MCSR(procID).mstatus)
+        case 0x100, true    => SignExtend(status_to_32(&lower_mstatus(c_MCSR(procID).mstatus)))
         case 0x102, _       => c_SCSR(procID).&sedeleg
         case 0x103, _       => c_SCSR(procID).&sideleg
-        case 0x104, false   => &to_sie(c_MCSR(procID).mie)
-        case 0x104, true    => SignExtend(ie_to_32(&to_uie(c_MCSR(procID).mie)))
+        case 0x104, false   => &lower_mie(c_MCSR(procID).mie, c_MCSR(procID).mideleg)
+        case 0x104, true    => SignExtend(ipe_to_32(&lower_mie(c_MCSR(procID).mie, c_MCSR(procID).mideleg)))
         case 0x105, _       => c_SCSR(procID).stvec
+        case 0x106, _       => ZeroExtend(c_SCSR(procID).&scounteren) -- TODO: check extension
 
         -- supervisor trap handling
         case 0x140, _       => c_SCSR(procID).sscratch
@@ -1192,22 +1391,11 @@ component CSRMap(csr::csreg) :: regType
         case 0x142, false   => c_SCSR(procID).&scause
         case 0x142, true    => SignExtend(cause_to_32(c_SCSR(procID).&scause))
         case 0x143, _       => c_SCSR(procID).stval
-        case 0x144, false   => &to_sip(c_MCSR(procID).mip)
-        case 0x144, true    => SignExtend(ip_to_32(&to_sip(c_MCSR(procID).mip)))
+        case 0x144, false   => &lower_mip(c_MCSR(procID).mip, c_MCSR(procID).mideleg)
+        case 0x144, true    => SignExtend(ipe_to_32(&lower_mip(c_MCSR(procID).mip, c_MCSR(procID).mideleg)))
 
         -- supervisor protection and translation
         case 0x180, _       => c_SCSR(procID).satp
-
-        -- supervisor counter/timers
-        case 0xD00, false   =>             c_MCSR(procID).mcycle   + c_MCSR(procID).mscycle_delta
-        case 0xD00, true    => SignExtend((c_MCSR(procID).mcycle   + c_MCSR(procID).mscycle_delta)<31:0>)
-        case 0xD01, false   =>             c_MCSR(procID).mtime    + c_MCSR(procID).mstime_delta
-        case 0xD01, true    => SignExtend((c_MCSR(procID).mtime    + c_MCSR(procID).mstime_delta)<31:0>)
-        case 0xD02, false   =>             c_MCSR(procID).minstret + c_MCSR(procID).msinstret_delta
-        case 0xD02, true    => SignExtend((c_MCSR(procID).minstret + c_MCSR(procID).msinstret_delta)<31:0>)
-        case 0xD80, true    => SignExtend((c_MCSR(procID).mcycle   + c_MCSR(procID).mscycle_delta)<63:32>)
-        case 0xD81, true    => SignExtend((c_MCSR(procID).mtime    + c_MCSR(procID).mstime_delta)<63:32>)
-        case 0xD82, true    => SignExtend((c_MCSR(procID).minstret + c_MCSR(procID).msinstret_delta)<63:32>)
 
         -- machine information registers
         case 0xF10, false   => c_MCSR(procID).&misa
@@ -1223,8 +1411,9 @@ component CSRMap(csr::csreg) :: regType
         case 0x302, _       => c_MCSR(procID).&medeleg
         case 0x303, _       => c_MCSR(procID).&mideleg
         case 0x304, false   => c_MCSR(procID).&mie
-        case 0x304, true    => SignExtend(ie_to_32(c_MCSR(procID).&mie))
+        case 0x304, true    => SignExtend(ipe_to_32(c_MCSR(procID).&mie))
         case 0x305, _       => c_MCSR(procID).mtvec
+        case 0x306, _       => ZeroExtend(c_MCSR(procID).&mcounteren)
 
         -- machine trap handling
         case 0x340, _       => c_MCSR(procID).mscratch
@@ -1233,49 +1422,10 @@ component CSRMap(csr::csreg) :: regType
         case 0x342, true    => SignExtend(cause_to_32(c_MCSR(procID).&mcause))
         case 0x343, _       => c_MCSR(procID).mtval
         case 0x344, false   => c_MCSR(procID).&mip
-        case 0x344, true    => SignExtend(ip_to_32(c_MCSR(procID).&mip))
+        case 0x344, true    => SignExtend(ipe_to_32(c_MCSR(procID).&mip))
 
         -- machine protection and translation
         -- TODO
-
-        -- machine counter/timers
-        case 0xF00, false   => c_MCSR(procID).mcycle
-        case 0xF00, true    => SignExtend(c_MCSR(procID).mcycle<31:0>)
-        case 0xF01, false   => c_MCSR(procID).mtime
-        case 0xF01, true    => SignExtend(c_MCSR(procID).mtime<31:0>)
-        case 0xF02, false   => c_MCSR(procID).minstret
-        case 0xF02, true    => SignExtend(c_MCSR(procID).minstret<31:0>)
-        case 0xF80, true    => SignExtend(c_MCSR(procID).mcycle<63:32>)
-        case 0xF81, true    => SignExtend(c_MCSR(procID).mtime<63:32>)
-        case 0xF82, true    => SignExtend(c_MCSR(procID).minstret<63:32>)
-
-        -- machine counter-enables
-        case 0x310, _       => c_MCSR(procID).&mucounteren
-        case 0x311, _       => c_MCSR(procID).&mscounteren
-        case 0x312, _       => c_MCSR(procID).&mhcounteren
-
-        -- machine counter-deltas
-        case 0x700, false   => c_MCSR(procID).mucycle_delta
-        case 0x700, true    => SignExtend(c_MCSR(procID).mucycle_delta<31:0>)
-        case 0x701, false   => c_MCSR(procID).mutime_delta
-        case 0x701, true    => SignExtend(c_MCSR(procID).mutime_delta<31:0>)
-        case 0x702, false   => c_MCSR(procID).muinstret_delta
-        case 0x702, true    => SignExtend(c_MCSR(procID).muinstret_delta<31:0>)
-
-        case 0x704, false   => c_MCSR(procID).mscycle_delta
-        case 0x704, true    => SignExtend(c_MCSR(procID).mscycle_delta<31:0>)
-        case 0x705, false   => c_MCSR(procID).mstime_delta
-        case 0x705, true    => SignExtend(c_MCSR(procID).mstime_delta<31:0>)
-        case 0x706, false   => c_MCSR(procID).msinstret_delta
-        case 0x706, true    => SignExtend(c_MCSR(procID).msinstret_delta<31:0>)
-
-        case 0x780, true    => SignExtend(c_MCSR(procID).mucycle_delta<63:32>)
-        case 0x781, true    => SignExtend(c_MCSR(procID).mutime_delta<63:32>)
-        case 0x782, true    => SignExtend(c_MCSR(procID).muinstret_delta<63:32>)
-
-        case 0x784, true    => SignExtend(c_MCSR(procID).mscycle_delta<63:32>)
-        case 0x785, true    => SignExtend(c_MCSR(procID).mstime_delta<63:32>)
-        case 0x786, true    => SignExtend(c_MCSR(procID).msinstret_delta<63:32>)
 
         case _              => #UNDEFINED("unexpected CSR read at " : [csr])
       }
@@ -1283,10 +1433,10 @@ component CSRMap(csr::csreg) :: regType
   assign value =
       match csr, in32BitMode()
       { -- user trap setup
-        case 0x000, false   => c_MCSR(procID).mstatus   <- of_ustatus(ustatus(value), c_MCSR(procID).mstatus)
-        case 0x000, true    => c_MCSR(procID).mstatus   <- of_ustatus(ustatus(status_of_32(value<31:0>)), c_MCSR(procID).mstatus)
-        case 0x004, false   => c_MCSR(procID).mie       <- of_uie(uie(value), c_MCSR(procID).mie)
-        case 0x004, true    => c_MCSR(procID).mie       <- of_uie(uie(ie_of_32(value<31:0>)), c_MCSR(procID).mie)
+        case 0x000, false   => c_MCSR(procID).mstatus   <- mstatus_of_ustatus_64(procID, value)
+        case 0x000, true    => c_MCSR(procID).mstatus   <- mstatus_of_ustatus_32(procID, value<31:0>)
+        case 0x004, false   => c_MCSR(procID).mie       <- mie_of_uie_64(procID, value)
+        case 0x004, true    => c_MCSR(procID).mie       <- mie_of_uie_32(procID, value<31:0>)
         case 0x005, _       => c_UCSR(procID).utvec     <- value
 
         -- user trap handling
@@ -1295,8 +1445,8 @@ component CSRMap(csr::csreg) :: regType
         case 0x042, false   => c_UCSR(procID).&ucause   <- value
         case 0x042, true    => c_UCSR(procID).&ucause   <- cause_of_32(value<31:0>)
         case 0x043, _       => c_UCSR(procID).utval     <- value
-        case 0x044, false   => c_MCSR(procID).mip       <- of_uip(uip(value), c_MCSR(procID).mip)
-        case 0x044, true    => c_MCSR(procID).mip       <- of_uip(uip(ip_of_32(value<31:0>)), c_MCSR(procID).mip)
+        case 0x044, false   => c_MCSR(procID).mip       <- mip_of_uip_64(procID, value)
+        case 0x044, true    => c_MCSR(procID).mip       <- mip_of_uip_32(procID, value<31:0>)
 
         -- user floating-point context
         case 0x001, _       => { c_UCSR(procID).&fpcsr<4:0>     <- value<4:0>
@@ -1315,12 +1465,14 @@ component CSRMap(csr::csreg) :: regType
         -- user counters/timers are URO
 
         -- supervisor trap setup
-        case 0x100, false   => c_MCSR(procID).mstatus   <- of_sstatus(sstatus(value), c_MCSR(procID).mstatus)
-        case 0x100, true    => c_MCSR(procID).mstatus   <- of_sstatus(sstatus(status_of_32(value<31:0>)), c_MCSR(procID).mstatus)
-        case 0x102, _       => c_SCSR(procID).sedeleg   <- sanitize_sedeleg(sedeleg(value))
-        case 0x103, _       => c_SCSR(procID).&sideleg  <- value
-        case 0x104, false   => c_MCSR(procID).mie       <- of_sie(sie(value), c_MCSR(procID).mie)
-        case 0x104, true    => c_MCSR(procID).mie       <- of_sie(sie(ie_of_32(value<31:0>)), c_MCSR(procID).mie)
+        case 0x100, false   => c_MCSR(procID).mstatus   <- legalize_sstatus_64(c_MCSR(procID).mstatus, value)
+        case 0x100, true    => c_MCSR(procID).mstatus   <- legalize_sstatus_32(c_MCSR(procID).mstatus, value<31:0>)
+        case 0x102, false   => c_SCSR(procID).sedeleg   <- legalize_sedeleg_64(c_SCSR(procID).sedeleg, value)
+        case 0x102, true    => c_SCSR(procID).sedeleg   <- legalize_sedeleg_32(c_SCSR(procID).sedeleg, value<31:0>)
+        case 0x103, false   => c_SCSR(procID).sideleg   <- legalize_sideleg_64(c_SCSR(procID).sideleg, value)
+        case 0x103, true    => c_SCSR(procID).sideleg   <- legalize_sideleg_32(c_SCSR(procID).sideleg, value<31:0>)
+        case 0x104, false   => c_MCSR(procID).mie       <- legalize_sie_64(c_MCSR(procID).mie, c_MCSR(procID).mideleg, value)
+        case 0x104, true    => c_MCSR(procID).mie       <- legalize_sie_32(c_MCSR(procID).mie, c_MCSR(procID).mideleg, value<31:0>)
         case 0x105, _       => c_SCSR(procID).stvec     <- value
 
         -- supervisor trap handling
@@ -1329,8 +1481,8 @@ component CSRMap(csr::csreg) :: regType
         case 0x142, false   => c_SCSR(procID).&scause   <- value
         case 0x142, true    => c_SCSR(procID).&scause   <- cause_of_32(value<31:0>)
         case 0x143, _       => c_SCSR(procID).stval     <- value
-        case 0x144, false   => c_MCSR(procID).mip       <- of_sip(sip(value), c_MCSR(procID).mip)
-        case 0x144, true    => c_MCSR(procID).mip       <- of_sip(sip(ip_of_32(value<31:0>)), c_MCSR(procID).mip)
+        case 0x144, false   => c_MCSR(procID).mip       <- legalize_sip_64(c_MCSR(procID).mip, c_MCSR(procID).mideleg, value)
+        case 0x144, true    => c_MCSR(procID).mip       <- legalize_sip_32(c_MCSR(procID).mip, c_MCSR(procID).mideleg, value<31:0>)
 
         -- supervisor protection and translation
         -- TODO: does this update flush the TLB cache?  does it flush the data cache?
@@ -1342,14 +1494,15 @@ component CSRMap(csr::csreg) :: regType
         -- machine information registers are MRO
 
         -- machine trap setup
-        --  these assignments are done with machine-level privilege;
-        --  for now, we don't check for valid values.
-        case 0x300, false   => c_MCSR(procID).&mstatus  <- value
-        case 0x300, true    => c_MCSR(procID).&mstatus  <- status_of_32(value<31:0>)
-        case 0x302, _       => c_MCSR(procID).medeleg   <- sanitize_medeleg(medeleg(value))
-        case 0x303, _       => c_MCSR(procID).&mideleg  <- value
-        case 0x304, false   => c_MCSR(procID).&mie      <- value
-        case 0x304, true    => c_MCSR(procID).&mie      <- ie_of_32(value<31:0>)
+        --  these assignments are done with machine-level privilege.
+        case 0x300, false   => c_MCSR(procID).mstatus   <- legalize_mstatus_64(c_MCSR(procID).mstatus, value)
+        case 0x300, true    => c_MCSR(procID).mstatus   <- legalize_mstatus_32(c_MCSR(procID).mstatus, value<31:0>)
+        case 0x302, false   => c_MCSR(procID).medeleg   <- legalize_medeleg_64(c_MCSR(procID).medeleg, value)
+        case 0x302, true    => c_MCSR(procID).medeleg   <- legalize_medeleg_32(c_MCSR(procID).medeleg, value<31:0>)
+        case 0x303, false   => c_MCSR(procID).mideleg   <- legalize_mideleg_64(c_MCSR(procID).mideleg, value)
+        case 0x303, true    => c_MCSR(procID).mideleg   <- legalize_mideleg_32(c_MCSR(procID).mideleg, value<31:0>)
+        case 0x304, false   => c_MCSR(procID).mie       <- legalize_mie_64(c_MCSR(procID).mie, value)
+        case 0x304, true    => c_MCSR(procID).mie       <- legalize_mie_32(c_MCSR(procID).mie, value<31:0>)
         case 0x305, _       => c_MCSR(procID).mtvec     <- value
 
         -- machine trap handling
@@ -1358,8 +1511,8 @@ component CSRMap(csr::csreg) :: regType
         case 0x342, false   => c_MCSR(procID).&mcause   <- value
         case 0x342, true    => c_MCSR(procID).&mcause   <- cause_of_32(value<31:0>)
         case 0x343, _       => c_MCSR(procID).mtval     <- value
-        case 0x344, false   => c_MCSR(procID).&mip      <- value
-        case 0x344, true    => c_MCSR(procID).&mip      <- ip_of_32(value<31:0>)
+        case 0x344, false   => c_MCSR(procID).mip       <- legalize_mip_64(c_MCSR(procID).mip, value)
+        case 0x344, true    => c_MCSR(procID).mip       <- legalize_mip_32(c_MCSR(procID).mip, value<31:0>)
 
         -- machine protection and translation
         -- TODO
@@ -1367,26 +1520,7 @@ component CSRMap(csr::csreg) :: regType
         -- machine counters/timers are MRO
 
         -- machine counter-enables
-        case 0x310, _       => c_MCSR(procID).&mucounteren            <- value
-        case 0x311, _       => c_MCSR(procID).&mscounteren            <- value
-        case 0x312, _       => c_MCSR(procID).&mhcounteren            <- value
-
-        -- machine counter-deltas
-        case 0x700, _       => c_MCSR(procID).mucycle_delta           <- value
-        case 0x701, _       => c_MCSR(procID).mutime_delta            <- value
-        case 0x702, _       => c_MCSR(procID).muinstret_delta         <- value
-
-        case 0x704, _       => c_MCSR(procID).mscycle_delta           <- value
-        case 0x705, _       => c_MCSR(procID).mstime_delta            <- value
-        case 0x706, _       => c_MCSR(procID).msinstret_delta         <- value
-
-        case 0x780, true    => c_MCSR(procID).mucycle_delta<63:32>    <- value<31:0>
-        case 0x781, true    => c_MCSR(procID).mutime_delta<63:32>     <- value<31:0>
-        case 0x782, true    => c_MCSR(procID).muinstret_delta<63:32>  <- value<31:0>
-
-        case 0x784, true    => c_MCSR(procID).mscycle_delta<63:32>    <- value<31:0>
-        case 0x785, true    => c_MCSR(procID).mstime_delta<63:32>     <- value<31:0>
-        case 0x786, true    => c_MCSR(procID).msinstret_delta<63:32>  <- value<31:0>
+        -- TODO
 
         case _, _           => #INTERNAL_ERROR("unexpected CSR write to " : [csr])
       }
@@ -1404,13 +1538,14 @@ string csrName(csr::csreg) =
       case 0x002  => "frm"
       case 0x003  => "fcsr"
 
-      -- user counter/timers
+      -- counter/timers
       case 0xC00  => "cycle"
       case 0xC01  => "time"
       case 0xC02  => "instret"
       case 0xC80  => "cycleh"
       case 0xC81  => "timeh"
       case 0xC82  => "instreth"
+      -- TODO: other hpm counters
 
       -- supervisor trap setup
       case 0x100  => "sstatus"
@@ -1418,6 +1553,7 @@ string csrName(csr::csreg) =
       case 0x103  => "sideleg"
       case 0x104  => "sie"
       case 0x105  => "stvec"
+      case 0x106  => "scounteren"
 
       -- supervisor trap handling
       case 0x140  => "sscratch"
@@ -1429,16 +1565,7 @@ string csrName(csr::csreg) =
       -- supervisor protection and translation
       case 0x180  => "satp"
 
-      -- supervisor counters/timers
-      case 0xD00  => "scycle"
-      case 0xD01  => "stime"
-      case 0xD02  => "sinstret"
-      case 0xD80  => "scycleh"
-      case 0xD81  => "stimeh"
-      case 0xD82  => "sinstreth"
-
       -- machine information registers
-      case 0xF10  => "misa"
       case 0xF11  => "mvendorid"
       case 0xF12  => "marchid"
       case 0xF13  => "mimpid"
@@ -1446,10 +1573,12 @@ string csrName(csr::csreg) =
 
       -- machine trap setup
       case 0x300  => "mstatus"
+      case 0x301  => "misa"
       case 0x302  => "medeleg"
       case 0x303  => "mideleg"
       case 0x304  => "mie"
       case 0x305  => "mtvec"
+      case 0x306  => "mcounteren"
 
       -- machine trap handling
       case 0x340  => "mscratch"
@@ -1462,42 +1591,11 @@ string csrName(csr::csreg) =
       -- TODO
 
       -- machine counters/timers
-      case 0xF00  => "mcycle"
-      case 0xF01  => "mtime"
-      case 0xF02  => "minstret"
-      case 0xF80  => "mcycleh"
-      case 0xF81  => "mtimeh"
-      case 0xF82  => "minstreth"
-
-      -- machine counter-enables
-      case 0x310  => "mucounteren"
-      case 0x311  => "mscounteren"
-      case 0x312  => "mhcounteren"
-
-      -- machine counter-deltas
-      case 0x700  => "mucycle_delta"
-      case 0x701  => "mutime_delta"
-      case 0x702  => "muinstret_delta"
-
-      case 0x704  => "mscycle_delta"
-      case 0x705  => "mstime_delta"
-      case 0x706  => "msinstret_delta"
-
-      case 0x708  => "mhcycle_delta"
-      case 0x709  => "mhtime_delta"
-      case 0x70A  => "mhinstret_delta"
-
-      case 0x780  => "mucycle_deltah"
-      case 0x781  => "mutime_deltah"
-      case 0x782  => "muinstret_deltah"
-
-      case 0x784  => "mscycle_deltah"
-      case 0x785  => "mstime_deltah"
-      case 0x786  => "msinstret_deltah"
-
-      case 0x788  => "mhcycle_deltah"
-      case 0x789  => "mhtime_deltah"
-      case 0x78A  => "mhinstret_deltah"
+      case 0xB00  => "mcycle"
+      case 0xB02  => "minstret"
+      case 0xB80  => "mcycleh"
+      case 0xB82  => "minstreth"
+      -- TODO: other hpm counters and events
 
       case _      => "UNKNOWN"
     }
@@ -4728,7 +4826,8 @@ define System > WFI    = nothing
 -- Control and Status Registers
 
 bool checkCSROp(csr::imm12, rs1::reg, a::accessType) =
-    is_CSR_defined(csr) and check_CSR_access(csrRW(csr), csrPR(csr), curPrivilege, a)
+    is_CSR_defined(csr, curPrivilege)
+    and check_CSR_access(csrRW(csr), csrPR(csr), curPrivilege, a)
 
 -----------------------------------
 -- CSRRW  rd, rs1, imm
