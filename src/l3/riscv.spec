@@ -461,9 +461,7 @@ register mideleg :: regType     -- Interrupt Trap Delegation
 
 -- just a stub hook for now
 mideleg legalize_mideleg_64(m::mideleg, v::regType) =
-{ var mi = mideleg(v)
-; mi
-}
+    mideleg(v)
 
 mideleg legalize_mideleg_32(m::mideleg, v::word) =
     legalize_mideleg_64(m, deleg_of_32(v))
@@ -487,7 +485,7 @@ dword ipe_of_32(v::word)  = ZeroExtend(v<11:0>)
 
 mip legalize_mip_64(mip::mip, v::regType) =
 { var m = mip
-; var v = mip(v)
+; v     = mip(v)
 -- MTIP, MEIP and MSIP are read-only for M-mode CSR writes to mip, and
 -- are controlled via writes to memory-mapped control registers.
 ; m.M_SEIP <- v.M_SEIP
@@ -517,7 +515,7 @@ register mie :: regType         -- Interrupt Enable
 
 mie legalize_mie_64(mie::mie, v::regType) =
 { var m = mie
-; var v = mie(v)
+; v     = mie(v)
 ; m.M_MEIE <- v.M_MEIE
 ; m.M_MTIE <- v.M_MTIE
 ; m.M_MSIE <- v.M_MSIE
@@ -1279,62 +1277,62 @@ bool is_CSR_defined(csr::csreg, p::Privilege) =
 -- CSR conversion helpers
 
 uip uip_of_mip(i::id) =
-{ var sip = lower_mip(c_MCSR(i).mip, c_MCSR(i).mideleg)
+{ sip = lower_mip(c_MCSR(i).mip, c_MCSR(i).mideleg)
 ; lower_sip(sip, c_SCSR(i).sideleg)
 }
 
 uie uie_of_mie(i::id) =
-{ var sie = lower_mie(c_MCSR(i).mie, c_MCSR(i).mideleg)
+{ sie = lower_mie(c_MCSR(i).mie, c_MCSR(i).mideleg)
 ; lower_sie(sie, c_SCSR(i).sideleg)
 }
 
 mstatus mstatus_of_ustatus_64(i::id, v::regType) =
-{ var m = c_MCSR(i).mstatus
-; var s = lower_mstatus(m)
-; s = legalize_ustatus_64(s, v)
+{ m   = c_MCSR(i).mstatus
+; s   = lower_mstatus(m)
+; s   = legalize_ustatus_64(s, v)
 ; lift_sstatus(m, s)
 }
 
 mstatus mstatus_of_ustatus_32(i::id, v::word) =
-{ var m = c_MCSR(i).mstatus
-; var s = lower_mstatus(m)
-; s = legalize_ustatus_32(s, v)
+{ m   = c_MCSR(i).mstatus
+; s   = lower_mstatus(m)
+; s   = legalize_ustatus_32(s, v)
 ; lift_sstatus(m, s)
 }
 
 mip mip_of_uip_64(i::id, v::regType) =
-{ var m  = c_MCSR(i).mip
-; var md = c_MCSR(i).mideleg
-; var sd = c_SCSR(i).sideleg
-; var s  = lower_mip(m, md)
-; s      = legalize_uip_64(s, sd, v)
+{ m   = c_MCSR(i).mip
+; md  = c_MCSR(i).mideleg
+; sd  = c_SCSR(i).sideleg
+; s   = lower_mip(m, md)
+; s   = legalize_uip_64(s, sd, v)
 ; lift_sip(m, s, md)
 }
 
 mip mip_of_uip_32(i::id, v::word) =
-{ var m  = c_MCSR(i).mip
-; var md = c_MCSR(i).mideleg
-; var sd = c_SCSR(i).sideleg
-; var s  = lower_mip(m, md)
-; s      = legalize_uip_32(s, sd, v)
+{ m   = c_MCSR(i).mip
+; md  = c_MCSR(i).mideleg
+; sd  = c_SCSR(i).sideleg
+; s   = lower_mip(m, md)
+; s   = legalize_uip_32(s, sd, v)
 ; lift_sip(m, s, md)
 }
 
 mie mie_of_uie_64(i::id, v::regType) =
-{ var m  = c_MCSR(i).mie
-; var md = c_MCSR(i).mideleg
-; var sd = c_SCSR(i).sideleg
-; var s  = lower_mie(m, md)
-; s      = legalize_uie_64(s, sd, v)
+{ m   = c_MCSR(i).mie
+; md  = c_MCSR(i).mideleg
+; sd  = c_SCSR(i).sideleg
+; s   = lower_mie(m, md)
+; s   = legalize_uie_64(s, sd, v)
 ; lift_sie(m, s, md)
 }
 
 mie mie_of_uie_32(i::id, v::word) =
-{ var m  = c_MCSR(i).mie
-; var md = c_MCSR(i).mideleg
-; var sd = c_SCSR(i).sideleg
-; var s  = lower_mie(m, md)
-; s      = legalize_uie_32(s, sd, v)
+{ m   = c_MCSR(i).mie
+; md  = c_MCSR(i).mideleg
+; sd  = c_SCSR(i).sideleg
+; s   = lower_mie(m, md)
+; s   = legalize_uie_32(s, sd, v)
 ; lift_sie(m, s, md)
 }
 
@@ -2386,7 +2384,7 @@ type TLB32_Map  = tlbIdx -> TLB32_Entry option
 
 TLB32_Map addToTLB32(asid::asid32, vAddr::vaddr32, pAddr::paddr32, pte::SV32_PTE, pteAddr::paddr32,
                      i::nat, global::bool, curTLB::TLB32_Map) =
-{ var ent       = mkTLB32_Entry(asid, global, vAddr, pAddr, pte, i, pteAddr)
+{ ent           = mkTLB32_Entry(asid, global, vAddr, pAddr, pte, i, pteAddr)
 ; var tlb       = curTLB
 ; var current   = SignExtend('1')
 ; var addIdx    = 0
@@ -2612,7 +2610,7 @@ type TLB39_Map  = tlbIdx -> TLB39_Entry option
 
 TLB39_Map addToTLB39(asid::asid64, vAddr::vaddr39, pAddr::paddr39, pte::SV39_PTE, pteAddr::paddr39,
                      i::nat, global::bool, curTLB::TLB39_Map) =
-{ var ent       = mkTLB39_Entry(asid, global, vAddr, pAddr, pte, i, pteAddr)
+{ ent           = mkTLB39_Entry(asid, global, vAddr, pAddr, pte, i, pteAddr)
 ; var tlb       = curTLB
 ; var current   = SignExtend('1')
 ; var addIdx    = 0
