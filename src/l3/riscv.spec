@@ -5899,7 +5899,7 @@ unit initIdent(arch::Architecture) =
 ; MCSR.misa.X       <- false
 ; MCSR.misa.U       <- true
 ; MCSR.misa.S       <- true
-; MCSR.misa.N       <- true
+; MCSR.misa.N       <- false
 ; MCSR.misa.M       <- true
 ; MCSR.misa.I       <- true
 ; MCSR.misa.H       <- false
