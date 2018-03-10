@@ -249,6 +249,7 @@ fun doInitCheck () =
       ; check_failed "Initialization" ( (List.map (fn _ => "reg") (!regs_ok))
                                       , !regs_ok
                                       )
+      ; print ("Initialization state passed checks.\n")
     end
 fun doCheck () =
     let val delta   = riscv.Delta ()

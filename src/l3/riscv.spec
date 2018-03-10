@@ -1268,12 +1268,12 @@ bool is_CSR_defined(csr::csreg, p::Privilege) =
  or (csr >= 0xF11 and csr <= 0xF14)                   -- info
  or (csr >= 0x300 and csr <= 0x306)                   -- trap setup
  or (csr >= 0x340 and csr <= 0x344)                   -- trap handling
- or (csr >= 0x3A0 and csr <= 0x3A3 and in32BitMode()) -- memory protection configuration
- or (csr == 0x3A0 or  csr == 0x3A2)
- or (csr >= 0x3B0 and csr <= 0x3BF)                   -- memory protection addresses
- or (csr >= 0xB00 and csr <= 0xB1F)                   -- counters
- or (csr >= 0xB80 and csr <= 0xB9F and in32BitMode())
- or (csr >= 0x323 and csr <= 0x33F)                   -- counter setup
+ -- or (csr >= 0x3A0 and csr <= 0x3A3 and in32BitMode()) -- memory protection configuration
+ -- or (csr == 0x3A0 or  csr == 0x3A2)
+ -- or (csr >= 0x3B0 and csr <= 0x3BF)                   -- memory protection addresses
+ -- or (csr >= 0xB00 and csr <= 0xB1F)                   -- counters
+ -- or (csr >= 0xB80 and csr <= 0xB9F and in32BitMode())
+ -- or (csr >= 0x323 and csr <= 0x33F)                   -- counter setup
 
 
 -- CSR conversion helpers
