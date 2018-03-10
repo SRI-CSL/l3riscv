@@ -407,6 +407,7 @@ dword status_of_32(v::word)  = [v<31>]::bits(1) : 0x0`32 : v<30:0>
 mstatus legalize_mstatus_64(m::mstatus, v::regType) =
 { -- For now, we don't allow SXL and UXL to be changed, for Spike compatibility.
   var ms = mstatus(v)
+; ms.M_SD  <- extStatus(ms.M_FS) == Dirty or extStatus(ms.M_XS) == Dirty
 ; ms.M_SXL <- m.M_SXL
 ; ms.M_UXL <- m.M_UXL
 ; ms
