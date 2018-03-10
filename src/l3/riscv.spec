@@ -1346,19 +1346,19 @@ component CSRMap(csr::csreg) :: regType
       match csr, in32BitMode()
       { -- user trap setup
         case 0x000, false   => &lower_sstatus(lower_mstatus(c_MCSR(procID).mstatus))
-        case 0x000, true    => SignExtend(status_to_32(&lower_sstatus(lower_mstatus(c_MCSR(procID).mstatus))))
+        case 0x000, true    => ZeroExtend(status_to_32(&lower_sstatus(lower_mstatus(c_MCSR(procID).mstatus))))
         case 0x004, false   => &uie_of_mie(procID)
-        case 0x004, true    => SignExtend(ipe_to_32(&uie_of_mie(procID)))
+        case 0x004, true    => ZeroExtend(ipe_to_32(&uie_of_mie(procID)))
         case 0x005, _       => c_UCSR(procID).utvec
 
         -- user trap handling
         case 0x040, _       => c_UCSR(procID).uscratch
         case 0x041, _       => c_UCSR(procID).uepc
         case 0x042, false   => c_UCSR(procID).&ucause
-        case 0x042, true    => SignExtend(cause_to_32(c_UCSR(procID).&ucause))
+        case 0x042, true    => ZeroExtend(cause_to_32(c_UCSR(procID).&ucause))
         case 0x043, _       => c_UCSR(procID).utval
         case 0x044, false   => &uip_of_mip(procID)
-        case 0x044, true    => SignExtend(ipe_to_32(&uip_of_mip(procID)))
+        case 0x044, true    => ZeroExtend(ipe_to_32(&uip_of_mip(procID)))
 
         -- user floating-point context
         case 0x001, _       => ZeroExtend(c_UCSR(procID).&fpcsr<4:0>)
@@ -1370,18 +1370,18 @@ component CSRMap(csr::csreg) :: regType
         case 0xC01, _       =>            c_MCSR(procID).mtime
         case 0xC02, _       =>            c_MCSR(procID).minstret
         -- TODO: other hpm counters
-        case 0xC80, true    => SignExtend(c_MCSR(procID).mcycle<63:32>)
-        case 0xC81, true    => SignExtend(c_MCSR(procID).mtime<63:32>)
-        case 0xC82, true    => SignExtend(c_MCSR(procID).minstret<63:32>)
+        case 0xC80, true    => ZeroExtend(c_MCSR(procID).mcycle<63:32>)
+        case 0xC81, true    => ZeroExtend(c_MCSR(procID).mtime<63:32>)
+        case 0xC82, true    => ZeroExtend(c_MCSR(procID).minstret<63:32>)
         -- TODO: other hpm counters
 
         -- supervisor trap setup
         case 0x100, false   => &lower_mstatus(c_MCSR(procID).mstatus)
-        case 0x100, true    => SignExtend(status_to_32(&lower_mstatus(c_MCSR(procID).mstatus)))
+        case 0x100, true    => ZeroExtend(status_to_32(&lower_mstatus(c_MCSR(procID).mstatus)))
         case 0x102, _       => c_SCSR(procID).&sedeleg
         case 0x103, _       => c_SCSR(procID).&sideleg
         case 0x104, false   => &lower_mie(c_MCSR(procID).mie, c_MCSR(procID).mideleg)
-        case 0x104, true    => SignExtend(ipe_to_32(&lower_mie(c_MCSR(procID).mie, c_MCSR(procID).mideleg)))
+        case 0x104, true    => ZeroExtend(ipe_to_32(&lower_mie(c_MCSR(procID).mie, c_MCSR(procID).mideleg)))
         case 0x105, _       => c_SCSR(procID).stvec
         case 0x106, _       => ZeroExtend(c_SCSR(procID).&scounteren) -- TODO: check extension
 
@@ -1389,17 +1389,17 @@ component CSRMap(csr::csreg) :: regType
         case 0x140, _       => c_SCSR(procID).sscratch
         case 0x141, _       => c_SCSR(procID).sepc
         case 0x142, false   => c_SCSR(procID).&scause
-        case 0x142, true    => SignExtend(cause_to_32(c_SCSR(procID).&scause))
+        case 0x142, true    => ZeroExtend(cause_to_32(c_SCSR(procID).&scause))
         case 0x143, _       => c_SCSR(procID).stval
         case 0x144, false   => &lower_mip(c_MCSR(procID).mip, c_MCSR(procID).mideleg)
-        case 0x144, true    => SignExtend(ipe_to_32(&lower_mip(c_MCSR(procID).mip, c_MCSR(procID).mideleg)))
+        case 0x144, true    => ZeroExtend(ipe_to_32(&lower_mip(c_MCSR(procID).mip, c_MCSR(procID).mideleg)))
 
         -- supervisor protection and translation
         case 0x180, _       => c_SCSR(procID).satp
 
         -- machine information registers
         case 0xF10, false   => c_MCSR(procID).&misa
-        case 0xF10, true    => SignExtend(isa_to_32(c_MCSR(procID).&misa))
+        case 0xF10, true    => ZeroExtend(isa_to_32(c_MCSR(procID).&misa))
         case 0xF11, _       => c_MCSR(procID).mvendorid
         case 0xF12, _       => c_MCSR(procID).marchid
         case 0xF13, _       => c_MCSR(procID).mimpid
@@ -1407,11 +1407,13 @@ component CSRMap(csr::csreg) :: regType
 
         -- machine trap setup
         case 0x300, false   => c_MCSR(procID).&mstatus
-        case 0x300, true    => SignExtend(status_to_32(c_MCSR(procID).&mstatus))
+        case 0x300, true    => ZeroExtend(status_to_32(c_MCSR(procID).&mstatus))
+        case 0x301, false   => c_MCSR(procID).&misa
+        case 0x301, true    => ZeroExtend(isa_to_32(c_MCSR(procID).&misa))
         case 0x302, _       => c_MCSR(procID).&medeleg
         case 0x303, _       => c_MCSR(procID).&mideleg
         case 0x304, false   => c_MCSR(procID).&mie
-        case 0x304, true    => SignExtend(ipe_to_32(c_MCSR(procID).&mie))
+        case 0x304, true    => ZeroExtend(ipe_to_32(c_MCSR(procID).&mie))
         case 0x305, _       => c_MCSR(procID).mtvec
         case 0x306, _       => ZeroExtend(c_MCSR(procID).&mcounteren)
 
@@ -1419,10 +1421,10 @@ component CSRMap(csr::csreg) :: regType
         case 0x340, _       => c_MCSR(procID).mscratch
         case 0x341, _       => c_MCSR(procID).mepc
         case 0x342, false   => c_MCSR(procID).&mcause
-        case 0x342, true    => SignExtend(cause_to_32(c_MCSR(procID).&mcause))
+        case 0x342, true    => ZeroExtend(cause_to_32(c_MCSR(procID).&mcause))
         case 0x343, _       => c_MCSR(procID).mtval
         case 0x344, false   => c_MCSR(procID).&mip
-        case 0x344, true    => SignExtend(ipe_to_32(c_MCSR(procID).&mip))
+        case 0x344, true    => ZeroExtend(ipe_to_32(c_MCSR(procID).&mip))
 
         -- machine protection and translation
         -- TODO
