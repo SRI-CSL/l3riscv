@@ -2031,10 +2031,9 @@ bool globallyEnabled(delegate::Privilege, cur::Privilege) =
 }
 
 (InterruptType * Privilege) option curInterrupt() =
-{ m_enabled = (curPrivilege != Machine) or MCSR.mstatus.M_MIE
-; if MCSR.&mip == 0 or not m_enabled then None -- fast path
-  else searchDispatchableIntr(I_M_External, Machine)
-}
+ if MCSR.&mip == 0 or not MCSR.mstatus.M_MIE then None -- fast path
+ else searchDispatchableIntr(I_M_External, Machine)
+
 
 ---------------------------------------------------------------------------
 -- CSR access with logging
