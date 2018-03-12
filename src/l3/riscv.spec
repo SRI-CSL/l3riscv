@@ -387,6 +387,9 @@ register mstatus :: regType     -- Machine Status
 {    63 : M_SD      -- extended context dirty status
 , 35-34 : M_SXL     -- effective XLEN/base ISA in S-mode
 , 33-32 : M_UXL     -- effective XLEN/base ISA in U-mode
+,    22 : M_TSR     -- trap sret
+,    21 : M_TW      -- timeout wait
+,    20 : M_TVM     -- trap virtual memory
 ,    19 : M_MXR     -- make executable readable
 ,    18 : M_SUM     -- permit supervisor access to user memory
 ,    17 : M_MPRV    -- load/store memory privilege
@@ -1293,6 +1296,8 @@ bool is_CSR_defined(csr::csreg, p::Privilege) =
  -- or (csr >= 0xB80 and csr <= 0xB9F and in32BitMode())
  -- or (csr >= 0x323 and csr <= 0x33F)                   -- counter setup
 
+bool check_TVM_SATP(csr::imm12, p::Privilege, a::accessType) =
+    not (MCSR.mstatus.M_TVM and p == Supervisor and csr == 0x180)
 
 -- CSR conversion helpers
 
@@ -4834,24 +4839,44 @@ define System > URET   =
 -- SRET
 -----------------------------------
 define System > SRET   =
-    NextFetch <- Some(Sret)
+{ match curPrivilege
+  { case Machine    => NextFetch <- Some(Sret)
+    case Supervisor => NextFetch <- Some(Sret)
+    case User       => signalException(E_Illegal_Instr)
+  }
+}
 
 -----------------------------------
 -- MRET
 -----------------------------------
 define System > MRET   =
-    NextFetch <- Some(Mret)
+{ match curPrivilege
+  { case Machine    => NextFetch <- Some(Mret)
+    case Supervisor => signalException(E_Illegal_Instr)
+    case User       => signalException(E_Illegal_Instr)
+  }
+}
 
 -----------------------------------
 -- WFI
 -----------------------------------
-define System > WFI    = nothing
+define System > WFI    =
+{ match curPrivilege
+  { case Machine    => ()
+    case Supervisor => if MCSR.mstatus.M_TW
+                       then signalException(E_Illegal_Instr)
+                       else ()
+    case User       => signalException(E_Illegal_Instr)
+                       -- TODO: extend to 'N' extension
+  }
+}
 
 -- Control and Status Registers
 
 bool checkCSROp(csr::imm12, rs1::reg, a::accessType) =
     is_CSR_defined(csr, curPrivilege)
     and check_CSR_access(csrRW(csr), csrPR(csr), curPrivilege, a)
+    and check_TVM_SATP(csr, curPrivilege, a)
 
 -----------------------------------
 -- CSRRW  rd, rs1, imm
@@ -4939,16 +4964,20 @@ define System > SFENCE_VM(rs1::reg) =
                          -- when satp does not contain a sensible value
                          #INTERNAL_ERROR("sfence.vm: undefined satp spec error")
          }
-; match mode
-  { case Sv32 => { addr = if IsSome(addr) then Some(ValOf(addr)<31:0>) else None
-                 ; asid = satp32(SCSR.satp<31:0>).SATP32_ASID
-                 ; TLB32 <- flushTLB32(asid, addr, TLB32)
-                 }
-    case Sv39 => { addr = if IsSome(addr) then Some(ValOf(addr)<38:0>) else None
-                 ; asid = satp64(SCSR.satp).SATP64_ASID
-                 ; TLB39 <- flushTLB39(asid, addr, TLB39)
-                 }
-    case _    => #INTERNAL_ERROR("sfence.vm: unimplemented VM model") -- FIXME
+; match mode, MCSR.mstatus.M_TVM
+  { case _,    true  => signalException(E_Illegal_Instr)
+    case Sv32, false =>
+    { addr = if IsSome(addr) then Some(ValOf(addr)<31:0>) else None
+    ; asid = satp32(SCSR.satp<31:0>).SATP32_ASID
+    ; TLB32 <- flushTLB32(asid, addr, TLB32)
+    }
+    case Sv39, false =>
+    { addr = if IsSome(addr) then Some(ValOf(addr)<38:0>) else None
+    ; asid = satp64(SCSR.satp).SATP64_ASID
+    ; TLB39 <- flushTLB39(asid, addr, TLB39)
+    }
+    case _,    false =>
+    #INTERNAL_ERROR("sfence.vm: unimplemented VM model") -- FIXME
   }
 }
 
