@@ -4800,7 +4800,7 @@ define System > ECALL  = signalEnvCall()
 -----------------------------------
 
 define System > EBREAK =
-    signalException(E_Breakpoint)
+    signalAddressException(E_Breakpoint, PC)
 
 -----------------------------------
 -- URET
