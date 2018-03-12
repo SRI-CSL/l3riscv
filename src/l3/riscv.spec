@@ -380,11 +380,19 @@ word  status_to_32(v::dword) = [v<63>]::bits(1) : 0x0`2  : v<28:0>
 dword status_of_32(v::word)  = [v<31>]::bits(1) : 0x0`32 : v<30:0>
 
 mstatus legalize_mstatus_64(m::mstatus, v::regType) =
-{ -- For now, we don't allow SXL and UXL to be changed, for Spike compatibility.
-  var ms = mstatus(v)
-; ms.M_SD  <- extStatus(ms.M_FS) == Dirty or extStatus(ms.M_XS) == Dirty
-; ms.M_SXL <- m.M_SXL
-; ms.M_UXL <- m.M_UXL
+{ var ms = mstatus(v)
+
+-- We don't have any extension context yet.
+; ms.M_XS   <- ext_status(Off)
+; ms.M_SD   <- extStatus(ms.M_FS) == Dirty or extStatus(ms.M_XS) == Dirty
+
+-- For now, we don't allow SXL and UXL to be changed, for Spike compatibility.
+; ms.M_SXL  <- m.M_SXL
+; ms.M_UXL  <- m.M_UXL
+
+-- Hardwired to zero in the absence of 'N'.
+; ms.M_UPIE <- false
+; ms.M_UIE  <- false
 ; ms
 }
 
