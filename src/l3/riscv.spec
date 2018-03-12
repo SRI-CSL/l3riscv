@@ -1690,10 +1690,16 @@ unit initDelta() =
 
 ; Delta.exc_taken   <- false
 ; Delta.fetch_exc   <- false
+
 ; Delta.mepc        <- None
 ; Delta.mcause      <- None
 ; Delta.mtval       <- None
--- mstatus is explicitly recorded on changes.
+
+; Delta.sepc        <- None
+; Delta.scause      <- None
+; Delta.stval       <- None
+
+-- mstatus is explicitly always recorded.
 }
 
 unit recordPC(pc::regType, p::Privilege) =
