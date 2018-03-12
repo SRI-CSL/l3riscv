@@ -318,7 +318,11 @@ local
     fun t f x = if !time_run then Runtime.time f x else f x
 in
 fun run mx =
-    t (logLoop mx) 0
+    ( t (logLoop mx) 0
+    ; if   !riscv.done
+      then Unix.exit (Word8.fromInt (IntInf.toInt (Nat.toInt (riscv.exitCode ()))))
+      else ()
+    )
 
 fun runWrapped mx =
     run mx
