@@ -106,13 +106,6 @@ Architecture architecture(xlen::arch_xlen) =
       case _          => #UNDEFINED("Unknown architecture: " : [[xlen] :: nat])
     }
 
-string archName(a::Architecture) =
-    match a
-    { case RV32       => "RV32"
-      case RV64       => "RV64"
-      case RV128      => "RV128"
-    }
-
 ---------------------------------------------------------------------------
 -- Privilege levels
 ---------------------------------------------------------------------------
@@ -161,14 +154,6 @@ construct SATP_Mode
 -- todo: Sv57, Sv64
 }
 
-string satpModeName(m::SATP_Mode) =
-    match m
-    { case Sbare  => "Bare"
-      case Sv32   => "Sv32"
-      case Sv39   => "Sv39"
-      case Sv48   => "Sv48"
-    }
-
 SATP_Mode satpMode_ofbits(m::satp_mode, a::Architecture) =
     match m, a
     { case  0, _    => Sbare
@@ -187,7 +172,7 @@ satp_mode satpMode_tobits(m::SATP_Mode, a::Architecture) =
       case Sv48, RV64 => 9
       -- todo: Sv57, Sv64
       case  _     => #UNDEFINED("Unsupported address translation mode: "
-                                : satpModeName(m) : " in " : archName(a))
+                                : [m]::string : " in " : [a]::string)
     }
 
 ---------------------------------------------------------------------------
@@ -297,20 +282,6 @@ ExceptionType excType(e::exc_code) =
       case 0x8 => E_Env_Call
 
       case _   => #UNDEFINED("Unknown exception: " : [[e]::nat])
-    }
-
-string excName(e::ExceptionType) =
-    match e
-    { case E_Fetch_Misaligned   => "MISALIGNED_FETCH"
-      case E_Fetch_Fault        => "FAULT_FETCH"
-      case E_Illegal_Instr      => "ILLEGAL_INSTRUCTION"
-      case E_Breakpoint         => "BREAKPOINT"
-
-      case E_Load_Fault         => "FAULT_LOAD"
-      case E_AMO_Misaligned     => "MISALIGNED_AMO"
-      case E_Store_AMO_Fault    => "FAULT_STORE_AMO"
-
-      case E_Env_Call           => "EnvCall"
     }
 
 ---------------------------------------------------------------------------
@@ -1887,7 +1858,7 @@ string log_r_mem(pAddrIdx::pAddrIdx, vAddr::vAddr, data::regType) =
     "]: 0x" : hex64(data)
 
 string log_exc(e::ExceptionType) =
-    " Exception " : excName(e) : " raised!"
+    " Exception " : [e]::string : " raised!"
 
 string log_tohost(tohost::regType) =
     "-> host: " : hex64(tohost)
@@ -1917,13 +1888,13 @@ unit setTrap(e::ExceptionType, badaddr::vAddr option) =
 }
 
 unit signalException(e::ExceptionType) =
-{ mark_log(LOG_INSN, "signalling exception " : excName(e))
+{ mark_log(LOG_INSN, "signalling exception " : [e]::string)
 ; setTrap(e, None)
 ; recordException()
 }
 
 unit signalAddressException(e::ExceptionType, vAddr::vAddr) =
-{ mark_log(LOG_INSN, "signalling address exception " : excName(e) : " at " : [vAddr])
+{ mark_log(LOG_INSN, "signalling address exception " : [e]::string : " at " : [vAddr])
 ; setTrap(e, Some(vAddr))
 ; recordException()
 }
@@ -2732,7 +2703,7 @@ SATP_Mode translationMode(priv::Privilege) =
                            then Sv32 else Sbare
              case RV64  => satpMode_ofbits(satp64(SCSR.satp).SATP64_MODE, arch)
              case RV128 => #UNDEFINED("Unsupported address translation arch: "
-                                      : archName(arch))
+                                      : [arch]::string)
            }
          }
 
