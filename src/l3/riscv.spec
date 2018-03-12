@@ -137,6 +137,7 @@ Privilege privilege(p::priv_level) =
     { case 0          => User
       case 1          => Supervisor
       case 3          => Machine
+      case _          => #UNDEFINED("Unknown privilege: " : [p])
     }
 
 string privName(p::Privilege) =
