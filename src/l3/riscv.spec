@@ -1601,22 +1601,26 @@ string csrName(csr::csreg) =
 ---------------------------------------------------------------------------
 -- Tandem verification
 ---------------------------------------------------------------------------
--- The execution context for each instruction, as well as its
--- side-effects, are captured in a record, to be used to verify or
--- verify against another implementation.
+-- The execution side-effects for each instruction are captured in a
+-- record, to be used to verify or verify against another
+-- implementation.  The values stored here are the result of
+-- processing at the current PC.  If any interrupts are pending, those
+-- are processed before the PC is fetched.  The StateDelta records the
+-- effects of these actions.
+--
+-- On startup, there is a cross-check of the initial state; however,
+-- that is done externally (see model.sml).  The record below only
+-- records side-effects once the model actually executes a step.
 
 record StateDelta
 { -- execution context
-  priv          :: Privilege    -- the privilege level of execution
+  priv          :: Privilege    -- the resulting privilege level
 
-  pc            :: regType      -- the PC of the instruction: this
-                                -- could be either a virtual or
-                                -- physical address, depending on the
-                                -- privilege level
+  pc            :: regType      -- the next PC
 
-  instr         :: word         -- the fetched instruction, if any
+  instr         :: word         -- the fetched instruction, if any, at the current PC
 
-  -- memory side-effects
+  -- memory addresses and side-effects
 
   mem_addr      :: regType option   -- any address value computed for
                                     -- the instruction (including
@@ -2011,7 +2015,7 @@ InterruptType option searchDispatchableIntr(ip::mip) =
 
 (InterruptType * Privilege) option curInterrupt() =
 { e_mip = MCSR.&mip && MCSR.&mie
-; if e_mip == 0 or not MCSR.mstatus.M_MIE then None -- fast path
+; if   e_mip == 0 or not MCSR.mstatus.M_MIE then None -- fast path
   else {
   -- This assumes 'S' mode and no 'N' extension.  It will need
   -- revision for other configurations (e.g. M/U).
@@ -2020,16 +2024,16 @@ InterruptType option searchDispatchableIntr(ip::mip) =
 
   -- dispatch in order of decreasing privilege
   ; if      m_ip != 0 and MCSR.mstatus.M_MIE
-    then match searchDispatchableIntr(mip(m_ip))
+    then    match searchDispatchableIntr(mip(m_ip))
          { case Some(i) => Some(i, Machine)
            case None    => None
          }
     else if s_ip != 0 and MCSR.mstatus.M_SIE
-    then match searchDispatchableIntr(mip(s_ip))
+    then    match searchDispatchableIntr(mip(s_ip))
          { case Some(i) => Some(i, Supervisor)
            case None    => None
          }
-    else None
+    else    None
   }
 }
 
@@ -6014,7 +6018,7 @@ unit Next =
 ; recordPC(PC, curPrivilege)
 }
 
--- todo: This needs to be parameterized by an isa string, or
+-- TODO: This needs to be parameterized by an isa string, or
 -- initialized from outside the model.
 unit initIdent(arch::Architecture) =
 { MCSR.misa.MXL     <- archBase(arch)
@@ -6056,12 +6060,13 @@ unit initMachine(hartid::id) =
 ; MCSR.mhartid      <- ZeroExtend(hartid)
   -- Initialize mtvec to lower address (other option is 0xF...FFE00)
 ; MCSR.&mtvec       <- ZeroExtend(0x100`16)
+
+  -- TODO: other CSRs
 }
 -- This initializes each core (via setting procID appropriately) on
 -- startup before execution begins.
 unit initRegs(pc::nat) =
-{ -- TODO: Check if the specs specify the initial values of the registers
-  -- on startup.  Initializing to an arbitrary value causes issues with
+{ -- Initializing to an arbitrary value causes issues with
   -- the verifier, which assumes 0-valued initialization.
   for i in 0 .. 31 do
     gpr([i])   <- 0x0

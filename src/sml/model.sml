@@ -230,7 +230,7 @@ local
           else ()
         )
 in
-(* TODO: check mstatus and other CSRs on init *)
+
 fun doInitCheck () =
     let val t       = getChecker ()
         val priv_ok = Oracle.checkPriv (t, riscv.curPrivilege ())
