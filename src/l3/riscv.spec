@@ -1394,8 +1394,6 @@ component CSRMap(csr::csreg) :: regType
         case 0x180, _       => c_SCSR(procID).satp
 
         -- machine information registers
-        case 0xF10, false   => c_MCSR(procID).&misa
-        case 0xF10, true    => ZeroExtend(isa_to_32(c_MCSR(procID).&misa))
         case 0xF11, _       => c_MCSR(procID).mvendorid
         case 0xF12, _       => c_MCSR(procID).marchid
         case 0xF13, _       => c_MCSR(procID).mimpid

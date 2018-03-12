@@ -203,6 +203,8 @@ local
 
     fun check_mstatus t rvb =
         check_csr_int t 0x300 rvb
+    fun check_misa    t rvb =
+        check_csr_int t 0x301 rvb
     fun check_mepc    t rvb =
         check_csr_int t 0x341 rvb
     fun check_mcause  t rvb =
@@ -233,10 +235,11 @@ fun doInitCheck () =
     let val t       = getChecker ()
         val priv_ok = Oracle.checkPriv (t, riscv.curPrivilege ())
         val pc_ok   = Oracle.checkPC (t, BitsN.toUInt (riscv.PC ()))
+        val isa_ok  = check_misa    t (riscv.reg'misa (#misa (riscv.MCSR ())))
         val ms_ok   = check_mstatus t (riscv.reg'mstatus (#mstatus (riscv.MCSR ())))
         val regs_ok = ref []
-    in  check_failed "Initialization" ( ["privilege", "pc", "mstatus"]
-                                      , [priv_ok, pc_ok, ms_ok]
+    in  check_failed "Initialization" ( ["privilege", "pc", "misa", "mstatus"]
+                                      , [priv_ok, pc_ok, isa_ok, ms_ok]
                                       )
       ; L3.for
             (IntInf.fromInt 0, IntInf.fromInt 31,
