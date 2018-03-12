@@ -964,61 +964,44 @@ record UserCSR
 
 mstatus menter(v::mstatus, p::Privilege) =
 { var m = v
-; m.M_MPIE <- match p
-              { case User       => m.M_UIE
-                case Supervisor => m.M_SIE
-                case Machine    => m.M_MIE
-              }
-; m.M_MPP <- privLevel(p)
-; m.M_MIE <- false
+; m.M_MPIE <- m.M_MIE
+; m.M_MIE  <- false
+; m.M_MPP  <- privLevel(p)
 ; m
 }
 
 mstatus senter(v::mstatus, p::Privilege) =
 { var m = v
+; m.M_SPIE <- m.M_SIE
+; m.M_SIE  <- false
 ; match p
-  { case User       => { m.M_SPIE <- m.M_UIE
-                       ; m.M_SPP  <- false
-                       }
-    case Supervisor => { m.M_SPIE <- m.M_SIE
-                       ; m.M_SPP  <- true
-                       }
+  { case User       => m.M_SPP  <- false
+    case Supervisor => m.M_SPP  <- true
     case _          => #INTERNAL_ERROR("Invalid privilege for senter")
   }
-; m.M_SIE <- false
 ; m
 }
 
 mstatus uenter(v::mstatus, p::Privilege) =
 { var m = v
-; m.M_UPIE <- match p
-              { case User       => m.M_UIE
-                case _          => #INTERNAL_ERROR("Invalid privilege for uenter")
-              }
-; m.M_UIE <- false
+; m.M_UPIE <- m.M_UIE
+; m.M_UIE  <- false
 ; m
 }
 
 mstatus mret(v::mstatus) =
 { var m = v
-; match privilege(m.M_MPP)
-  { case User       => m.M_UIE  <- m.M_MPIE
-    case Supervisor => m.M_SIE  <- m.M_MPIE
-    case Machine    => m.M_MIE  <- m.M_MPIE
-  }
-; m.M_MPP  <- privLevel(User)  -- todo: need to check config if U-mode is supported
+; m.M_MIE  <- m.M_MPIE
 ; m.M_MPIE <- true
+; m.M_MPP  <- privLevel(User)  -- todo: need to check config if U-mode is supported
 ; m
 }
 
 mstatus sret(v::mstatus) =
 { var m = v
-; match m.M_SPP
-  { case false      => m.M_UIE  <- m.M_SPIE
-    case true       => m.M_SIE  <- m.M_SPIE
-  }
-; m.M_SPP  <- false
+; m.M_SIE  <- m.M_SPIE
 ; m.M_SPIE <- true
+; m.M_SPP  <- false
 ; m
 }
 
