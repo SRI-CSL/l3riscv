@@ -4953,7 +4953,8 @@ define System > CSRRCI(rd::reg, zimm::reg, csr::imm12) =
 -----------------------------------
 -- SFENCE.VM
 -----------------------------------
-define System > SFENCE_VM(rs1::reg) =
+-- TODO: FIXME: update definition
+define System > SFENCE_VM(rs1::reg, rs2::reg) =
 { addr = if rs1 == 0 then None else Some(GPR(rs1))
 ; arch = architecture(MCSR.mstatus.M_SXL)
 ; mode = match arch
@@ -4965,19 +4966,20 @@ define System > SFENCE_VM(rs1::reg) =
                          #INTERNAL_ERROR("sfence.vm: undefined satp spec error")
          }
 ; match mode, MCSR.mstatus.M_TVM
-  { case _,    true  => signalException(E_Illegal_Instr)
-    case Sv32, false =>
+  { case _,     true  => signalException(E_Illegal_Instr)
+    case Sbare, false => ()
+    case Sv32,  false =>
     { addr = if IsSome(addr) then Some(ValOf(addr)<31:0>) else None
     ; asid = satp32(SCSR.satp<31:0>).SATP32_ASID
     ; TLB32 <- flushTLB32(asid, addr, TLB32)
     }
-    case Sv39, false =>
+    case Sv39,  false =>
     { addr = if IsSome(addr) then Some(ValOf(addr)<38:0>) else None
     ; asid = satp64(SCSR.satp).SATP64_ASID
     ; TLB39 <- flushTLB39(asid, addr, TLB39)
     }
-    case _,    false =>
-    #INTERNAL_ERROR("sfence.vm: unimplemented VM model") -- FIXME
+    case _,     false =>
+    #INTERNAL_ERROR(["sfence.vm: unimplemented VM model " : [mode]::string]) -- FIXME
   }
 }
 
@@ -5301,7 +5303,7 @@ instruction decode_SYSTEM(w::word) =
 
      case '000100000101  00000 000 00000 11100 11' => System(   WFI)
 
-     case '000100000100    rs1 000 00000 11100 11' => System(SFENCE_VM(rs1))
+     case '0001001  rs2    rs1 000 00000 11100 11' => System(SFENCE_VM(rs1, rs2))
 
      case _                                        => UnknownInstruction
    }
@@ -5603,7 +5605,7 @@ string instructionToString(i::instruction) =
      case System(CSRRSI(rd, imm, csr))      => pCSRItype("CSRRSI", rd, imm, csr)
      case System(CSRRCI(rd, imm, csr))      => pCSRItype("CSRRCI", rd, imm, csr)
 
-     case System(SFENCE_VM(rs1))            => pN1type("SFENCE.VM", rs1)
+     case System(SFENCE_VM(rs1, rs2))       => pRtype("SFENCE.VM", 0b0`5, rs1, rs2)
 
      case UnknownInstruction                => pN0type("UNKNOWN")
 
@@ -5821,7 +5823,7 @@ word Encode(i::instruction) =
 
      case System(   WFI)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x105)
 
-     case System(SFENCE_VM(rs1))            =>  Itype(opc(0x1C), 0, 0, rs1, 0x104)
+     case System(SFENCE_VM(rs1, rs2))       =>  Rtype(opc(0x1C), 0, 0, rs1, rs2, 0x05)
 
      case System( CSRRW(rd, rs1, csr))      =>  Itype(opc(0x1C), 1, rd, rs1, csr)
      case System( CSRRS(rd, rs1, csr))      =>  Itype(opc(0x1C), 2, rd, rs1, csr)
