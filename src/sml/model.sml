@@ -91,14 +91,14 @@ fun storeVecInMemHelper vec (base : int) (i : int) =
              ; storeVecInMemHelper vec base (i+1)
              )
         else
-            if !trace_elf
+            if   !trace_elf
             then print (Int.toString (Word8Vector.length vec) ^ " words.\n")
             else ()
     end
 
 fun storeVecInMem (base : int, memsz : int, vec) =
     let val vlen   = Word8Vector.length vec
-        val padded = if memsz <= vlen then vec
+        val padded = if   memsz <= vlen then vec
                      else (
                          let val pad = Word8Vector.tabulate
                                            (memsz - vlen,  (fn _ => Word8.fromInt 0))
@@ -123,7 +123,7 @@ fun isLastCore () =
 
 fun printLog () =
     ( List.app (fn (n, l) =>
-                   if IntInf.toInt n <= !trace_lvl
+                   if   IntInf.toInt n <= !trace_lvl
                    then print (l ^ "\n")
                    else ()
                ) (List.rev (!riscv.log))
@@ -201,28 +201,20 @@ local
         let val rn = IntInf.toInt (BitsN.toUInt rnb)
         in  check_csr_int t rn rvb  end
 
-    fun check_mstatus t rvb =
-        check_csr_int t 0x300 rvb
-    fun check_misa    t rvb =
-        check_csr_int t 0x301 rvb
-    fun check_mepc    t rvb =
-        check_csr_int t 0x341 rvb
-    fun check_mcause  t rvb =
-        check_csr_int t 0x342 rvb
-    fun check_mtval   t rvb =
-        check_csr_int t 0x343 rvb
-    fun check_sepc    t rvb =
-        check_csr_int t 0x141 rvb
-    fun check_scause  t rvb =
-        check_csr_int t 0x142 rvb
-    fun check_stval   t rvb =
-        check_csr_int t 0x143 rvb
+    fun check_mstatus t rvb = check_csr_int t 0x300 rvb
+    fun check_misa    t rvb = check_csr_int t 0x301 rvb
+    fun check_mepc    t rvb = check_csr_int t 0x341 rvb
+    fun check_mcause  t rvb = check_csr_int t 0x342 rvb
+    fun check_mtval   t rvb = check_csr_int t 0x343 rvb
+    fun check_sepc    t rvb = check_csr_int t 0x141 rvb
+    fun check_scause  t rvb = check_csr_int t 0x142 rvb
+    fun check_stval   t rvb = check_csr_int t 0x143 rvb
 
     fun check_failed msg (chks, vals) =
-        ( ListPair.app (fn (c, v) => if v then ()
+        ( ListPair.app (fn (c, v) => if   v then ()
                                      else print (" mis-matched " ^ c ^ "\n")
                        ) (chks, vals)
-        ; if List.exists (fn b => not b) vals
+        ; if   List.exists (fn b => not b) vals
           then ( print (msg ^ " verification error.\n")
                ; dumpRegisters (currentCore ())
                ; failExit "Verification FAILED!\n"
@@ -310,12 +302,12 @@ fun logLoop mx i =
     ; riscv.Next ()
     ; print ("\n")
     ; printLog ()
-    ; if !check
+    ; if   !check
       then ( Oracle.step (getChecker ())
            ; doCheck()
            )
       else ()
-    ; if !riscv.done orelse i = mx orelse (!check andalso isCheckerDone ())
+    ; if   !riscv.done orelse i = mx orelse (!check andalso isCheckerDone ())
       then ( print ("ExitCode: " ^ Nat.toString (riscv.exitCode ()) ^ "\n")
            ; print ("Completed " ^ Int.toString (i + 1) ^ " instructions.\n")
            )
@@ -350,7 +342,7 @@ fun initPlatform cores =
     ; riscv.initMem (BitsN.fromInt
                          ((if !check then 0xaaaaaaaaAAAAAAAA else 0x0)
                          , 64))
-    ; if !check
+    ; if   !check
       then setChecker (Oracle.init ("RV64IMAFD"))
       else ()
     )
@@ -360,7 +352,7 @@ fun initCores (arch, pc) =
     ( riscv.initIdent arch
     ; riscv.initMachine (!riscv.procID)
     ; riscv.initRegs pc
-    ; if isLastCore ()
+    ; if   isLastCore ()
       then ()  (* core scheduler will wrap back to first core *)
       else ( riscv.scheduleCore (nextCoreToSchedule ())
            ; initCores (arch, pc)
@@ -414,12 +406,12 @@ fun insertResetVec pc =
 
 fun loadElf segms dis =
     List.app (fn s =>
-                 if (#ptype s) = Elf.PT_LOAD
+                 if   (#ptype s) = Elf.PT_LOAD
                  then (let val vaddr   = Int.fromLarge (#vaddr s)
                            val memsz   = Int.fromLarge (#memsz s)
                            val mem_end = IntInf.toInt (IntInf.+ (!mem_base_addr, !mem_size))
                        in
-                           if !trace_elf
+                           if   !trace_elf
                            then ( print ("Loading segment @ vaddr=" ^ hxi vaddr
                                           ^ ", " ^ Int.toString memsz ^ " bytes ...\n")
                                 ; Elf.printSegment s
@@ -427,14 +419,14 @@ fun loadElf segms dis =
                            else ()
                          ; storeVecInMem (vaddr, memsz, (#bytes s))
                          (* update memory range *)
-                         ; if vaddr < IntInf.toInt (!mem_base_addr)
+                         ; if   vaddr < IntInf.toInt (!mem_base_addr)
                            then mem_base_addr := IntInf.fromInt vaddr
                            else ()
-                         ; if vaddr + memsz > mem_end
+                         ; if   vaddr + memsz > mem_end
                            then mem_size := IntInf.fromInt (vaddr + memsz - mem_end)
                            else ()
                          (* TODO: should check flags for executable segment *)
-                         ; if dis then disassemble (#vaddr s) (#memsz s)
+                         ; if   dis then disassemble (#vaddr s) (#memsz s)
                            else ()
                        end)
                  else ( print ("Skipping segment ...\n")
@@ -467,14 +459,14 @@ fun setupElf file dis =
         val pc     = if !boot then reset_addr else (LargeInt.toInt (#entry hdr))
         val tohost = List.find (match_symb "tohost") symbs
     in  set_tohost tohost
-      ; initCores ( if (#class hdr) = Elf.BIT_32
+      ; initCores ( if   (#class hdr) = Elf.BIT_32
                     then riscv.RV32 else riscv.RV64
                   , IntInf.fromInt pc
                   )
       ; print ("L3RISCV: pc set to 0x" ^ (hx64 (Word64.fromInt pc))
                ^ (if !boot then " [boot-entry] " else " [elf-entry]")
                ^ " in file " ^ file ^ "\n")
-      ; if !trace_elf
+      ; if   !trace_elf
         then ( print "Loading elf file ...\n"
              ; Elf.printHeader hdr
              ; List.app Elf.printNamedSection nsects
@@ -483,7 +475,7 @@ fun setupElf file dis =
         else ()
       ; be := (if (#endian hdr = Elf.BIG) then true else false)
       ; loadElf segms dis
-      ; if !trace_elf
+      ; if   !trace_elf
         then ( print ("\nMem base: " ^ (hxi64 (!mem_base_addr)))
              ; print ("\nMem size: " ^ (hxi64 (!mem_size))
                       ^ " (" ^ (IntInf.fmt StringCvt.DEC (!mem_size)) ^ ")\n")
@@ -492,20 +484,20 @@ fun setupElf file dis =
       ; printLog ()
       (* FIXME: this spike-specific behaviour of loading a reset-vector in a debug-rom
        * should be conditioned by an appropriate flag. *)
-      ; if !boot
+      ; if   !boot
         then insertResetVec (LargeInt.toInt (#entry hdr))
         else ()
     end
 
 fun doElf cycles file dis =
     ( setupElf file dis
-    ; if !check
+    ; if   !check
       then ( Oracle.loadElf (getChecker (), file)
            ; Oracle.reset (getChecker ())
            ; doInitCheck ()
            )
       else ()
-    ; if dis
+    ; if   dis
       then printLog ()
       else runWrapped cycles
     )
@@ -559,7 +551,7 @@ fun getArguments () =
 fun processOption (s: string) =
     let fun loop acc =
             fn a :: b :: r =>
-               if a = s
+               if   a = s
                then (SOME b, List.rev acc @ r)
                else loop (a :: acc) (b :: r)
           | r => (NONE, List.rev acc @ r)
@@ -593,10 +585,10 @@ fun main_wrapped () =
             val () = verifier_mode  := v
             val () = boot           := b
 
-        in  if List.null l andalso not (!verifier_mode)
+        in  if   List.null l andalso not (!verifier_mode)
             then printUsage ()
             else ( initPlatform (m)
-                 ; if !verifier_mode
+                 ; if   !verifier_mode
                    then initModel ()
                    else doElf (IntInf.toInt c) (List.hd l) d
                  )
