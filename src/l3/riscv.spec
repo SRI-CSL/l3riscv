@@ -417,6 +417,36 @@ mstatus legalize_mstatus_32(m::mstatus, v::word) =
     legalize_mstatus_64(m, status_of_32(v))
 
 
+construct TrapVectorMode
+{ TV_Direct
+, TV_Vector
+, TV_Reserved1
+, TV_Reserved2
+}
+
+register mtvec :: regType       -- Trap-Vector Base-Address
+{  63-2 : BASE
+,   1-0 : MODE
+}
+
+word  tvec_to_32(v::dword) = v<31:0>
+dword tvec_of_32(v::word)  = ZeroExtend(v)  -- FIXME: Is this correct?
+
+mtvec legalize_tvec_64(m::mtvec, v::regType) =
+{ var mtv = mtvec(v)
+; match [mtv.MODE]::TrapVectorMode
+  { case TV_Direct => mtv
+    case TV_Vector => mtv
+    case _     => { mtv.MODE <- m.MODE
+                  ; mtv
+                  }
+  }
+}
+
+mtvec legalize_tvec_32(m::mtvec, v::word) =
+    legalize_tvec_64(m, tvec_of_32(v))
+
+
 register medeleg :: regType     -- Exception Trap Delegation
 {    15 : M_SAMO_Page_Fault
 ,    13 : M_Load_Page_Fault
@@ -490,11 +520,13 @@ mip legalize_mip_64(mip::mip, v::regType) =
 -- MTIP, MEIP and MSIP are read-only for M-mode CSR writes to mip, and
 -- are controlled via writes to memory-mapped control registers.
 ; m.M_SEIP <- v.M_SEIP
-; m.M_UEIP <- v.M_UEIP
 ; m.M_STIP <- v.M_STIP
-; m.M_UTIP <- v.M_UTIP
 ; m.M_SSIP <- v.M_SSIP
-; m.M_USIP <- v.M_USIP
+
+-- hardwired to 0 since 'N' is yet not supported
+-- ; m.M_UEIP <- v.M_UEIP
+-- ; m.M_UTIP <- v.M_UTIP
+-- ; m.M_USIP <- v.M_USIP
 ; m
 }
 
@@ -521,11 +553,14 @@ mie legalize_mie_64(mie::mie, v::regType) =
 ; m.M_MTIE <- v.M_MTIE
 ; m.M_MSIE <- v.M_MSIE
 ; m.M_SEIE <- v.M_SEIE
-; m.M_UEIE <- v.M_UEIE
 ; m.M_STIE <- v.M_STIE
-; m.M_UTIE <- v.M_UTIE
 ; m.M_SSIE <- v.M_SSIE
-; m.M_USIE <- v.M_USIE
+
+-- hardwired to 0 since 'N' is yet not supported
+-- ; m.M_UEIE <- v.M_UEIE
+-- ; m.M_UTIE <- v.M_UTIE
+-- ; m.M_USIE <- v.M_USIE
+
 ; m
 }
 
@@ -595,7 +630,7 @@ record MachineCSR
   medeleg       :: medeleg
   mideleg       :: mideleg
   mie           :: mie
-  mtvec         :: regType
+  mtvec         :: mtvec
   mcounteren    :: mcounteren
 
   mscratch      :: regType      -- trap handling
@@ -799,7 +834,7 @@ record SupervisorCSR
   sedeleg       :: sedeleg
   sideleg       :: sideleg
   -- sie is a restricted view of mie
-  stvec         :: regType
+  stvec         :: mtvec
   scounteren    :: mcounteren
 
   sscratch      :: regType      -- trap handling
@@ -913,7 +948,7 @@ sie legalize_uie_32(s::sie, d::sideleg, v::word) =
     legalize_uie_64(s, d, ipe_of_32(v))
 
 record UserCSR
-{ utvec         :: regType      -- trap setup
+{ utvec         :: mtvec        -- trap setup
 
   uscratch      :: regType      -- trap handling
   uepc          :: regType
@@ -1348,7 +1383,8 @@ component CSRMap(csr::csreg) :: regType
         case 0x000, true    => ZeroExtend(status_to_32(&lower_sstatus(lower_mstatus(c_MCSR(procID).mstatus))))
         case 0x004, false   => &uie_of_mie(procID)
         case 0x004, true    => ZeroExtend(ipe_to_32(&uie_of_mie(procID)))
-        case 0x005, _       => c_UCSR(procID).utvec
+        case 0x005, false   => c_UCSR(procID).&utvec
+        case 0x005, true    => ZeroExtend(tvec_to_32(c_UCSR(procID).&utvec))
 
         -- user trap handling
         case 0x040, _       => c_UCSR(procID).uscratch
@@ -1381,7 +1417,8 @@ component CSRMap(csr::csreg) :: regType
         case 0x103, _       => c_SCSR(procID).&sideleg
         case 0x104, false   => &lower_mie(c_MCSR(procID).mie, c_MCSR(procID).mideleg)
         case 0x104, true    => ZeroExtend(ipe_to_32(&lower_mie(c_MCSR(procID).mie, c_MCSR(procID).mideleg)))
-        case 0x105, _       => c_SCSR(procID).stvec
+        case 0x105, false   => c_SCSR(procID).&stvec
+        case 0x105, true    => ZeroExtend(tvec_to_32(c_SCSR(procID).&stvec))
         case 0x106, _       => ZeroExtend(c_SCSR(procID).&scounteren) -- TODO: check extension
 
         -- supervisor trap handling
@@ -1413,7 +1450,8 @@ component CSRMap(csr::csreg) :: regType
         case 0x303, _       => c_MCSR(procID).&mideleg
         case 0x304, false   => c_MCSR(procID).&mie
         case 0x304, true    => ZeroExtend(ipe_to_32(c_MCSR(procID).&mie))
-        case 0x305, _       => c_MCSR(procID).mtvec
+        case 0x305, false   => c_MCSR(procID).&mtvec
+        case 0x305, true    => ZeroExtend(tvec_to_32(c_MCSR(procID).&mtvec))
         case 0x306, _       => ZeroExtend(c_MCSR(procID).&mcounteren)
 
         -- machine trap handling
@@ -1438,7 +1476,8 @@ component CSRMap(csr::csreg) :: regType
         case 0x000, true    => c_MCSR(procID).mstatus   <- mstatus_of_ustatus_32(procID, value<31:0>)
         case 0x004, false   => c_MCSR(procID).mie       <- mie_of_uie_64(procID, value)
         case 0x004, true    => c_MCSR(procID).mie       <- mie_of_uie_32(procID, value<31:0>)
-        case 0x005, _       => c_UCSR(procID).utvec     <- value
+        case 0x005, false   => c_UCSR(procID).utvec     <- legalize_tvec_64(c_UCSR(procID).utvec, value)
+        case 0x005, true    => c_UCSR(procID).utvec     <- legalize_tvec_32(c_UCSR(procID).utvec, value<31:0>)
 
         -- user trap handling
         case 0x040, _       => c_UCSR(procID).uscratch  <- value
@@ -1474,7 +1513,8 @@ component CSRMap(csr::csreg) :: regType
         case 0x103, true    => c_SCSR(procID).sideleg   <- legalize_sideleg_32(c_SCSR(procID).sideleg, value<31:0>)
         case 0x104, false   => c_MCSR(procID).mie       <- legalize_sie_64(c_MCSR(procID).mie, c_MCSR(procID).mideleg, value)
         case 0x104, true    => c_MCSR(procID).mie       <- legalize_sie_32(c_MCSR(procID).mie, c_MCSR(procID).mideleg, value<31:0>)
-        case 0x105, _       => c_SCSR(procID).stvec     <- value
+        case 0x105, false   => c_SCSR(procID).stvec     <- legalize_tvec_64(c_SCSR(procID).stvec, value)
+        case 0x105, true    => c_SCSR(procID).stvec     <- legalize_tvec_32(c_SCSR(procID).stvec, value<31:0>)
 
         -- supervisor trap handling
         case 0x140, _       => c_SCSR(procID).sscratch  <- value
@@ -1504,7 +1544,8 @@ component CSRMap(csr::csreg) :: regType
         case 0x303, true    => c_MCSR(procID).mideleg   <- legalize_mideleg_32(c_MCSR(procID).mideleg, value<31:0>)
         case 0x304, false   => c_MCSR(procID).mie       <- legalize_mie_64(c_MCSR(procID).mie, value)
         case 0x304, true    => c_MCSR(procID).mie       <- legalize_mie_32(c_MCSR(procID).mie, value<31:0>)
-        case 0x305, _       => c_MCSR(procID).mtvec     <- value
+        case 0x305, false   => c_MCSR(procID).mtvec     <- legalize_tvec_64(c_MCSR(procID).mtvec, value)
+        case 0x305, true    => c_MCSR(procID).mtvec     <- legalize_tvec_32(c_MCSR(procID).mtvec, value<31:0>)
 
         -- machine trap handling
         case 0x340, _       => c_MCSR(procID).mscratch  <- value
@@ -1901,6 +1942,19 @@ unit signalAddressException(e::ExceptionType, vAddr::vAddr) =
 unit signalEnvCall() =
   signalException(E_Env_Call)
 
+-- Trap vector address
+
+regType tvec_addr(m::mtvec, c::mcause) =
+{ base = [m.BASE : 0b0`2]::regType
+; match [m.MODE]::TrapVectorMode
+  { case TV_Direct => { base }
+    case TV_Vector => { if c.M_Intr
+                        then base + (ZeroExtend(c.M_ExcCause)::regType << 2)
+                        else base
+                      }
+    case _         => #INTERNAL_ERROR("Invalid tvec MODE")
+  }
+}
 
 -- Delegation logic.
 
@@ -1913,18 +1967,6 @@ Privilege excHandlerDelegate(delegate::Privilege, ec_idx::nat) =
                        then User
                        else Supervisor
     case User       => #INTERNAL_ERROR("Exception delegation failure")
-  }
-}
-
-Privilege intHandlerDelegate(delegate::Privilege, int_idx::nat) =
-{ match delegate
-  { case Machine    => if MCSR.&mideleg<int_idx>
-                       then intHandlerDelegate(Supervisor, int_idx)
-                       else Machine
-    case Supervisor => if SCSR.&sideleg<int_idx>
-                       then User
-                       else Supervisor
-    case User       => #INTERNAL_ERROR("Interrupt delegation failure")
   }
 }
 
@@ -1943,7 +1985,7 @@ unit excHandler(intr::bool, ec::exc_code, fromPriv::Privilege, toPriv::Privilege
                        ; MCSR.mtval             <- if IsSome(badaddr)
                                                    then ValOf(badaddr)
                                                    else SignExtend(0b0`1)
-                       ; PC                     <- MCSR.mtvec
+                       ; PC                     <- tvec_addr(MCSR.mtvec, MCSR.mcause)
 
                        ; recordMCauseEPC(MCSR.mcause, epc)
                        ; recordMTval(MCSR.mtval)
@@ -1957,7 +1999,7 @@ unit excHandler(intr::bool, ec::exc_code, fromPriv::Privilege, toPriv::Privilege
                                                    then ValOf(badaddr)
                                                    else SignExtend(0b0`1)
 
-                       ; PC                     <- SCSR.stvec
+                       ; PC                     <- tvec_addr(SCSR.stvec, SCSR.scause)
 
                        ; recordSCauseEPC(SCSR.scause, epc)
                        ; recordSTval(SCSR.stval)
@@ -1970,7 +2012,7 @@ unit excHandler(intr::bool, ec::exc_code, fromPriv::Privilege, toPriv::Privilege
                        ; UCSR.utval             <- if IsSome(badaddr)
                                                    then ValOf(badaddr)
                                                    else SignExtend(0b0`1)
-                       ; PC                     <- UCSR.utvec
+                       ; PC                     <- tvec_addr(UCSR.utvec, UCSR.ucause)
 
                        ; recordMStatus(MCSR.mstatus)
                        }
@@ -1978,62 +2020,60 @@ unit excHandler(intr::bool, ec::exc_code, fromPriv::Privilege, toPriv::Privilege
 ; curPrivilege <- toPriv
 }
 
--- Interrupts are globally enabled if the current privilege level is
--- lower than the interrupt delegatee, or if they are the same and
--- interrupts are enabled for that privilege in mstatus.
-bool globallyEnabled(delegate::Privilege, cur::Privilege) =
-{ match delegate, cur
-  { case Machine,    Machine    => MCSR.mstatus.M_MIE
-    case Machine,    _          => true
-
-    case Supervisor, Supervisor => MCSR.mstatus.M_SIE
-    case Supervisor, User       => true
-    case Supervisor, _          => false
-
-    case User,       User       => MCSR.mstatus.M_UIE
-    case User,       _          => false
-  }
-}
-
 -- Interrupts are prioritized in privilege order, and for each
 -- privilege, in the order: external, software, timers.
 
--- The specification would be nicer if the interrupt indices preserved
--- the priority order, avoiding the need for this inefficient function.
-(InterruptType * Privilege) option nextInterrupt(i::InterruptType) =
-{ match i
-  { case I_M_External => Some(I_M_Software, Machine)
-    case I_M_Software => Some(I_M_Timer,    Machine)
-    case I_M_Timer    => Some(I_S_External, Supervisor)
-
-    case I_S_External => Some(I_S_Software, Supervisor)
-    case I_S_Software => Some(I_S_Timer,    Supervisor)
-    case I_S_Timer    => Some(I_U_External, User)
-
-    case I_U_External => Some(I_U_Software, User)
-    case I_U_Software => Some(I_U_Timer,    User)
-    case I_U_Timer    => None
-  }
-}
-
-(InterruptType * Privilege) option searchDispatchableIntr(i::InterruptType, p::Privilege) =
-{ int_idx = [interruptIndex(i)]::nat
-; -- An interrupt is locally enabled if the interrupt is pending and
-  -- enabled.
-  locallyEnabled = MCSR.&mie<int_idx> and MCSR.&mip<int_idx>
-; delegate = intHandlerDelegate(p, int_idx)
-; if globallyEnabled(delegate, curPrivilege) and locallyEnabled
-  then Some(i, delegate)
-  else { match nextInterrupt(i)
-         { case Some(ni, np) => searchDispatchableIntr(ni, np)
-           case None         => None
-         }
-       }
+InterruptType option searchDispatchableIntr(ip::mip) =
+{ intr = I_M_External
+; idx  = [interruptIndex(intr)]::nat
+; if (&ip)<idx> then Some(intr)
+  else {
+  intr = I_M_Software
+; idx  = [interruptIndex(intr)]::nat
+; if (&ip)<idx> then Some(intr)
+  else {
+  intr = I_M_Timer
+; idx  = [interruptIndex(intr)]::nat
+; if (&ip)<idx> then Some(intr)
+  else {
+  intr = I_S_External
+; idx  = [interruptIndex(intr)]::nat
+; if (&ip)<idx> then Some(intr)
+  else {
+  intr = I_S_Software
+; idx  = [interruptIndex(intr)]::nat
+; if (&ip)<idx> then Some(intr)
+  else {
+  intr = I_S_Timer
+; idx  = [interruptIndex(intr)]::nat
+; if (&ip)<idx> then Some(intr)
+  else None
+  }}}}}
 }
 
 (InterruptType * Privilege) option curInterrupt() =
- if MCSR.&mip == 0 or not MCSR.mstatus.M_MIE then None -- fast path
- else searchDispatchableIntr(I_M_External, Machine)
+{ e_mip = MCSR.&mip && MCSR.&mie
+; if e_mip == 0 or not MCSR.mstatus.M_MIE then None -- fast path
+  else {
+  -- This assumes 'S' mode and no 'N' extension.  It will need
+  -- revision for other configurations (e.g. M/U).
+    m_ip = e_mip && ~MCSR.&mideleg
+  ; s_ip = e_mip &&  MCSR.&mideleg
+
+  -- dispatch in order of decreasing privilege
+  ; if      m_ip != 0 and MCSR.mstatus.M_MIE
+    then match searchDispatchableIntr(mip(m_ip))
+         { case Some(i) => Some(i, Machine)
+           case None    => None
+         }
+    else if s_ip != 0 and MCSR.mstatus.M_SIE
+    then match searchDispatchableIntr(mip(s_ip))
+         { case Some(i) => Some(i, Supervisor)
+           case None    => None
+         }
+    else None
+  }
+}
 
 
 ---------------------------------------------------------------------------
@@ -5813,26 +5853,37 @@ unit checkTimers() =
 }
 
 unit Next =
-{ initDelta ()
-; match Fetch()
-  { case F_Result(w) =>
-    { inst = Decode(w)
-    ; mark_log(LOG_INSN, log_instruction(w, inst))
-    ; Run(inst)
+{ var interrupt = false
+; initDelta ()
+
+-- Interrupts are prioritized above synchronous traps, so first check
+-- if we have a pending interrupt before fetching.
+
+; match curInterrupt()
+  { case Some(i, delegateePriv) =>
+    { interrupt <- true
+    ; excHandler(true, interruptIndex(i), curPrivilege, delegateePriv, PC, None)
     }
-    case F_Error(inst) =>
-    { mark_log(LOG_INSN, log_instruction([0::word], inst))
-    ; Run(inst)
-    }
+    case None =>
+      match Fetch()
+      { case F_Result(w) =>
+        { inst = Decode(w)
+        ; mark_log(LOG_INSN, log_instruction(w, inst))
+        ; Run(inst)
+        }
+        case F_Error(inst) =>
+        { mark_log(LOG_INSN, log_instruction([0::word], inst))
+        ; Run(inst)
+        }
+      }
   }
 
 ; tickClock()
 
-  -- Interrupts are prioritized above synchronous traps.
-; match NextFetch, curInterrupt()
-  { case _, Some(i, delegate) =>
-               excHandler(true, interruptIndex(i), curPrivilege, delegate, PC, None)
-    case Some(Trap(e)), None =>
+  -- fetch only if we are not handling an interrupt
+; if interrupt then ()
+  else match NextFetch
+  { case Some(Trap(e)) =>
              { NextFetch <- None
              ; excIdx = match e.trap
                         { case E_Env_Call => -- convert into privilege-appropriate
@@ -5847,7 +5898,7 @@ unit Next =
              ; delegate = excHandlerDelegate(Machine, [excIdx]::nat)
              ; excHandler(false, excIdx, curPrivilege, delegate, PC, e.badaddr)
              }
-    case Some(Uret), None =>
+    case Some(Uret) =>
              { NextFetch    <- None
              ; mark_log(LOG_INSN, ["ret-ing from " : privName(curPrivilege)
                                    : " to " : privName(User)])
@@ -5857,7 +5908,7 @@ unit Next =
 
              ; recordMStatus(MCSR.mstatus)
              }
-    case Some(Sret), None =>
+    case Some(Sret) =>
              { NextFetch    <- None
              ; mark_log(LOG_INSN, ["ret-ing from " : privName(curPrivilege)
                                    : " to " : privName(if MCSR.mstatus.M_SPP then Supervisor else User)])
@@ -5867,7 +5918,7 @@ unit Next =
 
              ; recordMStatus(MCSR.mstatus)
              }
-    case Some(Mret), None =>
+    case Some(Mret) =>
              { NextFetch    <- None
              ; mark_log(LOG_INSN, ["ret-ing from " : privName(curPrivilege)
                                    : " to " : privName(privilege(MCSR.mstatus.M_MPP))])
@@ -5877,13 +5928,13 @@ unit Next =
 
              ; recordMStatus(MCSR.mstatus)
              }
-    case Some(BranchTo(pc)), None =>
+    case Some(BranchTo(pc)) =>
              { incrInstret()
              ; NextFetch    <- None
              ; PC           <- pc
              -- mstatus should not have changed, preserve previous value in the delta
              }
-    case None, None =>
+    case None =>
              { incrInstret()
              ; PC           <- PC + 4
              -- mstatus could have changed due to a csr write
@@ -5934,7 +5985,7 @@ unit initMachine(hartid::id) =
   -- Setup hartid
 ; MCSR.mhartid      <- ZeroExtend(hartid)
   -- Initialize mtvec to lower address (other option is 0xF...FFE00)
-; MCSR.mtvec        <- ZeroExtend(0x100`16)
+; MCSR.&mtvec       <- ZeroExtend(0x100`16)
 }
 -- This initializes each core (via setting procID appropriately) on
 -- startup before execution begins.
