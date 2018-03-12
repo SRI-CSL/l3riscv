@@ -1919,15 +1919,11 @@ regType tvec_addr(m::mtvec, c::mcause) =
 -- Delegation logic.
 
 Privilege excHandlerDelegate(delegate::Privilege, ec_idx::nat) =
-{ match delegate
-  { case Machine    => if MCSR.&medeleg<ec_idx>
-                       then excHandlerDelegate(Supervisor, ec_idx)
-                       else Machine
-    case Supervisor => if SCSR.&sedeleg<ec_idx>
-                       then User
-                       else Supervisor
-    case User       => #INTERNAL_ERROR("Exception delegation failure")
-  }
+{ super = MCSR.&medeleg<ec_idx>
+; user  = super and SCSR.&sedeleg<ec_idx>
+; if MCSR.misa.N and user then User
+  else if MCSR.misa.S and super then Supervisor
+  else Machine
 }
 
 -- Handling logic.
