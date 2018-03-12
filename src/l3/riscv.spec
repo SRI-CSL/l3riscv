@@ -4841,7 +4841,9 @@ define System > URET   =
 define System > SRET   =
 { match curPrivilege
   { case Machine    => NextFetch <- Some(Sret)
-    case Supervisor => NextFetch <- Some(Sret)
+    case Supervisor => if MCSR.mstatus.M_TSR
+                       then signalException(E_Illegal_Instr)
+                       else NextFetch <- Some(Sret)
     case User       => signalException(E_Illegal_Instr)
   }
 }
