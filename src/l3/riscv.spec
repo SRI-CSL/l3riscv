@@ -1913,12 +1913,9 @@ Privilege excHandlerDelegate(e::ExceptionType) =
 { eidx  = [e]::nat
 ; super = MCSR.&medeleg<eidx>
 ; user  = super and SCSR.&sedeleg<eidx>
-; delg  = if      MCSR.misa.N and user  then User
-          else if MCSR.misa.S and super then Supervisor
-          else                               Machine
-; mark_log(LOG_INSN, ["exception " : [e]::string : " (#" : [eidx]::string : ")"
-                      : " delegated to " : privName(delg)])
-; delg
+; if      MCSR.misa.N and user  then User
+  else if MCSR.misa.S and super then Supervisor
+  else                               Machine
 }
 
 -- Handling logic.
@@ -1926,7 +1923,7 @@ Privilege excHandlerDelegate(e::ExceptionType) =
 unit excHandler(intr::bool, ec::exc_code, fromPriv::Privilege, toPriv::Privilege,
                 epc::regType, badaddr::vAddr option) =
 { mark_log(LOG_INSN, ["trapping from " : privName(fromPriv) : " to " : privName(toPriv) :
-                      " at pc " : [epc] : (if intr then " intr:" else " exc:") : [[ec]::nat] :
+                      " at pc " : [epc] : (if intr then " intr:#" else " exc:#") : [[ec]::nat] :
                       [if IsSome(badaddr) then [" tval:" : [ValOf(badaddr)]] else ""]])
 ; match toPriv
   { case Machine    => { MCSR.mstatus           <- menter(MCSR.mstatus, fromPriv)
@@ -2198,14 +2195,16 @@ register memPerm :: permType
 
 bool checkMemPermission(ac::accessType, priv::Privilege, mxr::bool, sum::bool, p::memPerm) =
 { match ac, priv
-  { case Read,      User        => (p.Mem_R or (mxr and p.Mem_X)) and p.Mem_U
-    case Write,     User        => p.Mem_W and p.Mem_U
-    case ReadWrite, User        => (p.Mem_R or (mxr and p.Mem_X)) and p.Mem_W and p.Mem_U
-    case Execute,   User        => p.Mem_X and p.Mem_U
-    case Read,      Supervisor  => (p.Mem_R or (mxr and p.Mem_X)) and (!p.Mem_U or sum)
-    case Write,     Supervisor  => p.Mem_W and (!p.Mem_U or sum)
-    case ReadWrite, Supervisor  => (p.Mem_R or (mxr and p.Mem_X)) and p.Mem_W and (!p.Mem_U or sum)
-    case Execute,   Supervisor  => p.Mem_X and !p.Mem_U
+  { case Read,      User        => p.Mem_U            and (p.Mem_R or (mxr and p.Mem_X))
+    case Write,     User        => p.Mem_U            and p.Mem_W
+    case ReadWrite, User        => p.Mem_U            and (p.Mem_R or (mxr and p.Mem_X)) and p.Mem_W
+    case Execute,   User        => p.Mem_U            and p.Mem_X
+
+    case Read,      Supervisor  => (!p.Mem_U or sum)  and (p.Mem_R or (mxr and p.Mem_X))
+    case Write,     Supervisor  => (!p.Mem_U or sum)  and p.Mem_W
+    case ReadWrite, Supervisor  => (!p.Mem_U or sum)  and (p.Mem_R or (mxr and p.Mem_X)) and p.Mem_W
+    case Execute,   Supervisor  => !p.Mem_U           and p.Mem_X
+
     case _,         Machine     => #INTERNAL_ERROR("machine mem perm check")    -- should not happen
   }
 }
@@ -2504,18 +2503,18 @@ walk39(vaddr::vaddr39, ac::accessType, priv::Privilege, mxr::bool, sum::bool,
 ; pte_addr  = ptb + pt_ofs
 ; pte       = SV39_PTE(rawReadData(ZeroExtend(pte_addr)))
 ; mperm     = memPerm(pte.PTE39_PERM)
-; mark_log(LOG_ADDRTR, ["walk32(vaddr=0x" : PadLeft(#"0", 16, [&va]) : "): level=" : [level]
+; mark_log(LOG_ADDRTR, ["walk39(vaddr=0x" : PadLeft(#"0", 16, [&va]) : "): level=" : [level]
                         : " pt_base=0x" : PadLeft(#"0", 16, [ptb])
                         : " pt_ofs=" : [[pt_ofs]::nat]
                         : " pte_addr=0x" : PadLeft(#"0", 16, [pte_addr])
                         : " pte=0x" : PadLeft(#"0", 16, [&pte])])
-; if (not pte.PTE39_V)
+; if   (not pte.PTE39_V) or (mperm.Mem_W and not mperm.Mem_R)
   then { mark_log(LOG_ADDRTR, "walk39: invalid PTE")
        ; None
        }
-  else { if isPTEPtr(&mperm)
+  else { if   isPTEPtr(&mperm)
          then { -- ptr to next level
-                if level == 0
+                if   level == 0
                 then { mark_log(LOG_ADDRTR, "last-level PTE contains a pointer!")
                      ; None
                      }
@@ -2523,15 +2522,16 @@ walk39(vaddr::vaddr39, ac::accessType, priv::Privilege, mxr::bool, sum::bool,
                             ZeroExtend(pte.PTE39_PPNi << PAGESIZE_BITS), level - 1, global or pte.PTE39_G)
               }
          else { -- leaf PTE
-                if not checkMemPermission(ac, priv, mxr, sum, mperm)
+                if   not checkMemPermission(ac, priv, mxr, sum, mperm)
                 then { mark_log(LOG_ADDRTR, "PTE permission check failure!")
                      ; None
                      }
                 else { -- compute translated address
-                       ppn = if level > 0
-                             then ((ZeroExtend((pte.PTE39_PPNi >>+ (level * PPN39_LEVEL_BITS))
-                                               << (level * PPN39_LEVEL_BITS)))
-                                   || ZeroExtend(va.VA39_VPNi && ((1 << (level * VPN39_LEVEL_BITS)) - 1)))
+                       ppn = if   level > 0
+                             then -- TODO: check for mis-aligned superpage
+                                 ((ZeroExtend((pte.PTE39_PPNi >>+ (level * PPN39_LEVEL_BITS))
+                                              << (level * PPN39_LEVEL_BITS)))
+                                  || ZeroExtend(va.VA39_VPNi && ((1 << (level * VPN39_LEVEL_BITS)) - 1)))
                              else pte.PTE39_PPNi
                      ; Some(ZeroExtend(ppn : va.VA39_PgOfs), pte, pte_addr, level, global or pte.PTE39_G)
                      }
@@ -2543,7 +2543,7 @@ walk39(vaddr::vaddr39, ac::accessType, priv::Privilege, mxr::bool, sum::bool,
 SV39_PTE option updatePTE39(pte::SV39_PTE, ac::accessType) =
 { d_update = (ac == Write or ac == ReadWrite) and (not pte.PTE39_D)
 ; a_update = not pte.PTE39_A
-; if d_update or a_update
+; if   d_update or a_update
   then { var pte_w = pte
        ; pte_w.PTE39_A <- true
        ; when d_update do pte_w.PTE39_D <- true
@@ -2651,7 +2651,7 @@ paddr39 option translate39(vAddr::vaddr39, ac::accessType, priv::Privilege, mxr:
 { asid = curAsid64()
 ; match lookupTLB39(asid, vAddr, TLB39)
   { case Some(ent, idx) =>
-    { if checkMemPermission(ac, priv, mxr, sum, memPerm(ent.pte_39.PTE39_PERM))
+    { if   checkMemPermission(ac, priv, mxr, sum, memPerm(ent.pte_39.PTE39_PERM))
       then { mark_log(LOG_ADDRTR, "TLB39 hit!")
            -- update dirty bit in page table and TLB if needed
            ; pte_new = updatePTE39(ent.pte_39, ac)
@@ -2687,10 +2687,10 @@ paddr39 option translate39(vAddr::vaddr39, ac::accessType, priv::Privilege, mxr:
 -- However, we should not check M_SXL if we don't need to, since it
 -- may not have a valid value if we are in pure M-mode.
 SATP_Mode translationMode(priv::Privilege) =
-    if priv == Machine then Sbare -- no translation
+    if   priv == Machine then Sbare -- no translation
     else { arch = architecture(MCSR.mstatus.M_SXL)
          ; match arch
-           { case RV32  => if satp32(SCSR.satp<31:0>).SATP32_MODE
+           { case RV32  => if   satp32(SCSR.satp<31:0>).SATP32_MODE
                            then Sv32 else Sbare
              case RV64  => satpMode_ofbits(satp64(SCSR.satp).SATP64_MODE, arch)
              case RV128 => #UNDEFINED("Unsupported address translation arch: "
@@ -2705,7 +2705,7 @@ SATP_Mode translationMode(priv::Privilege) =
 pAddr option translateAddr(vAddr::regType, ac::accessType, ft::fetchType) =
 { priv = match ft
          { case Instruction => curPrivilege
-           case Data        => if MCSR.mstatus.M_MPRV
+           case Data        => if   MCSR.mstatus.M_MPRV
                                then privilege(MCSR.mstatus.M_MPP)
                                else curPrivilege
          }
