@@ -791,6 +791,8 @@ register satp64 :: regType
 , 43-0  : SATP64_PPN
 }
 
+-- TODO: legalization of writes to satp
+
 record SupervisorCSR
 {                               -- trap setup
   -- sstatus is a restricted view of mstatus
@@ -1470,7 +1472,6 @@ component CSRMap(csr::csreg) :: regType
         case 0x144, true    => c_MCSR(procID).mip       <- legalize_sip_32(c_MCSR(procID).mip, c_MCSR(procID).mideleg, value<31:0>)
 
         -- supervisor protection and translation
-        -- TODO: does this update flush the TLB cache?  does it flush the data cache?
         case 0x180, false   => c_SCSR(procID).satp      <- &satp64(value)
         case 0x180, true    => c_SCSR(procID).satp      <- SignExtend(&satp32(value<31:0>))
 
@@ -2212,6 +2213,13 @@ bool checkMemPermission(ac::accessType, priv::Privilege, mxr::bool, sum::bool, p
 bool isPTEPtr(perm::permType)      = perm<2:0> == 0
 bool isInvalidMemPerm(mp::memPerm) = mp.Mem_W and not mp.Mem_R
 
+-- implementation options
+
+declare enable_dirty_update :: bool
+-- if true, the page-table walker updates PTEs when needed.
+-- if false, a page-fault exception is thrown instead.
+
+
 -- Sv32 memory translation
 --------------------------
 
@@ -2656,15 +2664,27 @@ paddr39 option translate39(vAddr::vaddr39, ac::accessType, priv::Privilege, mxr:
   { case Some(ent, idx) =>
     { if   checkMemPermission(ac, priv, mxr, sum, memPerm(ent.pte_39.PTE39_PERM))
       then { mark_log(LOG_ADDRTR, "TLB39 hit!")
-           -- update dirty bit in page table and TLB if needed
-           ; pte_new = updatePTE39(ent.pte_39, ac)
-           ; when IsSome(pte_new)
-             do { rawWriteData(ZeroExtend(ent.pteAddr_39), ZeroExtend(ent.&pte_39), 8)
-                ; var tlb = TLB39
-                ; tlb([idx]) <- Some(ent)
-                ; TLB39 <- tlb
-                }
-           ; Some(ent.pAddr_39 || ZeroExtend(vAddr && ent.vAddrMask_39))
+           ; match updatePTE39(ent.pte_39, ac)
+             { case None =>
+                  Some(ent.pAddr_39 || ZeroExtend(vAddr && ent.vAddrMask_39))
+               case Some(pte) =>
+               { if   enable_dirty_update
+                 then { var new_ent = ent
+                      ; var tlb     = TLB39
+                      -- update entry and TLB
+                      ; new_ent.pte_39  <- pte
+                      ; tlb([idx])      <- Some(new_ent)
+                      ; TLB39           <- tlb
+                      -- update memory
+                      ; rawWriteData(ZeroExtend(ent.pteAddr_39), &pte, 8)
+                      -- done
+                      ; Some(new_ent.pAddr_39 || ZeroExtend(vAddr && new_ent.vAddrMask_39))
+                      }
+                 else { mark_log(LOG_ADDRTR, "tlb/pte needs dirty/accessed update!")
+                      ; None
+                      }
+               }
+             }
            }
       else { mark_log(LOG_ADDRTR, "TLB39 permission check failure")
            ; None
@@ -2673,11 +2693,26 @@ paddr39 option translate39(vAddr::vaddr39, ac::accessType, priv::Privilege, mxr:
     case None =>
     { mark_log(LOG_ADDRTR, "TLB39 miss!")
     ; match walk39(vAddr, ac, priv, mxr, sum, curPTB39(), level, false)
-      { case Some(pAddr, pte, pteAddr, i, global)  =>
-        { TLB39 <- addToTLB39(asid, vAddr, pAddr, pte, pteAddr, i, global, TLB39)
-        ; Some(pAddr)
+      { case None =>
+          None
+        case Some(pAddr, pte, pteAddr, i, global) =>
+        { match updatePTE39(pte, ac)
+          { case None =>
+            { TLB39 <- addToTLB39(asid, vAddr, pAddr, pte, pteAddr, i, global, TLB39)
+            ; Some(pAddr)
+            }
+            case Some(pte) =>
+            { if   enable_dirty_update
+              then { rawWriteData(ZeroExtend(pteAddr), &pte, 8)
+                   ; TLB39 <- addToTLB39(asid, vAddr, pAddr, pte, pteAddr, i, global, TLB39)
+                   ; Some(pAddr)
+                   }
+              else { mark_log(LOG_ADDRTR, "pte needs dirty/accessed update!")
+                   ; None
+                   }
+            }
+          }
         }
-        case None   => None
       }
     }
   }

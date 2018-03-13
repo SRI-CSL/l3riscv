@@ -346,6 +346,7 @@ fun initPlatform cores =
     ; riscv.initMem (BitsN.fromInt
                          ((if !check then 0xaaaaaaaaAAAAAAAA else 0x0)
                          , 64))
+    ; riscv.enable_dirty_update := true
     ; if   !check
       then setChecker (Oracle.init ("RV64IMAFD"))
       else ()
