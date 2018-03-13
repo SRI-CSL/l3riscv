@@ -85,7 +85,7 @@ holspec: ${L3SRC}
 	echo 'HolExport.spec ("${L3SRC}", "${HOLSRCDIR}/riscv")' | l3
 
 clean:
-	rm -f l3riscv libl3riscv.so
+	rm -f l3riscv.poly l3riscv.mlton libl3riscv.so
 	rm -f tv_spike.so
 	rm -f ${SMLSRCDIR}/riscv.sig ${SMLSRCDIR}/riscv.sml
 	rm -f ${ILSRCDIR}/riscv.l3
