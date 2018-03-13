@@ -3258,8 +3258,8 @@ define Branch > BGEU(rs1::reg, rs2::reg, offs::imm12) =
 define Load > LW(rd::reg, rs1::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
 ; match translateAddr(vAddr, Read, Data)
-  { case Some(pAddr) => { val       = SignExtend(rawReadData(pAddr)<31:0>)
-                        ; GPR(rd)  <- val
+  { case Some(pAddr) => { val = SignExtend(rawReadData(pAddr)<31:0>)
+                        ; writeRD(rd, val)
                         ; recordLoad(vAddr, val, WORD)
                         }
     case None        => signalAddressException(E_Load_Page_Fault, vAddr)
@@ -3274,8 +3274,8 @@ define Load > LWU(rd::reg, rs1::reg, offs::imm12) =
   then signalException(E_Illegal_Instr)
   else { vAddr = GPR(rs1) + SignExtend(offs)
        ; match translateAddr(vAddr, Read, Data)
-         { case Some(pAddr) => { val        = ZeroExtend(rawReadData(pAddr)<31:0>)
-                               ; GPR(rd)   <- val
+         { case Some(pAddr) => { val = ZeroExtend(rawReadData(pAddr)<31:0>)
+                               ; writeRD(rd, val)
                                ; recordLoad(vAddr, val, WORD)
                                }
            case None        => signalAddressException(E_Load_Page_Fault, vAddr)
@@ -3289,8 +3289,8 @@ define Load > LWU(rd::reg, rs1::reg, offs::imm12) =
 define Load > LH(rd::reg, rs1::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
 ; match translateAddr(vAddr, Read, Data)
-  { case Some(pAddr) => { val       = SignExtend(rawReadData(pAddr)<15:0>)
-                        ; GPR(rd)  <- val
+  { case Some(pAddr) => { val = SignExtend(rawReadData(pAddr)<15:0>)
+                        ; writeRD(rd, val)
                         ; recordLoad(vAddr, val, HALFWORD)
                         }
     case None        => signalAddressException(E_Load_Page_Fault, vAddr)
@@ -3303,8 +3303,8 @@ define Load > LH(rd::reg, rs1::reg, offs::imm12) =
 define Load > LHU(rd::reg, rs1::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
 ; match translateAddr(vAddr, Read, Data)
-  { case Some(pAddr) => { val       = ZeroExtend(rawReadData(pAddr)<15:0>)
-                        ; GPR(rd)  <- val
+  { case Some(pAddr) => { val = ZeroExtend(rawReadData(pAddr)<15:0>)
+                        ; writeRD(rd, val)
                         ; recordLoad(vAddr, val, HALFWORD)
                         }
     case None        => signalAddressException(E_Load_Page_Fault, vAddr)
@@ -3317,8 +3317,8 @@ define Load > LHU(rd::reg, rs1::reg, offs::imm12) =
 define Load > LB(rd::reg, rs1::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
 ; match translateAddr(vAddr, Read, Data)
-  { case Some(pAddr) => { val       = SignExtend(rawReadData(pAddr)<7:0>)
-                        ; GPR(rd)  <- val
+  { case Some(pAddr) => { val = SignExtend(rawReadData(pAddr)<7:0>)
+                        ; writeRD(rd, val)
                         ; recordLoad(vAddr, val, BYTE)
                         }
     case None        => signalAddressException(E_Load_Page_Fault, vAddr)
@@ -3331,8 +3331,8 @@ define Load > LB(rd::reg, rs1::reg, offs::imm12) =
 define Load > LBU(rd::reg, rs1::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
 ; match translateAddr(vAddr, Read, Data)
-  { case Some(pAddr) => { val       = ZeroExtend(rawReadData(pAddr)<7:0>)
-                        ; GPR(rd)  <- val
+  { case Some(pAddr) => { val = ZeroExtend(rawReadData(pAddr)<7:0>)
+                        ; writeRD(rd, val)
                         ; recordLoad(vAddr, val, BYTE)
                         }
     case None        => signalAddressException(E_Load_Page_Fault, vAddr)
@@ -3347,8 +3347,8 @@ define Load > LD(rd::reg, rs1::reg, offs::imm12) =
     then signalException(E_Illegal_Instr)
     else { vAddr = GPR(rs1) + SignExtend(offs)
          ; match translateAddr(vAddr, Read, Data)
-           { case Some(pAddr) => { val      = rawReadData(pAddr)
-                                 ; GPR(rd) <- val
+           { case Some(pAddr) => { val = rawReadData(pAddr)
+                                 ; writeRD(rd, val)
                                  ; recordLoad(vAddr, val, DOUBLEWORD)
                                  }
              case None        => signalAddressException(E_Load_Page_Fault, vAddr)
@@ -3513,7 +3513,7 @@ define AMO > AMOSWAP_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
                              ; data = GPR(rs2)
-                             ; GPR(rd) <- memv
+                             ; writeRD(rd, memv)
                              ; rawWriteData(pAddr, data, 4)
                              ; recordLoad(vAddr, memv, WORD)
                              ; recordAMOStore(vAddr, data, WORD)
@@ -3532,7 +3532,7 @@ define AMO > AMOSWAP_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = rawReadData(pAddr)
                              ; data = GPR(rs2)
-                             ; GPR(rd) <- memv
+                             ; writeRD(rd, memv)
                              ; rawWriteData(pAddr, data, 8)
                              ; recordLoad(vAddr, memv, DOUBLEWORD)
                              ; recordAMOStore(vAddr, data, DOUBLEWORD)
@@ -3551,8 +3551,8 @@ define AMO > AMOADD_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
                              ; data = GPR(rs2)
-                             ; GPR(rd) <- memv
                              ; val  = data + memv
+                             ; writeRD(rd, memv)
                              ; rawWriteData(pAddr, val, 4)
                              ; recordLoad(vAddr, memv, WORD)
                              ; recordAMOStore(vAddr, val, WORD)
@@ -3571,8 +3571,8 @@ define AMO > AMOADD_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = rawReadData(pAddr)
                              ; data = GPR(rs2)
-                             ; GPR(rd) <- memv
                              ; val  = data + memv
+                             ; writeRD(rd, memv)
                              ; rawWriteData(pAddr, val, 8)
                              ; recordLoad(vAddr, memv, DOUBLEWORD)
                              ; recordAMOStore(vAddr, val, DOUBLEWORD)
@@ -3591,8 +3591,8 @@ define AMO > AMOXOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
                              ; data = GPR(rs2)
-                             ; GPR(rd) <- memv
                              ; val  = data ?? memv
+                             ; writeRD(rd, memv)
                              ; rawWriteData(pAddr, val, 4)
                              ; recordLoad(vAddr, memv, WORD)
                              ; recordAMOStore(vAddr, val, WORD)
@@ -3611,8 +3611,8 @@ define AMO > AMOXOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = rawReadData(pAddr)
                              ; data = GPR(rs2)
-                             ; GPR(rd) <- memv
                              ; val  = data ?? memv
+                             ; writeRD(rd, memv)
                              ; rawWriteData(pAddr, val, 8)
                              ; recordLoad(vAddr, memv, DOUBLEWORD)
                              ; recordAMOStore(vAddr, val, DOUBLEWORD)
@@ -3631,8 +3631,8 @@ define AMO > AMOAND_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
                              ; data = GPR(rs2)
-                             ; GPR(rd) <- memv
                              ; val  = data && memv
+                             ; writeRD(rd, memv)
                              ; rawWriteData(pAddr, val, 4)
                              ; recordLoad(vAddr, memv, WORD)
                              ; recordAMOStore(vAddr, val, WORD)
@@ -3651,8 +3651,8 @@ define AMO > AMOAND_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = rawReadData(pAddr)
                              ; data = GPR(rs2)
-                             ; GPR(rd) <- memv
                              ; val  = data && memv
+                             ; writeRD(rd, memv)
                              ; rawWriteData(pAddr, val, 8)
                              ; recordLoad(vAddr, memv, DOUBLEWORD)
                              ; recordAMOStore(vAddr, val, DOUBLEWORD)
@@ -3671,8 +3671,8 @@ define AMO > AMOOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
                              ; data = GPR(rs2)
-                             ; GPR(rd) <- memv
                              ; val  = data || memv
+                             ; writeRD(rd, memv)
                              ; rawWriteData(pAddr, val, 4)
                              ; recordLoad(vAddr, memv, WORD)
                              ; recordAMOStore(vAddr, val, WORD)
@@ -3691,8 +3691,8 @@ define AMO > AMOOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = rawReadData(pAddr)
                              ; data = GPR(rs2)
-                             ; GPR(rd) <- memv
                              ; val  = data || memv
+                             ; writeRD(rd, memv)
                              ; rawWriteData(pAddr, val, 8)
                              ; recordLoad(vAddr, memv, DOUBLEWORD)
                              ; recordAMOStore(vAddr, val, DOUBLEWORD)
@@ -3711,8 +3711,8 @@ define AMO > AMOMIN_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
                              ; data = GPR(rs2)
-                             ; GPR(rd) <- memv
                              ; val  = SignedMin(data, memv)
+                             ; writeRD(rd, memv)
                              ; rawWriteData(pAddr, val, 4)
                              ; recordLoad(vAddr, memv, WORD)
                              ; recordAMOStore(vAddr, val, WORD)
@@ -3731,8 +3731,8 @@ define AMO > AMOMIN_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = rawReadData(pAddr)
                              ; data = GPR(rs2)
-                             ; GPR(rd) <- memv
                              ; val  = SignedMin(data, memv)
+                             ; writeRD(rd, memv)
                              ; rawWriteData(pAddr, val, 8)
                              ; recordLoad(vAddr, memv, DOUBLEWORD)
                              ; recordAMOStore(vAddr, val, DOUBLEWORD)
@@ -3751,8 +3751,8 @@ define AMO > AMOMAX_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
                              ; data = GPR(rs2)
-                             ; GPR(rd) <- memv
                              ; val  = SignedMax(data, memv)
+                             ; writeRD(rd, memv)
                              ; rawWriteData(pAddr, val, 4)
                              ; recordLoad(vAddr, memv, WORD)
                              ; recordAMOStore(vAddr, val, WORD)
@@ -3771,8 +3771,8 @@ define AMO > AMOMAX_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = rawReadData(pAddr)
                              ; data = GPR(rs2)
-                             ; GPR(rd) <- memv
                              ; val  = SignedMax(data, memv)
+                             ; writeRD(rd, memv)
                              ; rawWriteData(pAddr, val, 8)
                              ; recordLoad(vAddr, memv, DOUBLEWORD)
                              ; recordAMOStore(vAddr, val, DOUBLEWORD)
@@ -3791,8 +3791,8 @@ define AMO > AMOMINU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
                              ; data = GPR(rs2)
-                             ; GPR(rd) <- memv
                              ; val  = Min(data, memv)
+                             ; writeRD(rd, memv)
                              ; rawWriteData(pAddr, val, 4)
                              ; recordLoad(vAddr, memv, WORD)
                              ; recordAMOStore(vAddr, val, WORD)
@@ -3811,8 +3811,8 @@ define AMO > AMOMINU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = rawReadData(pAddr)
                              ; data = GPR(rs2)
-                             ; GPR(rd) <- memv
                              ; val  = Min(data, memv)
+                             ; writeRD(rd, memv)
                              ; rawWriteData(pAddr, val, 8)
                              ; recordLoad(vAddr, memv, DOUBLEWORD)
                              ; recordAMOStore(vAddr, val, DOUBLEWORD)
@@ -3831,8 +3831,8 @@ define AMO > AMOMAXU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
                              ; data = GPR(rs2)
-                             ; GPR(rd) <- memv
                              ; val  = Max(data, memv)
+                             ; writeRD(rd, memv)
                              ; rawWriteData(pAddr, val, 4)
                              ; recordLoad(vAddr, memv, WORD)
                              ; recordAMOStore(vAddr, val, WORD)
@@ -3851,8 +3851,8 @@ define AMO > AMOMAXU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = rawReadData(pAddr)
                              ; data = GPR(rs2)
-                             ; GPR(rd) <- memv
                              ; val  = Max(data, memv)
+                             ; writeRD(rd, memv)
                              ; rawWriteData(pAddr, val, 8)
                              ; recordLoad(vAddr, memv, DOUBLEWORD)
                              ; recordAMOStore(vAddr, val, DOUBLEWORD)
@@ -3877,8 +3877,8 @@ define FPLoad > FLW(rd::reg, rs1::reg, offs::imm12) =
   then signalException(E_Illegal_Instr)
   else { vAddr = GPR(rs1) + SignExtend(offs)
        ; match translateAddr(vAddr, Read, Data)
-         { case Some(pAddr) => { val       = rawReadData(pAddr)<31:0>
-                               ; FPRS(rd) <- val
+         { case Some(pAddr) => { val = rawReadData(pAddr)<31:0>
+                               ; writeFPRS(rd, val)
                                ; recordLoad(vAddr, ZeroExtend(val), WORD)
                                }
            case None        => signalAddressException(E_Load_Page_Fault, vAddr)
@@ -4239,7 +4239,7 @@ define FConv > FSGNJX_S(rd::reg, rs1::reg, rs2::reg) =
 define FConv > FMV_X_S(rd::reg, rs::reg) =
     if   not canDoFPSingle()
     then signalException(E_Illegal_Instr)
-    else GPR(rd) <- SignExtend(FPRS(rs))
+    else writeRD(rd, SignExtend(FPRS(rs)))
 
 -----------------------------------
 -- FMV.S.X   rd, rs
@@ -4364,8 +4364,8 @@ define FPLoad > FLD(rd::reg, rs1::reg, offs::imm12) =
   then signalException(E_Illegal_Instr)
   else { vAddr = GPR(rs1) + SignExtend(offs)
        ; match translateAddr(vAddr, Read, Data)
-                   { case Some(pAddr) => { val       = rawReadData(pAddr)
-                                         ; FPRD(rd) <- val
+                   { case Some(pAddr) => { val = rawReadData(pAddr)
+                                         ; writeFPRD(rd, val)
                                          ; recordLoad(vAddr, val, DOUBLEWORD)
                                          }
                      case None        => signalAddressException(E_Load_Page_Fault, vAddr)
@@ -4749,7 +4749,7 @@ define FConv > FSGNJX_D(rd::reg, rs1::reg, rs2::reg) =
 define FConv > FMV_X_D(rd::reg, rs::reg) =
     if   not canDoFPDouble()
     then signalException(E_Illegal_Instr)
-    else GPR(rd) <- SignExtend(FPRD(rs))
+    else writeRD(rd, SignExtend(FPRD(rs)))
 
 -----------------------------------
 -- FMV.D.X   rd, rs
