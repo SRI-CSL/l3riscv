@@ -2715,11 +2715,11 @@ pAddr option translateAddr(vAddr::regType, ac::accessType, ft::fetchType) =
 ; match mode
   { case Sbare  => Some(vAddr)  -- no translation
 
-    case Sv32   => match translate32(vAddr<31:0>, ac, priv, mxr, sum, SV32_LEVELS)
+    case Sv32   => match translate32(vAddr<31:0>, ac, priv, mxr, sum, SV32_LEVELS - 1)
                    { case Some(pa32)  => Some(ZeroExtend(pa32))
                      case None        => None
                    }
-    case Sv39   => match translate39(vAddr<38:0>, ac, priv, mxr, sum, SV39_LEVELS)
+    case Sv39   => match translate39(vAddr<38:0>, ac, priv, mxr, sum, SV39_LEVELS - 1)
                    { case Some(pa39)  => Some(ZeroExtend(pa39))
                      case None        => None
                    }
