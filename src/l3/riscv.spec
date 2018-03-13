@@ -2209,7 +2209,8 @@ bool checkMemPermission(ac::accessType, priv::Privilege, mxr::bool, sum::bool, p
   }
 }
 
-bool isPTEPtr(perm::permType) = perm<2:0> == 0
+bool isPTEPtr(perm::permType)      = perm<2:0> == 0
+bool isInvalidMemPerm(mp::memPerm) = mp.Mem_W and not mp.Mem_R
 
 -- Sv32 memory translation
 --------------------------
@@ -2456,10 +2457,9 @@ paddr32 option translate32(vAddr::vaddr32, ac::accessType, priv::Privilege, mxr:
 -- Sv39 memory translation
 --------------------------
 
-nat VPN39_LEVEL_BITS  = 9
-nat PPN39_LEVEL_BITS  = 9
-nat PTE39_LOG_SIZE    = 3
-nat SV39_LEVELS       = 3
+nat SV39_LEVEL_BITS = 9
+nat SV39_LEVELS     = 3
+nat PTE39_LOG_SIZE  = 3
 
 type vaddr39  = bits(39)
 type paddr39  = bits(56)
@@ -2499,7 +2499,7 @@ paddr39 curPTB39() =
 walk39(vaddr::vaddr39, ac::accessType, priv::Privilege, mxr::bool, sum::bool,
        ptb::paddr39, level::nat, global::bool) =
 { va        = SV39_Vaddr(vaddr)
-; pt_ofs    = ZeroExtend((va.VA39_VPNi >>+ (level * VPN39_LEVEL_BITS))<(VPN39_LEVEL_BITS-1):0>) << PTE39_LOG_SIZE
+; pt_ofs    = ZeroExtend((va.VA39_VPNi >>+ (level * SV39_LEVEL_BITS))<(SV39_LEVEL_BITS-1):0>) << PTE39_LOG_SIZE
 ; pte_addr  = ptb + pt_ofs
 ; pte       = SV39_PTE(rawReadData(ZeroExtend(pte_addr)))
 ; mperm     = memPerm(pte.PTE39_PERM)
@@ -2508,8 +2508,8 @@ walk39(vaddr::vaddr39, ac::accessType, priv::Privilege, mxr::bool, sum::bool,
                         : " pt_ofs=" : [[pt_ofs]::nat]
                         : " pte_addr=0x" : PadLeft(#"0", 16, [pte_addr])
                         : " pte=0x" : PadLeft(#"0", 16, [&pte])])
-; if   (not pte.PTE39_V) or (mperm.Mem_W and not mperm.Mem_R)
-  then { mark_log(LOG_ADDRTR, "walk39: invalid PTE")
+; if   (not pte.PTE39_V) or isInvalidMemPerm(mperm)
+  then { mark_log(LOG_ADDRTR, "walk39: invalid PTE!")
        ; None
        }
   else { if   isPTEPtr(&mperm)
@@ -2526,14 +2526,17 @@ walk39(vaddr::vaddr39, ac::accessType, priv::Privilege, mxr::bool, sum::bool,
                 then { mark_log(LOG_ADDRTR, "PTE permission check failure!")
                      ; None
                      }
-                else { -- compute translated address
-                       ppn = if   level > 0
-                             then -- TODO: check for mis-aligned superpage
-                                 ((ZeroExtend((pte.PTE39_PPNi >>+ (level * PPN39_LEVEL_BITS))
-                                              << (level * PPN39_LEVEL_BITS)))
-                                  || ZeroExtend(va.VA39_VPNi && ((1 << (level * VPN39_LEVEL_BITS)) - 1)))
-                             else pte.PTE39_PPNi
-                     ; Some(ZeroExtend(ppn : va.VA39_PgOfs), pte, pte_addr, level, global or pte.PTE39_G)
+                else { if   level > 0
+                       then { mask = (1 << (level * SV39_LEVEL_BITS)) - 1
+                            ; if   pte.PTE39_PPNi && mask != ZeroExtend(0b0`1)
+                              then { mark_log(LOG_ADDRTR, "misaligned superpage mapping!")
+                                   ; None
+                                   }
+                              else { ppn = pte.PTE39_PPNi || (ZeroExtend(va.VA39_VPNi) && mask)
+                                   ; Some(ppn : va.VA39_PgOfs, pte, pte_addr, level, global or pte.PTE39_G)
+                                   }
+                            }
+                       else Some(pte.PTE39_PPNi : va.VA39_PgOfs, pte, pte_addr, level, global or pte.PTE39_G)
                      }
               }
        }
@@ -2577,10 +2580,10 @@ TLB39_Entry mkTLB39_Entry(asid::asid64, global::bool, vAddr::vaddr39, pAddr::pad
 ; ent.global_39     <- global
 ; ent.pte_39        <- pte
 ; ent.pteAddr_39    <- pteAddr
-; ent.vAddrMask_39  <- ((1::vaddr39) << ((VPN39_LEVEL_BITS*i) + PAGESIZE_BITS)) - 1
+; ent.vAddrMask_39  <- ((1::vaddr39) << ((SV39_LEVEL_BITS*i) + PAGESIZE_BITS)) - 1
 ; ent.vMatchMask_39 <- (SignExtend('1')::vaddr39) ?? ent.vAddrMask_39
 ; ent.vAddr_39      <- vAddr && ent.vMatchMask_39
-; ent.pAddr_39      <- (pAddr >> (PAGESIZE_BITS + (PPN39_LEVEL_BITS*i))) << (PAGESIZE_BITS + (PPN39_LEVEL_BITS*i))
+; ent.pAddr_39      <- (pAddr >> (PAGESIZE_BITS + (SV39_LEVEL_BITS*i))) << (PAGESIZE_BITS + (SV39_LEVEL_BITS*i))
 ; ent.age_39        <- c_cycles(procID)
 ; ent
 }
