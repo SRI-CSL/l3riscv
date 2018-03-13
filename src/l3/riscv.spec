@@ -2223,14 +2223,13 @@ declare enable_dirty_update :: bool
 -- Sv32 memory translation
 --------------------------
 
-nat VPN32_LEVEL_BITS  = 10
-nat PPN32_LEVEL_BITS  = 10
-nat PTE32_LOG_SIZE    =  2
-nat SV32_LEVELS       =  2
+nat SV32_LEVEL_BITS  = 10
+nat PTE32_LOG_SIZE   =  2
+nat SV32_LEVELS      =  2
 
 type vaddr32  = bits(32)
 type paddr32  = bits(34)
-type pte32    = bits(32)
+type pte32    = word
 
 register SV32_Vaddr :: vaddr32
 { 31-12 : VA32_VPNi    -- VPN[1,0]
@@ -2255,18 +2254,20 @@ register SV32_PTE   :: pte32
 paddr32 curPTB32() =
     (ZeroExtend(satp32(SCSR.satp<31:0>).SATP32_PPN) << PAGESIZE_BITS)
 
--- 32-bit page table walker.  This returns the physical address for
--- the input vaddr32 as the first element of the returned tuple.  The
--- remaining elements are for the TLB implementation: the PTE entry
--- itself, the address of the PTE in memory (so that it can be
--- updated) by the TLB, the level of the PTE entry, and whether the
--- mapping is marked as a global mapping.
+-- 32-bit page table walker.
+---------------------------------------------------------------------------
+-- This returns the physical address for the input vaddr32 as the
+-- first element of the returned tuple.  The remaining elements are
+-- for the TLB implementation: the PTE entry itself, the address of
+-- the PTE in memory (so that it can be updated) by the TLB, the level
+-- of the PTE entry, and whether the mapping is marked as a global
+-- mapping.
 
 (paddr32 * SV32_PTE * paddr32 * nat * bool) option
 walk32(vaddr::vaddr32, ac::accessType, priv::Privilege, mxr::bool, sum::bool,
        ptb::paddr32, level::nat, global::bool) =
 { va        = SV32_Vaddr(vaddr)
-; pt_ofs    = ZeroExtend((va.VA32_VPNi >>+ (level * VPN32_LEVEL_BITS))<(VPN32_LEVEL_BITS-1):0>) << PTE32_LOG_SIZE
+; pt_ofs    = ZeroExtend((va.VA32_VPNi >>+ (level * SV32_LEVEL_BITS))<(SV32_LEVEL_BITS-1):0>) << PTE32_LOG_SIZE
 ; pte_addr  = ptb + pt_ofs
 ; pte       = SV32_PTE(rawReadData(ZeroExtend(pte_addr))<31:0>)
 ; mperm     = memPerm(pte.PTE32_PERM)
@@ -2275,7 +2276,7 @@ walk32(vaddr::vaddr32, ac::accessType, priv::Privilege, mxr::bool, sum::bool,
                         : " pt_ofs=" : [[pt_ofs]::nat]
                         : " pte_addr=0x" : PadLeft(#"0", 16, [pte_addr])
                         : " pte=0x" : PadLeft(#"0", 16, [&pte])])
-; if (not pte.PTE32_V)
+; if (not pte.PTE32_V) or isInvalidMemPerm(mperm)
   then { mark_log(LOG_ADDRTR, "walk32: invalid PTE")
        ; None
        }
@@ -2293,13 +2294,17 @@ walk32(vaddr::vaddr32, ac::accessType, priv::Privilege, mxr::bool, sum::bool,
                 then { mark_log(LOG_ADDRTR, "PTE permission check failure!")
                      ; None
                      }
-                else { -- compute translated address
-                       ppn = if level > 0
-                             then ((ZeroExtend((pte.PTE32_PPNi >>+ (level * PPN32_LEVEL_BITS))
-                                               << (level * PPN32_LEVEL_BITS)))
-                                   || ZeroExtend(va.VA32_VPNi && ((1 << (level * VPN32_LEVEL_BITS)) - 1)))
-                             else pte.PTE32_PPNi
-                     ; Some(ZeroExtend(ppn : va.VA32_PgOfs), pte, pte_addr, level, global or pte.PTE32_G)
+                else { if   level > 0
+                       then { mask = (1 << (level * SV32_LEVEL_BITS)) - 1
+                            ; if   pte.PTE32_PPNi && mask != ZeroExtend(0b0`1)
+                              then { mark_log(LOG_ADDRTR, "misaligned superpage mapping!")
+                                   ; None
+                                   }
+                              else { ppn = pte.PTE32_PPNi || (ZeroExtend(va.VA32_VPNi) && mask)
+                                   ; Some(ppn : va.VA32_PgOfs, pte, pte_addr, level, global or pte.PTE32_G)
+                                   }
+                            }
+                       else Some(pte.PTE32_PPNi : va.VA32_PgOfs, pte, pte_addr, level, global or pte.PTE32_G)
                      }
               }
        }
@@ -2359,10 +2364,10 @@ TLB32_Entry mkTLB32_Entry(asid::asid32, global::bool, vAddr::vaddr32, pAddr::pad
 ; ent.global_32     <- global
 ; ent.pte_32        <- pte
 ; ent.pteAddr_32    <- pteAddr
-; ent.vAddrMask_32  <- ((1::vaddr32) << ((VPN32_LEVEL_BITS*i) + PAGESIZE_BITS)) - 1
+; ent.vAddrMask_32  <- ((1::vaddr32) << ((SV32_LEVEL_BITS*i) + PAGESIZE_BITS)) - 1
 ; ent.vMatchMask_32 <- (SignExtend('1')::vaddr32) ?? ent.vAddrMask_32
 ; ent.vAddr_32      <- vAddr && ent.vMatchMask_32
-; ent.pAddr_32      <- (pAddr >> (PAGESIZE_BITS + (PPN32_LEVEL_BITS*i))) << (PAGESIZE_BITS + (PPN32_LEVEL_BITS*i))
+; ent.pAddr_32      <- (pAddr >> (PAGESIZE_BITS + (SV32_LEVEL_BITS*i))) << (PAGESIZE_BITS + (SV32_LEVEL_BITS*i))
 ; ent.age_32        <- c_cycles(procID)
 ; ent
 }
@@ -2435,15 +2440,27 @@ paddr32 option translate32(vAddr::vaddr32, ac::accessType, priv::Privilege, mxr:
   { case Some(ent, idx) =>
     { if checkMemPermission(ac, priv, mxr, sum, memPerm(ent.pte_32.PTE32_PERM))
       then { mark_log(LOG_ADDRTR, "TLB32 hit!")
-           -- update dirty bit in page table and TLB if needed
-           ; pte_new = updatePTE32(ent.pte_32, ac)
-           ; when IsSome(pte_new)
-             do { rawWriteData(ZeroExtend(ent.pteAddr_32), ZeroExtend(ent.&pte_32), 4)
-                ; var tlb = TLB32
-                ; tlb([idx]) <- Some(ent)
-                ; TLB32 <- tlb
-                }
-           ; Some(ent.pAddr_32 || ZeroExtend(vAddr && ent.vAddrMask_32))
+           ; match updatePTE32(ent.pte_32, ac)
+             { case None =>
+                  Some(ent.pAddr_32 || ZeroExtend(vAddr && ent.vAddrMask_32))
+               case Some(pte) =>
+               { if   enable_dirty_update
+                 then { var new_ent = ent
+                      ; var tlb     = TLB32
+                      -- update entry and TLB
+                      ; new_ent.pte_32  <- pte
+                      ; tlb([idx])      <- Some(new_ent)
+                      ; TLB32           <- tlb
+                      -- update memory
+                      ; rawWriteData(ZeroExtend(ent.pteAddr_32), ZeroExtend(&pte), 4)
+                      -- done
+                      ; Some(new_ent.pAddr_32 || ZeroExtend(vAddr && new_ent.vAddrMask_32))
+                      }
+                 else { mark_log(LOG_ADDRTR, "tlb/pte needs dirty/accessed update!")
+                      ; None
+                      }
+               }
+             }
            }
       else { mark_log(LOG_ADDRTR, "TLB32 permission check failure")
            ; None
@@ -2452,11 +2469,26 @@ paddr32 option translate32(vAddr::vaddr32, ac::accessType, priv::Privilege, mxr:
     case None =>
     { mark_log(LOG_ADDRTR, "TLB32 miss!")
     ; match walk32(vAddr, ac, priv, mxr, sum, curPTB32(), level, false)
-      { case Some(pAddr, pte, pteAddr, i, global)  =>
-        { TLB32 <- addToTLB32(asid, vAddr, pAddr, pte, pteAddr, i, global, TLB32)
-        ; Some(pAddr)
+      { case None   =>
+          None
+        case Some(pAddr, pte, pteAddr, i, global)  =>
+        { match updatePTE32(pte, ac)
+          { case None =>
+            { TLB32 <- addToTLB32(asid, vAddr, pAddr, pte, pteAddr, i, global, TLB32)
+            ; Some(pAddr)
+            }
+            case Some(pte) =>
+            { if   enable_dirty_update
+              then { rawWriteData(ZeroExtend(pteAddr), ZeroExtend(&pte), 4)
+                   ; TLB32 <- addToTLB32(asid, vAddr, pAddr, pte, pteAddr, i, global, TLB32)
+                   ; Some(pAddr)
+                   }
+              else { mark_log(LOG_ADDRTR, "pte needs dirty/accessed update!")
+                   ; None
+                   }
+            }
+          }
         }
-        case None   => None
       }
     }
   }
@@ -2496,12 +2528,7 @@ register SV39_PTE   :: pte39
 paddr39 curPTB39() =
     (ZeroExtend(satp64(SCSR.satp).SATP64_PPN) << PAGESIZE_BITS)
 
--- 64-bit page table walker.  This returns the physical address for
--- the input vaddr39 as the first element of the returned tuple.  The
--- remaining elements are for the TLB implementation: the PTE entry
--- itself, the address of the PTE in memory (so that it can be
--- updated) by the TLB, the level of the PTE entry, and whether the
--- mapping is marked as a global mapping.
+-- 64-bit page table walker.
 
 (paddr39 * SV39_PTE * paddr39 * nat * bool) option
 walk39(vaddr::vaddr39, ac::accessType, priv::Privilege, mxr::bool, sum::bool,
@@ -2564,7 +2591,6 @@ SV39_PTE option updatePTE39(pte::SV39_PTE, ac::accessType) =
 }
 
 -- 64-bit TLB
----------------------------------------------------------------------------
 
 record TLB39_Entry
 { asid_39       :: asid64
