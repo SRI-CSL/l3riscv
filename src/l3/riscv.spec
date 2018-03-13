@@ -2177,78 +2177,91 @@ unit rawWriteMem(pAddr::pAddr, data::regType) =
 -- Address Translation
 ---------------------------------------------------------------------------
 
-nat PAGESIZE_BITS     = 12
-
--- internal defines for TLB implementation
-nat  TLBEntries       = 16
-type tlbIdx           = bits(4)
-
--- memory permissions
-
-type permType = bits(4)
-
-register memPerm :: permType
-{ 3 : Mem_U
-, 2 : Mem_X
-, 1 : Mem_W
-, 0 : Mem_R
-}
-
-bool checkMemPermission(ac::accessType, priv::Privilege, mxr::bool, sum::bool, p::memPerm) =
-{ match ac, priv
-  { case Read,      User        => p.Mem_U            and (p.Mem_R or (mxr and p.Mem_X))
-    case Write,     User        => p.Mem_U            and p.Mem_W
-    case ReadWrite, User        => p.Mem_U            and (p.Mem_R or (mxr and p.Mem_X)) and p.Mem_W
-    case Execute,   User        => p.Mem_U            and p.Mem_X
-
-    case Read,      Supervisor  => (!p.Mem_U or sum)  and (p.Mem_R or (mxr and p.Mem_X))
-    case Write,     Supervisor  => (!p.Mem_U or sum)  and p.Mem_W
-    case ReadWrite, Supervisor  => (!p.Mem_U or sum)  and (p.Mem_R or (mxr and p.Mem_X)) and p.Mem_W
-    case Execute,   Supervisor  => !p.Mem_U           and p.Mem_X
-
-    case _,         Machine     => #INTERNAL_ERROR("machine mem perm check")    -- should not happen
-  }
-}
-
-bool isPTEPtr(perm::permType)      = perm<2:0> == 0
-bool isInvalidMemPerm(mp::memPerm) = mp.Mem_W and not mp.Mem_R
-
 -- implementation options
 
 declare enable_dirty_update :: bool
 -- if true, the page-table walker updates PTEs when needed.
 -- if false, a page-fault exception is thrown instead.
 
+nat PAGESIZE_BITS     = 12
+
+-- internal defines for TLB implementation
+nat  TLBEntries       = 16
+type tlbIdx           = bits(4)
+
+-- PTE attributes
+
+type pteAttribs = bits(8)
+
+register pteBits :: pteAttribs
+{ 7 : PTE_D
+, 6 : PTE_A
+, 5 : PTE_G
+, 4 : PTE_U
+, 3 : PTE_X
+, 2 : PTE_W
+, 1 : PTE_R
+, 0 : PTE_V
+}
+
+bool isPTEPtr(p::pteAttribs)    = p<3:1> == 0
+bool isInvalidPTE(p::pteBits)   = (not p.PTE_V) or (p.PTE_W and not p.PTE_R)
+
+bool checkPTEPermission(ac::accessType, priv::Privilege, mxr::bool, sum::bool, p::pteBits) =
+{ match ac, priv
+  { case Read,      User        => p.PTE_U            and (p.PTE_R or (mxr and p.PTE_X))
+    case Write,     User        => p.PTE_U            and p.PTE_W
+    case ReadWrite, User        => p.PTE_U            and (p.PTE_R or (mxr and p.PTE_X)) and p.PTE_W
+    case Execute,   User        => p.PTE_U            and p.PTE_X
+
+    case Read,      Supervisor  => (!p.PTE_U or sum)  and (p.PTE_R or (mxr and p.PTE_X))
+    case Write,     Supervisor  => (!p.PTE_U or sum)  and p.PTE_W
+    case ReadWrite, Supervisor  => (!p.PTE_U or sum)  and (p.PTE_R or (mxr and p.PTE_X)) and p.PTE_W
+    case Execute,   Supervisor  => !p.PTE_U           and p.PTE_X
+
+    case _,         Machine     => #INTERNAL_ERROR("machine mem perm check")    -- should not happen
+  }
+}
+
+-- returns an updated set of PTE bits for an access, if needed
+pteBits option updatePTEBits(p::pteBits, ac::accessType) =
+{ d_update = (ac == Write or ac == ReadWrite) and (not p.PTE_D)
+; a_update = not p.PTE_A
+; if d_update or a_update
+  then { var p_w = p
+       ; p_w.PTE_A <- true
+       ; when d_update do p_w.PTE_D <- true
+       ; Some(p_w)
+       }
+  else None
+}
+
 
 -- Sv32 memory translation
 --------------------------
 
-nat SV32_LEVEL_BITS  = 10
-nat PTE32_LOG_SIZE   =  2
-nat SV32_LEVELS      =  2
+nat SV32_LEVEL_BITS = 10
+nat PTE32_LOG_SIZE  =  2
+nat SV32_LEVELS     =  2
 
 type vaddr32  = bits(32)
 type paddr32  = bits(34)
 type pte32    = word
 
 register SV32_Vaddr :: vaddr32
-{ 31-12 : VA32_VPNi    -- VPN[1,0]
-, 11-0  : VA32_PgOfs   -- page offset
+{ 31-12 : VA_VPNi   -- VPN[1,0]
+, 11-0  : VA_PgOfs  -- page offset
 }
 
 register SV32_Paddr :: paddr32
-{ 33-12 : PA32_PPNi    -- PPN[1,0]
-, 11-0  : PA32_PgOfs   -- page offset
+{ 33-12 : PA_PPNi   -- PPN[1,0]
+, 11-0  : PA_PgOfs  -- page offset
 }
 
 register SV32_PTE   :: pte32
-{ 31-10 : PTE32_PPNi   -- PPN[1,0]
-,   9-8 : PTE32_RSW    -- reserved for supervisor software
-,     7 : PTE32_D      -- dirty
-,     6 : PTE32_A      -- accessed
-,     5 : PTE32_G      -- global
-,   4-1 : PTE32_PERM   -- permissions
-,     0 : PTE32_V      -- valid
+{ 31-10 : PTE_PPNi  -- PPN[1,0]
+,   9-8 : PTE_RSW   -- reserved for supervisor software
+,   7-0 : PTE_BITS  -- attributes
 }
 
 paddr32 curPTB32() =
@@ -2267,61 +2280,49 @@ paddr32 curPTB32() =
 walk32(vaddr::vaddr32, ac::accessType, priv::Privilege, mxr::bool, sum::bool,
        ptb::paddr32, level::nat, global::bool) =
 { va        = SV32_Vaddr(vaddr)
-; pt_ofs    = ZeroExtend((va.VA32_VPNi >>+ (level * SV32_LEVEL_BITS))<(SV32_LEVEL_BITS-1):0>) << PTE32_LOG_SIZE
+; pt_ofs    = ZeroExtend((va.VA_VPNi >>+ (level * SV32_LEVEL_BITS))<(SV32_LEVEL_BITS-1):0>) << PTE32_LOG_SIZE
 ; pte_addr  = ptb + pt_ofs
 ; pte       = SV32_PTE(rawReadData(ZeroExtend(pte_addr))<31:0>)
-; mperm     = memPerm(pte.PTE32_PERM)
+; pbits     = pteBits(pte.PTE_BITS)
 ; mark_log(LOG_ADDRTR, ["walk32(vaddr=0x" : PadLeft(#"0", 16, [&va]) : "): level=" : [level]
                         : " pt_base=0x" : PadLeft(#"0", 16, [ptb])
                         : " pt_ofs=" : [[pt_ofs]::nat]
                         : " pte_addr=0x" : PadLeft(#"0", 16, [pte_addr])
                         : " pte=0x" : PadLeft(#"0", 16, [&pte])])
-; if (not pte.PTE32_V) or isInvalidMemPerm(mperm)
+; if   isInvalidPTE(pbits)
   then { mark_log(LOG_ADDRTR, "walk32: invalid PTE")
        ; None
        }
-  else { if isPTEPtr(&mperm)
+  else { if isPTEPtr(&pbits)
          then { -- ptr to next level
                 if level == 0
                 then { mark_log(LOG_ADDRTR, "last-level PTE contains a pointer!")
                      ; None
                      }
                 else walk32(vaddr, ac, priv, mxr, sum,
-                            ZeroExtend(pte.PTE32_PPNi << PAGESIZE_BITS), level - 1, global or pte.PTE32_G)
+                            ZeroExtend(pte.PTE_PPNi << PAGESIZE_BITS), level - 1, global or pbits.PTE_G)
               }
          else { -- leaf PTE
-                if not checkMemPermission(ac, priv, mxr, sum, mperm)
+                if not checkPTEPermission(ac, priv, mxr, sum, pbits)
                 then { mark_log(LOG_ADDRTR, "PTE permission check failure!")
                      ; None
                      }
                 else { if   level > 0
                        then { mask = (1 << (level * SV32_LEVEL_BITS)) - 1
-                            ; if   pte.PTE32_PPNi && mask != ZeroExtend(0b0`1)
+                            ; if   pte.PTE_PPNi && mask != ZeroExtend(0b0`1)
                               then { mark_log(LOG_ADDRTR, "misaligned superpage mapping!")
                                    ; None
                                    }
-                              else { ppn = pte.PTE32_PPNi || (ZeroExtend(va.VA32_VPNi) && mask)
-                                   ; Some(ppn : va.VA32_PgOfs, pte, pte_addr, level, global or pte.PTE32_G)
+                              else { ppn = pte.PTE_PPNi || (ZeroExtend(va.VA_VPNi) && mask)
+                                   ; Some(ppn : va.VA_PgOfs, pte, pte_addr, level, global or pbits.PTE_G)
                                    }
                             }
-                       else Some(pte.PTE32_PPNi : va.VA32_PgOfs, pte, pte_addr, level, global or pte.PTE32_G)
+                       else Some(pte.PTE_PPNi : va.VA_PgOfs, pte, pte_addr, level, global or pbits.PTE_G)
                      }
               }
        }
 }
 
--- returns an updated PTE for an access, if needed
-SV32_PTE option updatePTE32(pte::SV32_PTE, ac::accessType) =
-{ d_update = (ac == Write or ac == ReadWrite) and (not pte.PTE32_D)
-; a_update = not pte.PTE32_A
-; if d_update or a_update
-  then { var pte_w = pte
-       ; pte_w.PTE32_A <- true
-       ; when d_update do pte_w.PTE32_D <- true
-       ; Some(pte_w)
-       }
-  else None
-}
 
 -- 32-bit TLB
 ---------------------------------------------------------------------------
@@ -2343,32 +2344,32 @@ SV32_PTE option updatePTE32(pte::SV32_PTE, ac::accessType) =
 -- can write back the PTE when its dirty bit needs to be updated.
 
 record TLB32_Entry
-{ asid_32       :: asid32
-  global_32     :: bool
-  vAddr_32      :: vaddr32      -- VPN
-  vMatchMask_32 :: vaddr32      -- matching mask for superpages
+{ asid          :: asid32
+  global        :: bool
+  vAddr         :: vaddr32      -- VPN
+  vMatchMask    :: vaddr32      -- matching mask for superpages
 
-  pAddr_32      :: paddr32      -- PPN
-  vAddrMask_32  :: vaddr32      -- selection mask for superpages
+  pAddr         :: paddr32      -- PPN
+  vAddrMask     :: vaddr32      -- selection mask for superpages
 
-  pte_32        :: SV32_PTE     -- for permissions and dirty bit writeback
-  pteAddr_32    :: paddr32
+  pte           :: SV32_PTE     -- for permissions and dirty bit writeback
+  pteAddr       :: paddr32
 
-  age_32        :: regType      -- derived from cycles
+  age           :: regType      -- derived from cycles
 }
 
 TLB32_Entry mkTLB32_Entry(asid::asid32, global::bool, vAddr::vaddr32, pAddr::paddr32,
                           pte::SV32_PTE, i::nat, pteAddr::paddr32) =
 { var ent :: TLB32_Entry
-; ent.asid_32       <- asid
-; ent.global_32     <- global
-; ent.pte_32        <- pte
-; ent.pteAddr_32    <- pteAddr
-; ent.vAddrMask_32  <- ((1::vaddr32) << ((SV32_LEVEL_BITS*i) + PAGESIZE_BITS)) - 1
-; ent.vMatchMask_32 <- (SignExtend('1')::vaddr32) ?? ent.vAddrMask_32
-; ent.vAddr_32      <- vAddr && ent.vMatchMask_32
-; ent.pAddr_32      <- (pAddr >> (PAGESIZE_BITS + (SV32_LEVEL_BITS*i))) << (PAGESIZE_BITS + (SV32_LEVEL_BITS*i))
-; ent.age_32        <- c_cycles(procID)
+; ent.asid          <- asid
+; ent.global        <- global
+; ent.pte           <- pte
+; ent.pteAddr       <- pteAddr
+; ent.vAddrMask     <- ((1::vaddr32) << ((SV32_LEVEL_BITS*i) + PAGESIZE_BITS)) - 1
+; ent.vMatchMask    <- (SignExtend('1')::vaddr32) ?? ent.vAddrMask
+; ent.vAddr         <- vAddr && ent.vMatchMask
+; ent.pAddr         <- (pAddr >> (PAGESIZE_BITS + (SV32_LEVEL_BITS*i))) << (PAGESIZE_BITS + (SV32_LEVEL_BITS*i))
+; ent.age           <- c_cycles(procID)
 ; ent
 }
 
@@ -2378,8 +2379,8 @@ type TLB32_Map  = tlbIdx -> TLB32_Entry option
 { var ent = None
 ; for i in 0 .. TLBEntries - 1 do
   { match tlb([i])
-    { case Some(e) => when ent == None and (e.global_32 or e.asid_32 == asid)
-                           and (e.vAddr_32 == vAddr && e.vMatchMask_32)
+    { case Some(e) => when ent == None and (e.global or e.asid == asid)
+                           and (e.vAddr == vAddr && e.vMatchMask)
                       do ent <- Some(e, [i])
       case None    => ()
     }
@@ -2396,12 +2397,12 @@ TLB32_Map addToTLB32(asid::asid32, vAddr::vaddr32, pAddr::paddr32, pte::SV32_PTE
 ; var added     = false
 ; for i in 0 .. TLBEntries - 1 do
   { match tlb([i])
-    { case Some(e)  => when e.age_32 <+ current
-                       do { current     <- e.age_32
-                          ; addIdx      <- i
+    { case Some(e)  => when e.age   <+ current
+                       do { current <- e.age
+                          ; addIdx  <- i
                           }
-      case None     => { tlb([i])    <- Some(ent)
-                       ; added       <- true
+      case None     => { tlb([i])   <- Some(ent)
+                       ; added      <- true
                        }
     }
   }
@@ -2414,10 +2415,10 @@ TLB32_Map flushTLB32(asid::asid32, addr::vaddr32 option, curTLB::TLB32_Map) =
 { var tlb = curTLB
 ; for i in 0 .. TLBEntries - 1 do
   { match tlb([i]), addr
-    { case Some(e), Some(va)    => when (asid == 0 or (asid == e.asid_32 and not e.global_32))
-                                        and (e.vAddr_32 == va && e.vMatchMask_32)
+    { case Some(e), Some(va)    => when (asid == 0 or (asid == e.asid and not e.global))
+                                        and (e.vAddr == va && e.vMatchMask)
                                    do tlb([i]) <- None
-      case Some(e), None        => when asid == 0 or (asid == e.asid_32 and not e.global_32)
+      case Some(e), None        => when asid == 0 or (asid == e.asid and not e.global)
                                    do tlb([i]) <- None
       case None,    _           => ()
     }
@@ -2438,23 +2439,23 @@ paddr32 option translate32(vAddr::vaddr32, ac::accessType, priv::Privilege, mxr:
 { asid = curAsid32()
 ; match lookupTLB32(asid, vAddr, TLB32)
   { case Some(ent, idx) =>
-    { if checkMemPermission(ac, priv, mxr, sum, memPerm(ent.pte_32.PTE32_PERM))
+    { if checkPTEPermission(ac, priv, mxr, sum, pteBits(ent.pte.PTE_BITS))
       then { mark_log(LOG_ADDRTR, "TLB32 hit!")
-           ; match updatePTE32(ent.pte_32, ac)
+           ; match updatePTEBits(pteBits(ent.pte.PTE_BITS), ac)
              { case None =>
-                  Some(ent.pAddr_32 || ZeroExtend(vAddr && ent.vAddrMask_32))
-               case Some(pte) =>
+                  Some(ent.pAddr || ZeroExtend(vAddr && ent.vAddrMask))
+               case Some(pbits) =>
                { if   enable_dirty_update
-                 then { var new_ent = ent
-                      ; var tlb     = TLB32
+                 then { var n_ent = ent
+                      ; var tlb   = TLB32
                       -- update entry and TLB
-                      ; new_ent.pte_32  <- pte
-                      ; tlb([idx])      <- Some(new_ent)
-                      ; TLB32           <- tlb
+                      ; n_ent.pte.PTE_BITS  <- &pbits
+                      ; tlb([idx])          <- Some(n_ent)
+                      ; TLB32               <- tlb
                       -- update memory
-                      ; rawWriteData(ZeroExtend(ent.pteAddr_32), ZeroExtend(&pte), 4)
+                      ; rawWriteData(ZeroExtend(n_ent.pteAddr), ZeroExtend(n_ent.&pte), 4)
                       -- done
-                      ; Some(new_ent.pAddr_32 || ZeroExtend(vAddr && new_ent.vAddrMask_32))
+                      ; Some(n_ent.pAddr || ZeroExtend(vAddr && n_ent.vAddrMask))
                       }
                  else { mark_log(LOG_ADDRTR, "tlb/pte needs dirty/accessed update!")
                       ; None
@@ -2472,15 +2473,17 @@ paddr32 option translate32(vAddr::vaddr32, ac::accessType, priv::Privilege, mxr:
       { case None   =>
           None
         case Some(pAddr, pte, pteAddr, i, global)  =>
-        { match updatePTE32(pte, ac)
+        { match updatePTEBits(pteBits(pte.PTE_BITS), ac)
           { case None =>
             { TLB32 <- addToTLB32(asid, vAddr, pAddr, pte, pteAddr, i, global, TLB32)
             ; Some(pAddr)
             }
-            case Some(pte) =>
+            case Some(pbits) =>
             { if   enable_dirty_update
-              then { rawWriteData(ZeroExtend(pteAddr), ZeroExtend(&pte), 4)
-                   ; TLB32 <- addToTLB32(asid, vAddr, pAddr, pte, pteAddr, i, global, TLB32)
+              then { var pte_w = pte
+                   ; pte_w.PTE_BITS <- &pbits
+                   ; rawWriteData(ZeroExtend(pteAddr), ZeroExtend(&pte_w), 4)
+                   ; TLB32 <- addToTLB32(asid, vAddr, pAddr, pte_w, pteAddr, i, global, TLB32)
                    ; Some(pAddr)
                    }
               else { mark_log(LOG_ADDRTR, "pte needs dirty/accessed update!")
@@ -2506,23 +2509,19 @@ type paddr39  = bits(56)
 type pte39    = dword
 
 register SV39_Vaddr :: vaddr39
-{ 38-12 : VA39_VPNi    -- VPN[2,0]
-, 11-0  : VA39_PgOfs   -- page offset
+{ 38-12 : VA_VPNi   -- VPN[2,0]
+, 11-0  : VA_PgOfs  -- page offset
 }
 
 register SV39_Paddr :: paddr39
-{ 55-12 : PA39_PPNi    -- PPN[2,0]
-, 11-0  : PA39_PgOfs   -- page offset
+{ 55-12 : PA_PPNi   -- PPN[2,0]
+, 11-0  : PA_PgOfs  -- page offset
 }
 
 register SV39_PTE   :: pte39
-{ 53-10 : PTE39_PPNi   -- PPN[2,0]
-,   9-8 : PTE39_RSW    -- reserved for software use
-,     7 : PTE39_D      -- dirty
-,     6 : PTE39_A      -- accessed
-,     5 : PTE39_G      -- global
-,   4-1 : PTE39_PERM   -- permissions
-,     0 : PTE39_V      -- valid
+{ 53-10 : PTE_PPNi  -- PPN[2,0]
+,   9-8 : PTE_RSW   -- reserved for software use
+,   7-0 : PTE_BITS  -- attributes
 }
 
 paddr39 curPTB39() =
@@ -2534,91 +2533,78 @@ paddr39 curPTB39() =
 walk39(vaddr::vaddr39, ac::accessType, priv::Privilege, mxr::bool, sum::bool,
        ptb::paddr39, level::nat, global::bool) =
 { va        = SV39_Vaddr(vaddr)
-; pt_ofs    = ZeroExtend((va.VA39_VPNi >>+ (level * SV39_LEVEL_BITS))<(SV39_LEVEL_BITS-1):0>) << PTE39_LOG_SIZE
+; pt_ofs    = ZeroExtend((va.VA_VPNi >>+ (level * SV39_LEVEL_BITS))<(SV39_LEVEL_BITS-1):0>) << PTE39_LOG_SIZE
 ; pte_addr  = ptb + pt_ofs
 ; pte       = SV39_PTE(rawReadData(ZeroExtend(pte_addr)))
-; mperm     = memPerm(pte.PTE39_PERM)
+; pbits     = pteBits(pte.PTE_BITS)
 ; mark_log(LOG_ADDRTR, ["walk39(vaddr=0x" : PadLeft(#"0", 16, [&va]) : "): level=" : [level]
                         : " pt_base=0x" : PadLeft(#"0", 16, [ptb])
                         : " pt_ofs=" : [[pt_ofs]::nat]
                         : " pte_addr=0x" : PadLeft(#"0", 16, [pte_addr])
                         : " pte=0x" : PadLeft(#"0", 16, [&pte])])
-; if   (not pte.PTE39_V) or isInvalidMemPerm(mperm)
+; if   isInvalidPTE(pbits)
   then { mark_log(LOG_ADDRTR, "walk39: invalid PTE!")
        ; None
        }
-  else { if   isPTEPtr(&mperm)
+  else { if   isPTEPtr(&pbits)
          then { -- ptr to next level
                 if   level == 0
                 then { mark_log(LOG_ADDRTR, "last-level PTE contains a pointer!")
                      ; None
                      }
                 else walk39(vaddr, ac, priv, mxr, sum,
-                            ZeroExtend(pte.PTE39_PPNi << PAGESIZE_BITS), level - 1, global or pte.PTE39_G)
+                            ZeroExtend(pte.PTE_PPNi << PAGESIZE_BITS), level - 1, global or pbits.PTE_G)
               }
          else { -- leaf PTE
-                if   not checkMemPermission(ac, priv, mxr, sum, mperm)
+                if   not checkPTEPermission(ac, priv, mxr, sum, pbits)
                 then { mark_log(LOG_ADDRTR, "PTE permission check failure!")
                      ; None
                      }
                 else { if   level > 0
                        then { mask = (1 << (level * SV39_LEVEL_BITS)) - 1
-                            ; if   pte.PTE39_PPNi && mask != ZeroExtend(0b0`1)
+                            ; if   pte.PTE_PPNi && mask != ZeroExtend(0b0`1)
                               then { mark_log(LOG_ADDRTR, "misaligned superpage mapping!")
                                    ; None
                                    }
-                              else { ppn = pte.PTE39_PPNi || (ZeroExtend(va.VA39_VPNi) && mask)
-                                   ; Some(ppn : va.VA39_PgOfs, pte, pte_addr, level, global or pte.PTE39_G)
+                              else { ppn = pte.PTE_PPNi || (ZeroExtend(va.VA_VPNi) && mask)
+                                   ; Some(ppn : va.VA_PgOfs, pte, pte_addr, level, global or pbits.PTE_G)
                                    }
                             }
-                       else Some(pte.PTE39_PPNi : va.VA39_PgOfs, pte, pte_addr, level, global or pte.PTE39_G)
+                       else Some(pte.PTE_PPNi : va.VA_PgOfs, pte, pte_addr, level, global or pbits.PTE_G)
                      }
               }
        }
 }
 
--- returns an updated PTE for an access, if needed
-SV39_PTE option updatePTE39(pte::SV39_PTE, ac::accessType) =
-{ d_update = (ac == Write or ac == ReadWrite) and (not pte.PTE39_D)
-; a_update = not pte.PTE39_A
-; if   d_update or a_update
-  then { var pte_w = pte
-       ; pte_w.PTE39_A <- true
-       ; when d_update do pte_w.PTE39_D <- true
-       ; Some(pte_w)
-       }
-  else None
-}
-
 -- 64-bit TLB
 
 record TLB39_Entry
-{ asid_39       :: asid64
-  global_39     :: bool
-  vAddr_39      :: vaddr39      -- VPN
-  vMatchMask_39 :: vaddr39      -- matching mask for superpages
+{ asid          :: asid64
+  global        :: bool
+  vAddr         :: vaddr39      -- VPN
+  vMatchMask    :: vaddr39      -- matching mask for superpages
 
-  pAddr_39      :: paddr39      -- PPN
-  vAddrMask_39  :: vaddr39      -- selection mask for superpages
+  pAddr         :: paddr39      -- PPN
+  vAddrMask     :: vaddr39      -- selection mask for superpages
 
-  pte_39        :: SV39_PTE     -- for permissions and dirty bit writeback
-  pteAddr_39    :: paddr39
+  pte           :: SV39_PTE     -- for permissions and dirty bit writeback
+  pteAddr       :: paddr39
 
-  age_39        :: regType      -- derived from cycles
+  age           :: regType      -- derived from cycles
 }
 
 TLB39_Entry mkTLB39_Entry(asid::asid64, global::bool, vAddr::vaddr39, pAddr::paddr39,
                           pte::SV39_PTE, i::nat, pteAddr::paddr39) =
 { var ent :: TLB39_Entry
-; ent.asid_39       <- asid
-; ent.global_39     <- global
-; ent.pte_39        <- pte
-; ent.pteAddr_39    <- pteAddr
-; ent.vAddrMask_39  <- ((1::vaddr39) << ((SV39_LEVEL_BITS*i) + PAGESIZE_BITS)) - 1
-; ent.vMatchMask_39 <- (SignExtend('1')::vaddr39) ?? ent.vAddrMask_39
-; ent.vAddr_39      <- vAddr && ent.vMatchMask_39
-; ent.pAddr_39      <- (pAddr >> (PAGESIZE_BITS + (SV39_LEVEL_BITS*i))) << (PAGESIZE_BITS + (SV39_LEVEL_BITS*i))
-; ent.age_39        <- c_cycles(procID)
+; ent.asid          <- asid
+; ent.global        <- global
+; ent.pte           <- pte
+; ent.pteAddr       <- pteAddr
+; ent.vAddrMask     <- ((1::vaddr39) << ((SV39_LEVEL_BITS*i) + PAGESIZE_BITS)) - 1
+; ent.vMatchMask    <- (SignExtend('1')::vaddr39) ?? ent.vAddrMask
+; ent.vAddr         <- vAddr && ent.vMatchMask
+; ent.pAddr         <- (pAddr >> (PAGESIZE_BITS + (SV39_LEVEL_BITS*i))) << (PAGESIZE_BITS + (SV39_LEVEL_BITS*i))
+; ent.age           <- c_cycles(procID)
 ; ent
 }
 
@@ -2628,8 +2614,8 @@ type TLB39_Map  = tlbIdx -> TLB39_Entry option
 { var ent = None
 ; for i in 0 .. TLBEntries - 1 do
   { match tlb([i])
-    { case Some(e) => when ent == None and (e.global_39 or e.asid_39 == asid)
-                           and (e.vAddr_39 == vAddr && e.vMatchMask_39)
+    { case Some(e) => when ent == None and (e.global or e.asid == asid)
+                           and (e.vAddr == vAddr && e.vMatchMask)
                       do ent <- Some(e, [i])
       case None    => ()
     }
@@ -2646,12 +2632,12 @@ TLB39_Map addToTLB39(asid::asid64, vAddr::vaddr39, pAddr::paddr39, pte::SV39_PTE
 ; var added     = false
 ; for i in 0 .. TLBEntries - 1 do
   { match tlb([i])
-    { case Some(e)  => when e.age_39 <+ current
-                       do { current     <- e.age_39
-                          ; addIdx      <- i
+    { case Some(e)  => when e.age   <+ current
+                       do { current <- e.age
+                          ; addIdx  <- i
                           }
-      case None     => { tlb([i])    <- Some(ent)
-                       ; added       <- true
+      case None     => { tlb([i])   <- Some(ent)
+                       ; added      <- true
                        }
     }
   }
@@ -2664,10 +2650,10 @@ TLB39_Map flushTLB39(asid::asid64, addr::vaddr39 option, curTLB::TLB39_Map) =
 { var tlb = curTLB
 ; for i in 0 .. TLBEntries - 1 do
   { match tlb([i]), addr
-    { case Some(e), Some(va)    => when (asid == 0 or (asid == e.asid_39 and not e.global_39))
-                                        and (e.vAddr_39 == va && e.vMatchMask_39)
+    { case Some(e), Some(va)    => when (asid == 0 or (asid == e.asid and not e.global))
+                                        and (e.vAddr == va && e.vMatchMask)
                                    do tlb([i]) <- None
-      case Some(e), None        => when asid == 0 or (asid == e.asid_39 and not e.global_39)
+      case Some(e), None        => when asid == 0 or (asid == e.asid and not e.global)
                                    do tlb([i]) <- None
       case None,    _           => ()
     }
@@ -2688,23 +2674,23 @@ paddr39 option translate39(vAddr::vaddr39, ac::accessType, priv::Privilege, mxr:
 { asid = curAsid64()
 ; match lookupTLB39(asid, vAddr, TLB39)
   { case Some(ent, idx) =>
-    { if   checkMemPermission(ac, priv, mxr, sum, memPerm(ent.pte_39.PTE39_PERM))
+    { if   checkPTEPermission(ac, priv, mxr, sum, pteBits(ent.pte.PTE_BITS))
       then { mark_log(LOG_ADDRTR, "TLB39 hit!")
-           ; match updatePTE39(ent.pte_39, ac)
+           ; match updatePTEBits(pteBits(ent.pte.PTE_BITS), ac)
              { case None =>
-                  Some(ent.pAddr_39 || ZeroExtend(vAddr && ent.vAddrMask_39))
-               case Some(pte) =>
+                  Some(ent.pAddr || ZeroExtend(vAddr && ent.vAddrMask))
+               case Some(pbits) =>
                { if   enable_dirty_update
-                 then { var new_ent = ent
-                      ; var tlb     = TLB39
+                 then { var n_ent = ent
+                      ; var tlb   = TLB39
                       -- update entry and TLB
-                      ; new_ent.pte_39  <- pte
-                      ; tlb([idx])      <- Some(new_ent)
-                      ; TLB39           <- tlb
+                      ; n_ent.pte.PTE_BITS  <- &pbits
+                      ; tlb([idx])          <- Some(n_ent)
+                      ; TLB39               <- tlb
                       -- update memory
-                      ; rawWriteData(ZeroExtend(ent.pteAddr_39), &pte, 8)
+                      ; rawWriteData(ZeroExtend(n_ent.pteAddr), n_ent.&pte, 8)
                       -- done
-                      ; Some(new_ent.pAddr_39 || ZeroExtend(vAddr && new_ent.vAddrMask_39))
+                      ; Some(n_ent.pAddr || ZeroExtend(vAddr && n_ent.vAddrMask))
                       }
                  else { mark_log(LOG_ADDRTR, "tlb/pte needs dirty/accessed update!")
                       ; None
@@ -2722,15 +2708,17 @@ paddr39 option translate39(vAddr::vaddr39, ac::accessType, priv::Privilege, mxr:
       { case None =>
           None
         case Some(pAddr, pte, pteAddr, i, global) =>
-        { match updatePTE39(pte, ac)
+        { match updatePTEBits(pteBits(pte.PTE_BITS), ac)
           { case None =>
             { TLB39 <- addToTLB39(asid, vAddr, pAddr, pte, pteAddr, i, global, TLB39)
             ; Some(pAddr)
             }
-            case Some(pte) =>
+            case Some(pbits) =>
             { if   enable_dirty_update
-              then { rawWriteData(ZeroExtend(pteAddr), &pte, 8)
-                   ; TLB39 <- addToTLB39(asid, vAddr, pAddr, pte, pteAddr, i, global, TLB39)
+              then { var pte_w = pte
+                   ; pte_w.PTE_BITS <- &pbits
+                   ; rawWriteData(ZeroExtend(pteAddr), &pte_w, 8)
+                   ; TLB39 <- addToTLB39(asid, vAddr, pAddr, pte_w, pteAddr, i, global, TLB39)
                    ; Some(pAddr)
                    }
               else { mark_log(LOG_ADDRTR, "pte needs dirty/accessed update!")
