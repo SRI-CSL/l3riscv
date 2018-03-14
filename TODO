@@ -1,16 +1,12 @@
-- support for wpri field checks
+- test disable-dirty-bit-update mode with suitable spike build
 
-- testing floating point; implement missing L3 support
+- use a similar approach for hardware misaligned access support
 
 - mcpuid needs to be checked (and set appropriately on initialization) as
-  appropriate for each affected instruction
+  appropriate for each affected instruction.  Atomics, Mul/Div, ...
 
-- the 64-bit CSRs in the model need to be projected in 32-bit mode
+- Extend Spike/TV for memory traffic cross-checks.
 
 - RVC
-
-- coding conventions for variable naming etc.
-
-- Caches and store buffers.
 
 - SBI (once spec is released)
