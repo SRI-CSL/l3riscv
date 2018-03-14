@@ -219,7 +219,7 @@ reg_t tv_spike_t::read_csr(size_t which)
   unsigned xlen = cpu->get_xlen();
   unsigned max_xlen = cpu->get_max_xlen();
   state_t* state = cpu->get_state();
-  reg_t isa = cpu->get_isa();
+  reg_t isa = state->misa;
 
   if (which >= CSR_HPMCOUNTER3 && which <= CSR_HPMCOUNTER31)
     return 0;
