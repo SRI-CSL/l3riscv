@@ -780,15 +780,15 @@ mie legalize_sie_32(m::mie, d::mideleg, v::word) =
 
 
 register satp32 :: word         -- Address Translation and Protection
-{ 31    : SATP32_MODE
-, 30-22 : SATP32_ASID
-, 21-0  : SATP32_PPN
+{ 31    : SATP_MODE
+, 30-22 : SATP_ASID
+, 21-0  : SATP_PPN
 }
 
 register satp64 :: regType
-{ 63-60 : SATP64_MODE
-, 59-44 : SATP64_ASID
-, 43-0  : SATP64_PPN
+{ 63-60 : SATP_MODE
+, 59-44 : SATP_ASID
+, 43-0  : SATP_PPN
 }
 
 -- TODO: legalization of writes to satp
@@ -1115,9 +1115,9 @@ bool haveFPDouble() = MCSR.misa.D
 
 bool haveFP()       = MCSR.misa.F or MCSR.misa.D
 
-asid32 curAsid32()  = satp32(SCSR.satp<31:0>).SATP32_ASID
+asid32 curAsid32()  = satp32(SCSR.satp<31:0>).SATP_ASID
 
-asid64 curAsid64()  = satp64(SCSR.satp).SATP64_ASID
+asid64 curAsid64()  = satp64(SCSR.satp).SATP_ASID
 
 ---------------------------------------------------------------------------
 -- Floating Point
@@ -2264,7 +2264,7 @@ register SV32_PTE   :: pte32
 }
 
 paddr32 curPTB32() =
-    (ZeroExtend(satp32(SCSR.satp<31:0>).SATP32_PPN) << PAGESIZE_BITS)
+    (ZeroExtend(satp32(SCSR.satp<31:0>).SATP_PPN) << PAGESIZE_BITS)
 
 -- 32-bit page table walker.
 ---------------------------------------------------------------------------
@@ -2524,7 +2524,7 @@ register SV39_PTE   :: pte39
 }
 
 paddr39 curPTB39() =
-    (ZeroExtend(satp64(SCSR.satp).SATP64_PPN) << PAGESIZE_BITS)
+    (ZeroExtend(satp64(SCSR.satp).SATP_PPN) << PAGESIZE_BITS)
 
 -- 64-bit page table walker.
 
@@ -2741,9 +2741,9 @@ SATP_Mode translationMode(priv::Privilege) =
     if   priv == Machine then Sbare -- no translation
     else { arch = architecture(MCSR.mstatus.M_SXL)
          ; match arch
-           { case RV32  => if   satp32(SCSR.satp<31:0>).SATP32_MODE
+           { case RV32  => if   satp32(SCSR.satp<31:0>).SATP_MODE
                            then Sv32 else Sbare
-             case RV64  => satpMode_ofbits(satp64(SCSR.satp).SATP64_MODE, arch)
+             case RV64  => satpMode_ofbits(satp64(SCSR.satp).SATP_MODE, arch)
              case RV128 => #UNDEFINED("Unsupported address translation arch: "
                                       : [arch]::string)
            }
@@ -5080,9 +5080,9 @@ define System > SFENCE_VM(rs1::reg, rs2::reg) =
 { addr = if rs1 == 0 then None else Some(GPR(rs1))
 ; arch = architecture(MCSR.mstatus.M_SXL)
 ; mode = match arch
-         { case RV32  => if   satp32(SCSR.satp<31:0>).SATP32_MODE
+         { case RV32  => if   satp32(SCSR.satp<31:0>).SATP_MODE
                          then Sv32 else Sbare
-           case RV64  => satpMode_ofbits(satp64(SCSR.satp).SATP64_MODE, arch)
+           case RV64  => satpMode_ofbits(satp64(SCSR.satp).SATP_MODE, arch)
            case RV128 => -- FIXME: the spec is not clear what happens
                          -- when satp does not contain a sensible value
                          #INTERNAL_ERROR("sfence.vm: undefined satp spec error")
@@ -5092,12 +5092,12 @@ define System > SFENCE_VM(rs1::reg, rs2::reg) =
     case Sbare, false => ()
     case Sv32,  false =>
     { addr = if IsSome(addr) then Some(ValOf(addr)<31:0>) else None
-    ; asid = satp32(SCSR.satp<31:0>).SATP32_ASID
+    ; asid = satp32(SCSR.satp<31:0>).SATP_ASID
     ; TLB32 <- flushTLB32(asid, addr, TLB32)
     }
     case Sv39,  false =>
     { addr = if IsSome(addr) then Some(ValOf(addr)<38:0>) else None
-    ; asid = satp64(SCSR.satp).SATP64_ASID
+    ; asid = satp64(SCSR.satp).SATP_ASID
     ; TLB39 <- flushTLB39(asid, addr, TLB39)
     }
     case _,     false =>
