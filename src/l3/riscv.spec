@@ -1900,7 +1900,7 @@ regType tvec_addr(m::mtvec, c::mcause) =
 { base = [m.BASE : 0b0`2]::regType
 ; match [m.MODE]::TrapVectorMode
   { case TV_Direct => { base }
-    case TV_Vector => { if c.M_Intr
+    case TV_Vector => { if   c.M_Intr
                         then base + (ZeroExtend(c.M_ExcCause)::regType << 2)
                         else base
                       }
@@ -1931,7 +1931,7 @@ unit excHandler(intr::bool, ec::exc_code, fromPriv::Privilege, toPriv::Privilege
                        ; MCSR.mepc              <- epc
                        ; MCSR.mcause.M_Intr     <- intr
                        ; MCSR.mcause.M_ExcCause <- ZeroExtend(ec)
-                       ; MCSR.mtval             <- if IsSome(badaddr)
+                       ; MCSR.mtval             <- if   IsSome(badaddr)
                                                    then ValOf(badaddr)
                                                    else SignExtend(0b0`1)
                        ; PC                     <- tvec_addr(MCSR.mtvec, MCSR.mcause)
@@ -1944,7 +1944,7 @@ unit excHandler(intr::bool, ec::exc_code, fromPriv::Privilege, toPriv::Privilege
                        ; SCSR.sepc              <- epc
                        ; SCSR.scause.M_Intr     <- intr
                        ; SCSR.scause.M_ExcCause <- ZeroExtend(ec)
-                       ; SCSR.stval             <- if IsSome(badaddr)
+                       ; SCSR.stval             <- if   IsSome(badaddr)
                                                    then ValOf(badaddr)
                                                    else SignExtend(0b0`1)
 
@@ -1958,7 +1958,7 @@ unit excHandler(intr::bool, ec::exc_code, fromPriv::Privilege, toPriv::Privilege
                        ; UCSR.uepc              <- epc
                        ; UCSR.ucause.M_Intr     <- intr
                        ; UCSR.ucause.M_ExcCause <- ZeroExtend(ec)
-                       ; UCSR.utval             <- if IsSome(badaddr)
+                       ; UCSR.utval             <- if   IsSome(badaddr)
                                                    then ValOf(badaddr)
                                                    else SignExtend(0b0`1)
                        ; PC                     <- tvec_addr(UCSR.utvec, UCSR.ucause)
@@ -2132,12 +2132,12 @@ unit rawWriteData(pAddr::pAddr, data::regType, nbytes::nat) =
 
 ; mark_log(LOG_MEM, log_r_mem(pAddrIdx, pAddr, old))
 
-; if align == 0     -- aligned write
+; if   align == 0     -- aligned write
   then { new = old && ~mask || data && mask
        ; MEM(pAddrIdx) <- new
        ; mark_log(LOG_MEM, log_w_mem_mask(pAddrIdx, pAddr, mask, data, old, new))
        }
-  else { if align + nbytes <= Size(mask) div 8      -- write to a single regType-sized block
+  else { if   align + nbytes <= Size(mask) div 8  -- write to a single regType-sized block
          then { new = old && ~(mask << (align * 8)) || (data && mask) << (align * 8)
               ; MEM(pAddrIdx) <- new
               ; mark_log(LOG_MEM, log_w_mem_mask_misaligned(pAddrIdx, pAddr, mask, data, align, old, new))
@@ -2151,7 +2151,7 @@ unit rawWriteData(pAddr::pAddr, data::regType, nbytes::nat) =
               ; MEM(pAddrIdx)   <- dw_new<Size(data)-1:0>
               }
        }
-; if pAddr == htif_tohost_addr
+; if   pAddr == htif_tohost_addr
   then { mark_log(LOG_MEM, log_tohost(data))
        ; ExitCode <- data
        ; done     <- true
@@ -2227,7 +2227,7 @@ bool checkPTEPermission(ac::accessType, priv::Privilege, mxr::bool, sum::bool, p
 pteBits option updatePTEBits(p::pteBits, ac::accessType) =
 { d_update = (ac == Write or ac == ReadWrite) and (not p.PTE_D)
 ; a_update = not p.PTE_A
-; if d_update or a_update
+; if   d_update or a_update
   then { var p_w = p
        ; p_w.PTE_A <- true
        ; when d_update do p_w.PTE_D <- true
@@ -2235,7 +2235,6 @@ pteBits option updatePTEBits(p::pteBits, ac::accessType) =
        }
   else None
 }
-
 
 -- Sv32 memory translation
 --------------------------
@@ -2293,9 +2292,9 @@ walk32(vaddr::vaddr32, ac::accessType, priv::Privilege, mxr::bool, sum::bool,
   then { mark_log(LOG_ADDRTR, "walk32: invalid PTE")
        ; None
        }
-  else { if isPTEPtr(&pbits)
+  else { if   isPTEPtr(&pbits)
          then { -- ptr to next level
-                if level == 0
+                if   level == 0
                 then { mark_log(LOG_ADDRTR, "last-level PTE contains a pointer!")
                      ; None
                      }
@@ -2303,7 +2302,7 @@ walk32(vaddr::vaddr32, ac::accessType, priv::Privilege, mxr::bool, sum::bool,
                             ZeroExtend(pte.PTE_PPNi << PAGESIZE_BITS), level - 1, global or pbits.PTE_G)
               }
          else { -- leaf PTE
-                if not checkPTEPermission(ac, priv, mxr, sum, pbits)
+                if   not checkPTEPermission(ac, priv, mxr, sum, pbits)
                 then { mark_log(LOG_ADDRTR, "PTE permission check failure!")
                      ; None
                      }
@@ -2439,7 +2438,7 @@ paddr32 option translate32(vAddr::vaddr32, ac::accessType, priv::Privilege, mxr:
 { asid = curAsid32()
 ; match lookupTLB32(asid, vAddr, TLB32)
   { case Some(ent, idx) =>
-    { if checkPTEPermission(ac, priv, mxr, sum, pteBits(ent.pte.PTE_BITS))
+    { if   checkPTEPermission(ac, priv, mxr, sum, pteBits(ent.pte.PTE_BITS))
       then { mark_log(LOG_ADDRTR, "TLB32 hit!")
            ; match updatePTEBits(pteBits(ent.pte.PTE_BITS), ac)
              { case None =>
@@ -2827,7 +2826,7 @@ define ArithI > ADDI(rd::reg, rs1::reg, imm::imm12) =
 -- ADDIW rd, rs1, imm   (RV64I)
 -----------------------------------
 define ArithI > ADDIW(rd::reg, rs1::reg, imm::imm12) =
-    if in32BitMode()
+    if   in32BitMode()
     then signalException(E_Illegal_Instr)
     else { temp = GPR(rs1) + SignExtend(imm)
          ; writeRD(rd, SignExtend(temp<31:0>))
@@ -2872,7 +2871,7 @@ define ArithI > XORI(rd::reg, rs1::reg, imm::imm12) =
 -- SLLI  rd, rs1, imm
 -----------------------------------
 define Shift > SLLI(rd::reg, rs1::reg, imm::bits(6)) =
-    if in32BitMode() and imm<5>
+    if   in32BitMode() and imm<5>
     then signalException(E_Illegal_Instr)
     else writeRD(rd, GPR(rs1) << [imm])
 
@@ -2880,7 +2879,7 @@ define Shift > SLLI(rd::reg, rs1::reg, imm::bits(6)) =
 -- SRLI  rd, rs1, imm
 -----------------------------------
 define Shift > SRLI(rd::reg, rs1::reg, imm::bits(6)) =
-    if in32BitMode() and imm<5>
+    if   in32BitMode() and imm<5>
     then signalException(E_Illegal_Instr)
     else { v1 = if in32BitMode() then ZeroExtend(GPR(rs1)<31:0>) else GPR(rs1)
          ; writeRD(rd, v1 >>+ [imm])
@@ -2890,7 +2889,7 @@ define Shift > SRLI(rd::reg, rs1::reg, imm::bits(6)) =
 -- SRAI  rd, rs1, imm
 -----------------------------------
 define Shift > SRAI(rd::reg, rs1::reg, imm::bits(6)) =
-    if in32BitMode() and imm<5>
+    if   in32BitMode() and imm<5>
     then signalException(E_Illegal_Instr)
     else { v1 = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else GPR(rs1)
          ; writeRD(rd, v1 >> [imm])
@@ -2900,7 +2899,7 @@ define Shift > SRAI(rd::reg, rs1::reg, imm::bits(6)) =
 -- SLLIW rd, rs1, imm   (RV64I)
 -----------------------------------
 define Shift > SLLIW(rd::reg, rs1::reg, imm::bits(5)) =
-    if in32BitMode()
+    if   in32BitMode()
     then signalException(E_Illegal_Instr)
     else writeRD(rd, SignExtend(GPR(rs1)<31:0> << [imm]))
 
@@ -2908,7 +2907,7 @@ define Shift > SLLIW(rd::reg, rs1::reg, imm::bits(5)) =
 -- SRLIW rd, rs1, imm   (RV64I)
 -----------------------------------
 define Shift > SRLIW(rd::reg, rs1::reg, imm::bits(5)) =
-    if in32BitMode()
+    if   in32BitMode()
     then signalException(E_Illegal_Instr)
     else writeRD(rd, SignExtend(GPR(rs1)<31:0> >>+ [imm]))
 
@@ -2916,7 +2915,7 @@ define Shift > SRLIW(rd::reg, rs1::reg, imm::bits(5)) =
 -- SRAIW rd, rs1, imm   (RV64I)
 -----------------------------------
 define Shift > SRAIW(rd::reg, rs1::reg, imm::bits(5)) =
-    if in32BitMode()
+    if   in32BitMode()
     then signalException(E_Illegal_Instr)
     else writeRD(rd, SignExtend(GPR(rs1)<31:0> >> [imm]))
 
@@ -2945,7 +2944,7 @@ define ArithR > ADD(rd::reg, rs1::reg, rs2::reg) =
 -- ADDW  rd, rs1, rs2   (RV64I)
 -----------------------------------
 define ArithR > ADDW(rd::reg, rs1::reg, rs2::reg) =
-    if in32BitMode()
+    if   in32BitMode()
     then signalException(E_Illegal_Instr)
     else writeRD(rd, SignExtend(GPR(rs1)<31:0> + GPR(rs2)<31:0>))
 
@@ -2959,7 +2958,7 @@ define ArithR > SUB(rd::reg, rs1::reg, rs2::reg) =
 -- SUBW  rd, rs1, rs2   (RV64I)
 -----------------------------------
 define ArithR > SUBW(rd::reg, rs1::reg, rs2::reg) =
-    if in32BitMode()
+    if   in32BitMode()
     then signalException(E_Illegal_Instr)
     else writeRD(rd, SignExtend(GPR(rs1)<31:0> - GPR(rs2)<31:0>))
 
@@ -3003,7 +3002,7 @@ define ArithR > XOR(rd::reg, rs1::reg, rs2::reg) =
 -- SLL   rd, rs1, rs2
 -----------------------------------
 define Shift > SLL(rd::reg, rs1::reg, rs2::reg) =
-    if in32BitMode()
+    if   in32BitMode()
     then writeRD(rd, GPR(rs1) << ZeroExtend(GPR(rs2)<4:0>))
     else writeRD(rd, GPR(rs1) << ZeroExtend(GPR(rs2)<5:0>))
 
@@ -3011,7 +3010,7 @@ define Shift > SLL(rd::reg, rs1::reg, rs2::reg) =
 -- SLLW  rd, rs1, rs2   (RV64I)
 -----------------------------------
 define Shift > SLLW(rd::reg, rs1::reg, rs2::reg) =
-    if in32BitMode()
+    if   in32BitMode()
     then signalException(E_Illegal_Instr)
     else writeRD(rd, SignExtend(GPR(rs1)<31:0> << ZeroExtend(GPR(rs2)<4:0>)))
 
@@ -3019,7 +3018,7 @@ define Shift > SLLW(rd::reg, rs1::reg, rs2::reg) =
 -- SRL   rd, rs1, rs2
 -----------------------------------
 define Shift > SRL(rd::reg, rs1::reg, rs2::reg) =
-    if in32BitMode()
+    if   in32BitMode()
     then writeRD(rd, ZeroExtend(GPR(rs1)<31:0> >>+ ZeroExtend(GPR(rs2)<4:0>)))
     else writeRD(rd, GPR(rs1) >>+ ZeroExtend(GPR(rs2)<5:0>))
 
@@ -3027,7 +3026,7 @@ define Shift > SRL(rd::reg, rs1::reg, rs2::reg) =
 -- SRLW  rd, rs1, rs2   (RV64I)
 -----------------------------------
 define Shift > SRLW(rd::reg, rs1::reg, rs2::reg) =
-    if in32BitMode()
+    if   in32BitMode()
     then signalException(E_Illegal_Instr)
     else writeRD(rd, SignExtend(GPR(rs1)<31:0> >>+ ZeroExtend(GPR(rs2)<4:0>)))
 
@@ -3035,7 +3034,7 @@ define Shift > SRLW(rd::reg, rs1::reg, rs2::reg) =
 -- SRA   rd, rs1, rs2
 -----------------------------------
 define Shift > SRA(rd::reg, rs1::reg, rs2::reg) =
-    if in32BitMode()
+    if   in32BitMode()
     then writeRD(rd, SignExtend(GPR(rs1)<31:0> >> ZeroExtend(GPR(rs2)<4:0>)))
     else writeRD(rd, GPR(rs1) >> ZeroExtend(GPR(rs2)<5:0>))
 
@@ -3043,7 +3042,7 @@ define Shift > SRA(rd::reg, rs1::reg, rs2::reg) =
 -- SRAW  rd, rs1, rs2   (RV64I)
 -----------------------------------
 define Shift > SRAW(rd::reg, rs1::reg, rs2::reg) =
-    if in32BitMode()
+    if   in32BitMode()
     then signalException(E_Illegal_Instr)
     else writeRD(rd, SignExtend(GPR(rs1)<31:0> >> ZeroExtend(GPR(rs2)<4:0>)))
 
@@ -3094,7 +3093,7 @@ define MulDiv > MULHSU(rd::reg, rs1::reg, rs2::reg) =
 -- MULW  rd, rs1, rs2
 -----------------------------------
 define MulDiv > MULW(rd::reg, rs1::reg, rs2::reg) =
-    if in32BitMode()
+    if   in32BitMode()
     then signalException(E_Illegal_Instr)
     else { prod`64 = SignExtend(GPR(rs1)<31:0> * GPR(rs2)<31:0>)
          ; writeRD(rd, SignExtend(prod<31:0>))
@@ -3104,11 +3103,11 @@ define MulDiv > MULW(rd::reg, rs1::reg, rs2::reg) =
 -- DIV   rd, rs1, rs2
 -----------------------------------
 define MulDiv > DIV(rd::reg, rs1::reg, rs2::reg) =
-    if GPR(rs2) == 0x0
+    if   GPR(rs2) == 0x0
     then writeRD(rd, SignExtend(1`1))
     else { minus_one::regType   = SignExtend(1`1)
          ; minus_max            = 0b1 << (Size(GPR(rs1)) - 1)
-         ; if GPR(rs1) == minus_max and GPR(rs2) == minus_one
+         ; if   GPR(rs1) == minus_max and GPR(rs2) == minus_one
            then writeRD(rd, minus_max)
            else writeRD(rd, GPR(rs1) quot GPR(rs2))
          }
@@ -3117,11 +3116,11 @@ define MulDiv > DIV(rd::reg, rs1::reg, rs2::reg) =
 -- REM   rd, rs1, rs2
 -----------------------------------
 define MulDiv > REM(rd::reg, rs1::reg, rs2::reg) =
-    if GPR(rs2) == 0x0
+    if   GPR(rs2) == 0x0
     then writeRD(rd, GPR(rs1))
     else { minus_one::regType   = SignExtend(1`1)
          ; minus_max            = 0b1 << (Size(GPR(rs1)) - 1)
-         ; if GPR(rs1) == minus_max and GPR(rs2) == minus_one
+         ; if   GPR(rs1) == minus_max and GPR(rs2) == minus_one
            then writeRD(rd, 0)
            else writeRD(rd, GPR(rs1) rem GPR(rs2))
          }
@@ -3141,7 +3140,7 @@ define MulDiv > DIVU(rd::reg, rs1::reg, rs2::reg) =
 -- REMU  rd, rs1, rs2
 -----------------------------------
 define MulDiv > REMU(rd::reg, rs1::reg, rs2::reg) =
-    if GPR(rs2) == 0x0
+    if   GPR(rs2) == 0x0
     then writeRD(rd, GPR(rs1))
     else writeRD(rd, GPR(rs1) mod GPR(rs2))
 
@@ -3149,15 +3148,15 @@ define MulDiv > REMU(rd::reg, rs1::reg, rs2::reg) =
 -- DIVW  rd, rs1, rs2
 -----------------------------------
 define MulDiv > DIVW(rd::reg, rs1::reg, rs2::reg) =
-    if in32BitMode()
+    if   in32BitMode()
     then signalException(E_Illegal_Instr)
     else { s1 = GPR(rs1)<31:0>
          ; s2 = GPR(rs2)<31:0>
-         ; if s2 == 0x0
+         ; if   s2 == 0x0
            then writeRD(rd, SignExtend(1`1))
            else { minus_one::word    = SignExtend(1`1)
                 ; minus_max          = 0b1 << (Size(s1) - 1)
-                ; if s1 == minus_max and s2 == minus_one
+                ; if   s1 == minus_max and s2 == minus_one
                   then writeRD(rd, SignExtend(minus_max))
                   else writeRD(rd, SignExtend(s1 quot s2))
                 }
@@ -3167,11 +3166,11 @@ define MulDiv > DIVW(rd::reg, rs1::reg, rs2::reg) =
 -- REMW  rd, rs1, rs2
 -----------------------------------
 define MulDiv > REMW(rd::reg, rs1::reg, rs2::reg) =
-    if in32BitMode()
+    if   in32BitMode()
     then signalException(E_Illegal_Instr)
     else { s1 = GPR(rs1)<31:0>
          ; s2 = GPR(rs2)<31:0>
-         ; if s2 == 0x0
+         ; if   s2 == 0x0
            then writeRD(rd, SignExtend(s1))
            else writeRD(rd, SignExtend(s1 rem s2))
          }
@@ -3180,11 +3179,11 @@ define MulDiv > REMW(rd::reg, rs1::reg, rs2::reg) =
 -- DIVUW rd, rs1, rs2
 -----------------------------------
 define MulDiv > DIVUW(rd::reg, rs1::reg, rs2::reg) =
-    if in32BitMode()
+    if   in32BitMode()
     then signalException(E_Illegal_Instr)
     else { s1 = GPR(rs1)<31:0>
          ; s2 = GPR(rs2)<31:0>
-         ; if s2 == 0x0
+         ; if   s2 == 0x0
            then writeRD(rd, SignExtend(1`1))
            else writeRD(rd, SignExtend(s1 div s2))
          }
@@ -3193,11 +3192,11 @@ define MulDiv > DIVUW(rd::reg, rs1::reg, rs2::reg) =
 -- REMUW rd, rs1, rs2
 -----------------------------------
 define MulDiv > REMUW(rd::reg, rs1::reg, rs2::reg) =
-    if in32BitMode()
+    if   in32BitMode()
     then signalException(E_Illegal_Instr)
     else { s1 = GPR(rs1)<31:0>
          ; s2 = GPR(rs2)<31:0>
-         ; if s2 == 0x0
+         ; if   s2 == 0x0
            then writeRD(rd, SignExtend(s1))
            else writeRD(rd, SignExtend(s1 mod s2))
          }
@@ -3213,7 +3212,7 @@ define MulDiv > REMUW(rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define Branch > JAL(rd::reg, imm::imm20) =
 { addr = PC + SignExtend(imm) << 1
-; if addr<1:0> != 0
+; if   addr<1:0> != 0
   then signalAddressException(E_Fetch_Addr_Align, addr)
   else { writeRD(rd, PC + 4)
        ; branchTo(addr)
@@ -3225,7 +3224,7 @@ define Branch > JAL(rd::reg, imm::imm20) =
 -----------------------------------
 define Branch > JALR(rd::reg, rs1::reg, imm::imm12) =
 { addr = (GPR(rs1) + SignExtend(imm)) && SignExtend('10')
-; if addr<1:0> != 0
+; if   addr<1:0> != 0
   then signalAddressException(E_Fetch_Addr_Align, addr)
   else { writeRD(rd, PC + 4)
        ; branchTo(addr)
@@ -3240,7 +3239,7 @@ define Branch > JALR(rd::reg, rs1::reg, imm::imm12) =
 define Branch > BEQ(rs1::reg, rs2::reg, offs::imm12) =
 { v1 = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else GPR(rs1)
 ; v2 = if in32BitMode() then SignExtend(GPR(rs2)<31:0>) else GPR(rs2)
-; if v1 == v2
+; if   v1 == v2
   then branchTo(PC + (SignExtend(offs) << 1))
   else noBranch(PC + 4)
 }
@@ -3251,7 +3250,7 @@ define Branch > BEQ(rs1::reg, rs2::reg, offs::imm12) =
 define Branch > BNE(rs1::reg, rs2::reg, offs::imm12) =
 { v1 = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else GPR(rs1)
 ; v2 = if in32BitMode() then SignExtend(GPR(rs2)<31:0>) else GPR(rs2)
-; if v1 <> v2
+; if   v1 <> v2
   then branchTo(PC + (SignExtend(offs) << 1))
   else noBranch(PC + 4)
 }
@@ -3273,7 +3272,7 @@ define Branch > BLT(rs1::reg, rs2::reg, offs::imm12) =
 define Branch > BLTU(rs1::reg, rs2::reg, offs::imm12) =
 { v1 = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else GPR(rs1)
 ; v2 = if in32BitMode() then SignExtend(GPR(rs2)<31:0>) else GPR(rs2)
-; if v1 <+ v2
+; if   v1 <+ v2
   then branchTo(PC + (SignExtend(offs) << 1))
   else noBranch(PC + 4)
 }
@@ -3284,7 +3283,7 @@ define Branch > BLTU(rs1::reg, rs2::reg, offs::imm12) =
 define Branch > BGE(rs1::reg, rs2::reg, offs::imm12) =
 { v1 = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else GPR(rs1)
 ; v2 = if in32BitMode() then SignExtend(GPR(rs2)<31:0>) else GPR(rs2)
-; if v1 >= v2
+; if   v1 >= v2
   then branchTo(PC + (SignExtend(offs) << 1))
   else noBranch(PC + 4)
 }
@@ -3295,7 +3294,7 @@ define Branch > BGE(rs1::reg, rs2::reg, offs::imm12) =
 define Branch > BGEU(rs1::reg, rs2::reg, offs::imm12) =
 { v1 = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else GPR(rs1)
 ; v2 = if in32BitMode() then SignExtend(GPR(rs2)<31:0>) else GPR(rs2)
-; if v1 >=+ v2
+; if   v1 >=+ v2
   then branchTo(PC + (SignExtend(offs) << 1))
   else noBranch(PC + 4)
 }
@@ -3322,7 +3321,7 @@ define Load > LW(rd::reg, rs1::reg, offs::imm12) =
 -- LWU   rd, rs1, offs  (RV64I)
 -----------------------------------
 define Load > LWU(rd::reg, rs1::reg, offs::imm12) =
-{ if in32BitMode()
+{ if   in32BitMode()
   then signalException(E_Illegal_Instr)
   else { vAddr = GPR(rs1) + SignExtend(offs)
        ; match translateAddr(vAddr, Read, Data)
@@ -3395,7 +3394,7 @@ define Load > LBU(rd::reg, rs1::reg, offs::imm12) =
 -- LD    rd, rs1, offs  (RV64I)
 -----------------------------------
 define Load > LD(rd::reg, rs1::reg, offs::imm12) =
-    if in32BitMode()
+    if   in32BitMode()
     then signalException(E_Illegal_Instr)
     else { vAddr = GPR(rs1) + SignExtend(offs)
          ; match translateAddr(vAddr, Read, Data)
@@ -3453,7 +3452,7 @@ define Store > SB(rs1::reg, rs2::reg, offs::imm12) =
 -- SD    rs1, rs2, offs (RV64I)
 -----------------------------------
 define Store > SD(rs1::reg, rs2::reg, offs::imm12) =
-    if in32BitMode()
+    if   in32BitMode()
     then signalException(E_Illegal_Instr)
     else { vAddr = GPR(rs1) + SignExtend(offs)
          ; match translateAddr(vAddr, Write, Data)
@@ -3486,7 +3485,7 @@ define FENCE_I(rd::reg, rs1::reg, imm::imm12) = nothing
 -----------------------------------
 define AMO > LR_W(aq::amo, rl::amo, rd::reg, rs1::reg) =
 { vAddr = GPR(rs1)
-; if vAddr<1:0> != 0
+; if   vAddr<1:0> != 0
   then signalAddressException(E_SAMO_Addr_Align, vAddr)
   else match translateAddr(vAddr, Read, Data)
        { case Some(pAddr) => { writeRD(rd, SignExtend(rawReadData(pAddr)<31:0>))
@@ -3500,10 +3499,10 @@ define AMO > LR_W(aq::amo, rl::amo, rd::reg, rs1::reg) =
 -- LR.D [aq,rl] rd, rs1
 -----------------------------------
 define AMO > LR_D(aq::amo, rl::amo, rd::reg, rs1::reg) =
-    if in32BitMode()
+    if   in32BitMode()
     then signalException(E_Illegal_Instr)
     else { vAddr = GPR(rs1)
-         ; if vAddr<2:0> != 0
+         ; if   vAddr<2:0> != 0
            then signalAddressException(E_SAMO_Addr_Align, vAddr)
            else match translateAddr(vAddr, Read, Data)
                 { case Some(pAddr) => { writeRD(rd, rawReadData(pAddr))
@@ -3518,9 +3517,9 @@ define AMO > LR_D(aq::amo, rl::amo, rd::reg, rs1::reg) =
 -----------------------------------
 define AMO > SC_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
-; if vAddr<1:0> != 0
+; if   vAddr<1:0> != 0
   then signalAddressException(E_SAMO_Addr_Align, vAddr)
-  else if not matchLoadReservation(vAddr)
+  else if   not matchLoadReservation(vAddr)
        then writeRD(rd, 1)
        else match translateAddr(vAddr, Write, Data)
             { case Some(pAddr) => { data = GPR(rs2)
@@ -3537,12 +3536,12 @@ define AMO > SC_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -- SC.D [aq,rl] rd, rs1, rs2
 -----------------------------------
 define AMO > SC_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    if in32BitMode()
+    if   in32BitMode()
     then signalException(E_Illegal_Instr)
     else { vAddr = GPR(rs1)
-         ; if vAddr<2:0> != 0
+         ; if   vAddr<2:0> != 0
            then signalAddressException(E_SAMO_Addr_Align, vAddr)
-           else if not matchLoadReservation(vAddr)
+           else if   not matchLoadReservation(vAddr)
                 then writeRD(rd, 1)
                 else match translateAddr(vAddr, Write, Data)
                      { case Some(pAddr) => { data = GPR(rs2)
@@ -3560,7 +3559,7 @@ define AMO > SC_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define AMO > AMOSWAP_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
-; if vAddr<1:0> != 0
+; if   vAddr<1:0> != 0
   then signalAddressException(E_SAMO_Addr_Align, vAddr)
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
@@ -3579,7 +3578,7 @@ define AMO > AMOSWAP_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define AMO > AMOSWAP_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
-; if vAddr<2:0> != 0
+; if   vAddr<2:0> != 0
   then signalAddressException(E_SAMO_Addr_Align, vAddr)
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = rawReadData(pAddr)
@@ -3598,7 +3597,7 @@ define AMO > AMOSWAP_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define AMO > AMOADD_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
-; if vAddr<1:0> != 0
+; if   vAddr<1:0> != 0
   then signalAddressException(E_SAMO_Addr_Align, vAddr)
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
@@ -3618,7 +3617,7 @@ define AMO > AMOADD_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define AMO > AMOADD_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
-; if vAddr<2:0> != 0
+; if   vAddr<2:0> != 0
   then signalAddressException(E_SAMO_Addr_Align, vAddr)
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = rawReadData(pAddr)
@@ -3638,7 +3637,7 @@ define AMO > AMOADD_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define AMO > AMOXOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
-; if vAddr<1:0> != 0
+; if   vAddr<1:0> != 0
   then signalAddressException(E_SAMO_Addr_Align, vAddr)
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
@@ -3658,7 +3657,7 @@ define AMO > AMOXOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define AMO > AMOXOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
-; if vAddr<2:0> != 0
+; if   vAddr<2:0> != 0
   then signalAddressException(E_SAMO_Addr_Align, vAddr)
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = rawReadData(pAddr)
@@ -3678,7 +3677,7 @@ define AMO > AMOXOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define AMO > AMOAND_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
-; if vAddr<1:0> != 0
+; if   vAddr<1:0> != 0
   then signalAddressException(E_SAMO_Addr_Align, vAddr)
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
@@ -3698,7 +3697,7 @@ define AMO > AMOAND_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define AMO > AMOAND_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
-; if vAddr<2:0> != 0
+; if   vAddr<2:0> != 0
   then signalAddressException(E_SAMO_Addr_Align, vAddr)
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = rawReadData(pAddr)
@@ -3718,7 +3717,7 @@ define AMO > AMOAND_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define AMO > AMOOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
-; if vAddr<1:0> != 0
+; if   vAddr<1:0> != 0
   then signalAddressException(E_SAMO_Addr_Align, vAddr)
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
@@ -3738,7 +3737,7 @@ define AMO > AMOOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define AMO > AMOOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
-; if vAddr<2:0> != 0
+; if   vAddr<2:0> != 0
   then signalAddressException(E_SAMO_Addr_Align, vAddr)
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = rawReadData(pAddr)
@@ -3758,7 +3757,7 @@ define AMO > AMOOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define AMO > AMOMIN_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
-; if vAddr<1:0> != 0
+; if   vAddr<1:0> != 0
   then signalAddressException(E_SAMO_Addr_Align, vAddr)
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
@@ -3778,7 +3777,7 @@ define AMO > AMOMIN_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define AMO > AMOMIN_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
-; if vAddr<2:0> != 0
+; if   vAddr<2:0> != 0
   then signalAddressException(E_SAMO_Addr_Align, vAddr)
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = rawReadData(pAddr)
@@ -3798,7 +3797,7 @@ define AMO > AMOMIN_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define AMO > AMOMAX_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
-; if vAddr<1:0> != 0
+; if   vAddr<1:0> != 0
   then signalAddressException(E_SAMO_Addr_Align, vAddr)
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
@@ -3818,7 +3817,7 @@ define AMO > AMOMAX_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define AMO > AMOMAX_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
-; if vAddr<2:0> != 0
+; if   vAddr<2:0> != 0
   then signalAddressException(E_SAMO_Addr_Align, vAddr)
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = rawReadData(pAddr)
@@ -3838,7 +3837,7 @@ define AMO > AMOMAX_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define AMO > AMOMINU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
-; if vAddr<1:0> != 0
+; if   vAddr<1:0> != 0
   then signalAddressException(E_SAMO_Addr_Align, vAddr)
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
@@ -3858,7 +3857,7 @@ define AMO > AMOMINU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define AMO > AMOMINU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
-; if vAddr<2:0> != 0
+; if   vAddr<2:0> != 0
   then signalAddressException(E_SAMO_Addr_Align, vAddr)
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = rawReadData(pAddr)
@@ -3878,7 +3877,7 @@ define AMO > AMOMINU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define AMO > AMOMAXU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
-; if vAddr<1:0> != 0
+; if   vAddr<1:0> != 0
   then signalAddressException(E_SAMO_Addr_Align, vAddr)
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
@@ -3898,7 +3897,7 @@ define AMO > AMOMAXU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define AMO > AMOMAXU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 { vAddr = GPR(rs1)
-; if vAddr<2:0> != 0
+; if   vAddr<2:0> != 0
   then signalAddressException(E_SAMO_Addr_Align, vAddr)
   else match translateAddr(vAddr, ReadWrite, Data)
        { case Some(pAddr) => { memv = rawReadData(pAddr)
@@ -4313,7 +4312,7 @@ define FArith > FEQ_S(rd::reg, rs1::reg, rs2::reg) =
   then signalException(E_Illegal_Instr)
   else { f1  = FPRS(rs1)
        ; f2  = FPRS(rs2)
-       ; if FP32_IsSignalingNan(f1) or FP32_IsSignalingNan(f2)
+       ; if   FP32_IsSignalingNan(f1) or FP32_IsSignalingNan(f2)
          then { writeRD(rd, 0x0)
               ; setFP_Invalid()
               }
@@ -4823,7 +4822,7 @@ define FArith > FEQ_D(rd::reg, rs1::reg, rs2::reg) =
   then signalException(E_Illegal_Instr)
   else { f1  = FPRD(rs1)
        ; f2  = FPRD(rs2)
-       ; if FP64_IsSignalingNan(f1) or FP64_IsSignalingNan(f2)
+       ; if   FP64_IsSignalingNan(f1) or FP64_IsSignalingNan(f2)
          then { writeRD(rd, 0x0)
               ; setFP_Invalid()
               }
@@ -4944,7 +4943,7 @@ define System > URET   =
 define System > SRET   =
 { match curPrivilege
   { case Machine    => NextFetch <- Some(Sret)
-    case Supervisor => if MCSR.mstatus.M_TSR
+    case Supervisor => if   MCSR.mstatus.M_TSR
                        then signalException(E_Illegal_Instr)
                        else NextFetch <- Some(Sret)
     case User       => signalException(E_Illegal_Instr)
@@ -4968,7 +4967,7 @@ define System > MRET   =
 define System > WFI    =
 { match curPrivilege
   { case Machine    => ()
-    case Supervisor => if MCSR.mstatus.M_TW
+    case Supervisor => if   MCSR.mstatus.M_TW
                        then signalException(E_Illegal_Instr)
                        else ()
     case User       => signalException(E_Illegal_Instr)
@@ -4987,7 +4986,7 @@ bool checkCSROp(csr::imm12, rs1::reg, a::accessType) =
 -- CSRRW  rd, rs1, imm
 -----------------------------------
 define System > CSRRW(rd::reg, rs1::reg, csr::imm12) =
-    if checkCSROp(csr, rs1, Write)
+    if   checkCSROp(csr, rs1, Write)
     then { val = CSR(csr)
          ; writeCSR(csr, GPR(rs1))
          ; writeRD(rd, val)
@@ -4998,7 +4997,7 @@ define System > CSRRW(rd::reg, rs1::reg, csr::imm12) =
 -- CSRRS  rd, rs1, imm
 -----------------------------------
 define System > CSRRS(rd::reg, rs1::reg, csr::imm12) =
-    if checkCSROp(csr, rs1, if rs1 == 0 then Read else Write)
+    if   checkCSROp(csr, rs1, if rs1 == 0 then Read else Write)
     then { val = CSR(csr)
          ; when rs1 != 0
            do writeCSR(csr, val || GPR(rs1))
@@ -5010,7 +5009,7 @@ define System > CSRRS(rd::reg, rs1::reg, csr::imm12) =
 -- CSRRC  rd, rs1, imm
 -----------------------------------
 define System > CSRRC(rd::reg, rs1::reg, csr::imm12) =
-    if checkCSROp(csr, rs1, if rs1 == 0 then Read else Write)
+    if   checkCSROp(csr, rs1, if rs1 == 0 then Read else Write)
     then { val = CSR(csr)
          ; when rs1 != 0
            do writeCSR(csr, val && ~GPR(rs1))
@@ -5022,7 +5021,7 @@ define System > CSRRC(rd::reg, rs1::reg, csr::imm12) =
 -- CSRRWI rd, rs1, imm
 -----------------------------------
 define System > CSRRWI(rd::reg, zimm::reg, csr::imm12) =
-    if checkCSROp(csr, zimm, if zimm == 0 then Read else Write)
+    if   checkCSROp(csr, zimm, if zimm == 0 then Read else Write)
     then { when rd != 0
            do writeRD(rd, CSR(csr))
          ; writeCSR(csr, ZeroExtend(zimm))
@@ -5033,7 +5032,7 @@ define System > CSRRWI(rd::reg, zimm::reg, csr::imm12) =
 -- CSRRSI rd, rs1, imm
 -----------------------------------
 define System > CSRRSI(rd::reg, zimm::reg, csr::imm12) =
-    if checkCSROp(csr, zimm, if zimm == 0 then Read else Write)
+    if   checkCSROp(csr, zimm, if zimm == 0 then Read else Write)
     then { val = CSR(csr)
          ; when zimm != 0
            do writeCSR(csr, val || ZeroExtend(zimm))
@@ -5045,7 +5044,7 @@ define System > CSRRSI(rd::reg, zimm::reg, csr::imm12) =
 -- CSRRCI rd, rs1, imm
 -----------------------------------
 define System > CSRRCI(rd::reg, zimm::reg, csr::imm12) =
-    if checkCSROp(csr, zimm, if zimm == 0 then Read else Write)
+    if   checkCSROp(csr, zimm, if zimm == 0 then Read else Write)
     then { val = CSR(csr)
          ; when zimm != 0
            do writeCSR(csr, val && ~ZeroExtend(zimm))
@@ -5063,7 +5062,7 @@ define System > SFENCE_VM(rs1::reg, rs2::reg) =
 { addr = if rs1 == 0 then None else Some(GPR(rs1))
 ; arch = architecture(MCSR.mstatus.M_SXL)
 ; mode = match arch
-         { case RV32  => if satp32(SCSR.satp<31:0>).SATP32_MODE
+         { case RV32  => if   satp32(SCSR.satp<31:0>).SATP32_MODE
                          then Sv32 else Sbare
            case RV64  => satpMode_ofbits(satp64(SCSR.satp).SATP64_MODE, arch)
            case RV128 => -- FIXME: the spec is not clear what happens
@@ -5123,7 +5122,7 @@ construct FetchResult
 
 FetchResult Fetch() =
 { vPC    = PC
-; if vPC<1:0> != 0
+; if   vPC<1:0> != 0
   then F_Error(Internal(FETCH_MISALIGNED(vPC)))
   else match translateAddr(vPC, Execute, Instruction)
        { case Some(pPC) => { instw = rawReadInst(pPC)
