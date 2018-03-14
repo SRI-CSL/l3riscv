@@ -154,14 +154,14 @@ construct SATP_Mode
 -- todo: Sv57, Sv64
 }
 
-SATP_Mode satpMode_ofbits(m::satp_mode, a::Architecture) =
+SATP_Mode option satpMode_ofbits(m::satp_mode, a::Architecture) =
     match m, a
-    { case  0, _    => Sbare
-      case  1, RV32 => Sv32
-      case  8, RV64 => Sv39
-      case  9, RV64 => Sv48
+    { case  0, _    => Some(Sbare)
+      case  1, RV32 => Some(Sv32)
+      case  8, RV64 => Some(Sv39)
+      case  9, RV64 => Some(Sv48)
       -- todo: Sv57, Sv64
-      case  _     => #UNDEFINED("Unknown address translation mode: " : [[m]::nat])
+      case  _       => None
     }
 
 satp_mode satpMode_tobits(m::SATP_Mode, a::Architecture) =
@@ -791,7 +791,27 @@ register satp64 :: regType
 , 43-0  : SATP_PPN
 }
 
--- TODO: legalization of writes to satp
+
+-- the return type of the legalizers is regType since the 32-bit and
+-- 64-bit formats do not match up conveniently, due to 64-bit modes
+-- being invalid for 32-bit.
+
+regType legalize_satp_64(ctx::regType, v::regType, a::arch_xlen) =
+{ s = satp64(v)
+; match satpMode_ofbits(s.SATP_MODE, architecture(a))
+  { case Some(_)  => v
+    case None     => ctx
+  }
+}
+
+regType legalize_satp_32(ctx::regType, v::word, a::arch_xlen) =
+{ s = satp32(v)
+; match satpMode_ofbits([s.SATP_MODE]::satp_mode, architecture(a))
+  { case Some(_)  => ZeroExtend(v)
+    case None     => ctx
+  }
+}
+
 
 record SupervisorCSR
 {                               -- trap setup
@@ -1472,8 +1492,8 @@ component CSRMap(csr::csreg) :: regType
         case 0x144, true    => c_MCSR(procID).mip       <- legalize_sip_32(c_MCSR(procID).mip, c_MCSR(procID).mideleg, value<31:0>)
 
         -- supervisor protection and translation
-        case 0x180, false   => c_SCSR(procID).satp      <- &satp64(value)
-        case 0x180, true    => c_SCSR(procID).satp      <- SignExtend(&satp32(value<31:0>))
+        case 0x180, false   => c_SCSR(procID).satp      <- legalize_satp_64(c_SCSR(procID).satp, value, c_MCSR(procID).mstatus.M_SXL)
+        case 0x180, true    => c_SCSR(procID).satp      <- legalize_satp_32(c_SCSR(procID).satp, value<31:0>, c_MCSR(procID).mstatus.M_SXL)
 
         -- supervisor counters/timers are SRO
 
@@ -2739,13 +2759,16 @@ paddr39 option translate39(vAddr::vaddr39, ac::accessType, priv::Privilege, mxr:
 -- may not have a valid value if we are in pure M-mode.
 SATP_Mode translationMode(priv::Privilege) =
     if   priv == Machine then Sbare -- no translation
-    else { arch = architecture(MCSR.mstatus.M_SXL)
-         ; match arch
-           { case RV32  => if   satp32(SCSR.satp<31:0>).SATP_MODE
-                           then Sv32 else Sbare
-             case RV64  => satpMode_ofbits(satp64(SCSR.satp).SATP_MODE, arch)
+    else { arch  = architecture(MCSR.mstatus.M_SXL)
+         ; mbits = match arch
+           { case RV32  => [satp32(SCSR.satp<31:0>).SATP_MODE]::satp_mode
+             case RV64  => satp64(SCSR.satp).SATP_MODE
              case RV128 => #UNDEFINED("Unsupported address translation arch: "
                                       : [arch]::string)
+           }
+         ; match satpMode_ofbits(mbits, arch)
+           { case Some(m) => m
+             case None    => #UNDEFINED("Invalid translation mode in satp: " : [mbits])
            }
          }
 
@@ -5082,7 +5105,7 @@ define System > SFENCE_VM(rs1::reg, rs2::reg) =
 ; mode = match arch
          { case RV32  => if   satp32(SCSR.satp<31:0>).SATP_MODE
                          then Sv32 else Sbare
-           case RV64  => satpMode_ofbits(satp64(SCSR.satp).SATP_MODE, arch)
+           case RV64  => ValOf(satpMode_ofbits(satp64(SCSR.satp).SATP_MODE, arch))
            case RV128 => -- FIXME: the spec is not clear what happens
                          -- when satp does not contain a sensible value
                          #INTERNAL_ERROR("sfence.vm: undefined satp spec error")
