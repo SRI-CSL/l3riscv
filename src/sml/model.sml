@@ -464,8 +464,13 @@ fun setupElf file dis =
         val pc     = if !boot then reset_addr else (LargeInt.toInt (#entry hdr))
         val tohost = List.find (match_symb "tohost") symbs
     in  set_tohost tohost
-      ; initCores ( if   (#class hdr) = Elf.BIT_32
-                    then riscv.RV32 else riscv.RV64
+      (* FIXME: instead of presenting as RV64 in misa/mstatus for RV32 ELF
+       * files, we should support presenting as RV32 using writable xXLs.  This
+       * should be made to support tandem-verification with spike.
+       *    if   (#class hdr) = Elf.BIT_32
+       *    then riscv.RV32 else riscv.RV64
+       *)
+      ; initCores ( riscv.RV64
                   , IntInf.fromInt pc
                   )
       ; print ("L3RISCV: pc set to 0x" ^ (hx64 (Word64.fromInt pc))
