@@ -3239,8 +3239,11 @@ define Branch > JALR(rd::reg, rs1::reg, imm::imm12) =
 define Branch > BEQ(rs1::reg, rs2::reg, offs::imm12) =
 { v1 = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else GPR(rs1)
 ; v2 = if in32BitMode() then SignExtend(GPR(rs2)<31:0>) else GPR(rs2)
+; tg = PC + (SignExtend(offs) << 1)
 ; if   v1 == v2
-  then branchTo(PC + (SignExtend(offs) << 1))
+  then if   tg<1:0> != 0
+       then signalAddressException(E_Fetch_Addr_Align, tg)
+       else branchTo(tg)
   else noBranch(PC + 4)
 }
 
@@ -3250,8 +3253,11 @@ define Branch > BEQ(rs1::reg, rs2::reg, offs::imm12) =
 define Branch > BNE(rs1::reg, rs2::reg, offs::imm12) =
 { v1 = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else GPR(rs1)
 ; v2 = if in32BitMode() then SignExtend(GPR(rs2)<31:0>) else GPR(rs2)
+; tg = PC + (SignExtend(offs) << 1)
 ; if   v1 <> v2
-  then branchTo(PC + (SignExtend(offs) << 1))
+  then if   tg<1:0> != 0
+       then signalAddressException(E_Fetch_Addr_Align, tg)
+       else branchTo(tg)
   else noBranch(PC + 4)
 }
 
@@ -3261,8 +3267,11 @@ define Branch > BNE(rs1::reg, rs2::reg, offs::imm12) =
 define Branch > BLT(rs1::reg, rs2::reg, offs::imm12) =
 { v1 = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else GPR(rs1)
 ; v2 = if in32BitMode() then SignExtend(GPR(rs2)<31:0>) else GPR(rs2)
-; if v1 < v2
-  then branchTo(PC + (SignExtend(offs) << 1))
+; tg = PC + (SignExtend(offs) << 1)
+; if   v1 < v2
+  then if   tg<1:0> != 0
+       then signalAddressException(E_Fetch_Addr_Align, tg)
+       else branchTo(tg)
   else noBranch(PC + 4)
 }
 
@@ -3272,8 +3281,11 @@ define Branch > BLT(rs1::reg, rs2::reg, offs::imm12) =
 define Branch > BLTU(rs1::reg, rs2::reg, offs::imm12) =
 { v1 = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else GPR(rs1)
 ; v2 = if in32BitMode() then SignExtend(GPR(rs2)<31:0>) else GPR(rs2)
+; tg = PC + (SignExtend(offs) << 1)
 ; if   v1 <+ v2
-  then branchTo(PC + (SignExtend(offs) << 1))
+  then if   tg<1:0> != 0
+       then signalAddressException(E_Fetch_Addr_Align, tg)
+       else branchTo(tg)
   else noBranch(PC + 4)
 }
 
@@ -3283,8 +3295,11 @@ define Branch > BLTU(rs1::reg, rs2::reg, offs::imm12) =
 define Branch > BGE(rs1::reg, rs2::reg, offs::imm12) =
 { v1 = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else GPR(rs1)
 ; v2 = if in32BitMode() then SignExtend(GPR(rs2)<31:0>) else GPR(rs2)
+; tg = PC + (SignExtend(offs) << 1)
 ; if   v1 >= v2
-  then branchTo(PC + (SignExtend(offs) << 1))
+  then if   tg<1:0> != 0
+       then signalAddressException(E_Fetch_Addr_Align, tg)
+       else branchTo(tg)
   else noBranch(PC + 4)
 }
 
@@ -3294,8 +3309,11 @@ define Branch > BGE(rs1::reg, rs2::reg, offs::imm12) =
 define Branch > BGEU(rs1::reg, rs2::reg, offs::imm12) =
 { v1 = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else GPR(rs1)
 ; v2 = if in32BitMode() then SignExtend(GPR(rs2)<31:0>) else GPR(rs2)
+; tg = PC + (SignExtend(offs) << 1)
 ; if   v1 >=+ v2
-  then branchTo(PC + (SignExtend(offs) << 1))
+  then if   tg<1:0> != 0
+       then signalAddressException(E_Fetch_Addr_Align, tg)
+       else branchTo(tg)
   else noBranch(PC + 4)
 }
 
