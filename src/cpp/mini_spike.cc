@@ -20,7 +20,7 @@ int main(int argc, char **argv)
 {
   if (argc < 2) print_usage(argv[0]);
 
-  tv_spike_t s(DEFAULT_ISA);
+  tv_spike_t s("RV64IMAFD");
   s.init_elf(argv[1]);
   run(&s);
 }
