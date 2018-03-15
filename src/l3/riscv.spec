@@ -204,14 +204,6 @@ ExtStatus extStatus(e::ext_status) =
       case 3        => Dirty
     }
 
-string extStatusName(e::ExtStatus) =
-    match e
-    { case Off      => "Off"
-      case Initial  => "Initial"
-      case Clean    => "Clean"
-      case Dirty    => "Dirty"
-    }
-
 ---------------------------------------------------------------------------
 -- Exceptions and Interrupts
 ---------------------------------------------------------------------------
