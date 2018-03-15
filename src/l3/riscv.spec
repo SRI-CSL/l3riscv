@@ -2430,16 +2430,20 @@ TLB32_Map addToTLB32(asid::asid32, vAddr::vaddr32, pAddr::paddr32, pte::SV32_PTE
 ; tlb
 }
 
-TLB32_Map flushTLB32(asid::asid32, addr::vaddr32 option, curTLB::TLB32_Map) =
+TLB32_Map flushTLB32(asid::asid32 option, addr::vaddr32 option, curTLB::TLB32_Map) =
 { var tlb = curTLB
 ; for i in 0 .. TLBEntries - 1 do
-  { match tlb([i]), addr
-    { case Some(e), Some(va)    => when (asid == 0 or (asid == e.asid and not e.global))
-                                        and (e.vAddr == va && e.vMatchMask)
-                                   do tlb([i]) <- None
-      case Some(e), None        => when asid == 0 or (asid == e.asid and not e.global)
-                                   do tlb([i]) <- None
-      case None,    _           => ()
+  { match tlb([i]), asid, addr
+    { case None,    _,          _          => ()
+      case Some(e), None,       None       => tlb([i]) <- None
+      case Some(e), None,       Some(addr) => when e.vAddr == addr && e.vMatchMask
+                                              do tlb([i]) <- None
+      case Some(e), Some(asid), None       => when e.asid == asid and not e.global
+                                              do tlb([i]) <- None
+      case Some(e), Some(asid), Some(addr) => when e.asid == asid
+                                               and e.vAddr == addr && e.vMatchMask
+                                               and not e.global
+                                              do tlb([i]) <- None
     }
   }
 ; tlb
@@ -2665,16 +2669,20 @@ TLB39_Map addToTLB39(asid::asid64, vAddr::vaddr39, pAddr::paddr39, pte::SV39_PTE
 ; tlb
 }
 
-TLB39_Map flushTLB39(asid::asid64, addr::vaddr39 option, curTLB::TLB39_Map) =
+TLB39_Map flushTLB39(asid::asid64 option, addr::vaddr39 option, curTLB::TLB39_Map) =
 { var tlb = curTLB
 ; for i in 0 .. TLBEntries - 1 do
-  { match tlb([i]), addr
-    { case Some(e), Some(va)    => when (asid == 0 or (asid == e.asid and not e.global))
-                                        and (e.vAddr == va && e.vMatchMask)
-                                   do tlb([i]) <- None
-      case Some(e), None        => when asid == 0 or (asid == e.asid and not e.global)
-                                   do tlb([i]) <- None
-      case None,    _           => ()
+  { match tlb([i]), asid, addr
+    { case None,    _,          _          => ()
+      case Some(e), None,       None       => tlb([i]) <- None
+      case Some(e), None,       Some(addr) => when e.vAddr == addr && e.vMatchMask
+                                              do tlb([i]) <- None
+      case Some(e), Some(asid), None       => when e.asid == asid and not e.global
+                                              do tlb([i]) <- None
+      case Some(e), Some(asid), Some(addr) => when e.asid == asid
+                                               and e.vAddr == addr && e.vMatchMask
+                                               and not e.global
+                                              do tlb([i]) <- None
     }
   }
 ; tlb
@@ -5096,35 +5104,28 @@ define System > CSRRCI(rd::reg, zimm::reg, csr::imm12) =
 -- Address translation cache flush
 
 -----------------------------------
--- SFENCE.VM
+-- SFENCE.VMA
 -----------------------------------
--- TODO: FIXME: update definition
-define System > SFENCE_VM(rs1::reg, rs2::reg) =
+define System > SFENCE_VMA(rs1::reg, rs2::reg) =
 { addr = if rs1 == 0 then None else Some(GPR(rs1))
+; asid = if rs2 == 0 then None else Some(GPR(rs2))
 ; arch = architecture(MCSR.mstatus.M_SXL)
-; mode = match arch
-         { case RV32  => if   satp32(SCSR.satp<31:0>).SATP_MODE
-                         then Sv32 else Sbare
-           case RV64  => ValOf(satpMode_ofbits(satp64(SCSR.satp).SATP_MODE, arch))
-           case RV128 => -- FIXME: the spec is not clear what happens
-                         -- when satp does not contain a sensible value
-                         #INTERNAL_ERROR("sfence.vm: undefined satp spec error")
-         }
-; match mode, MCSR.mstatus.M_TVM
+; match arch, MCSR.mstatus.M_TVM
   { case _,     true  => signalException(E_Illegal_Instr)
-    case Sbare, false => ()
-    case Sv32,  false =>
+    case RV32,  false =>
     { addr = if IsSome(addr) then Some(ValOf(addr)<31:0>) else None
-    ; asid = satp32(SCSR.satp<31:0>).SATP_ASID
+    ; asid = if IsSome(asid) then Some(ValOf(asid)<8:0>)  else None
     ; TLB32 <- flushTLB32(asid, addr, TLB32)
     }
-    case Sv39,  false =>
+    -- Note: given the way this is written, it would be very
+    -- convenient if Sv39, Sv48, Sv57 shared the same TLB, viz. TLB64.
+    case RV64,  false =>
     { addr = if IsSome(addr) then Some(ValOf(addr)<38:0>) else None
-    ; asid = satp64(SCSR.satp).SATP_ASID
+    ; asid = if IsSome(asid) then Some(ValOf(asid)<15:0>) else None
     ; TLB39 <- flushTLB39(asid, addr, TLB39)
     }
-    case _,     false =>
-    #INTERNAL_ERROR(["sfence.vm: unimplemented VM model " : [mode]::string]) -- FIXME
+    case RV128, false =>
+    #INTERNAL_ERROR(["sfence.vma: unimplemented architecture " : [arch]::string])
   }
 }
 
@@ -5448,7 +5449,7 @@ instruction decode_SYSTEM(w::word) =
 
      case '000100000101  00000 000 00000 11100 11' => System(   WFI)
 
-     case '0001001  rs2    rs1 000 00000 11100 11' => System(SFENCE_VM(rs1, rs2))
+     case '0001001  rs2    rs1 000 00000 11100 11' => System(SFENCE_VMA(rs1, rs2))
 
      case _                                        => UnknownInstruction
    }
@@ -5750,7 +5751,7 @@ string instructionToString(i::instruction) =
      case System(CSRRSI(rd, imm, csr))      => pCSRItype("CSRRSI", rd, imm, csr)
      case System(CSRRCI(rd, imm, csr))      => pCSRItype("CSRRCI", rd, imm, csr)
 
-     case System(SFENCE_VM(rs1, rs2))       => pRtype("SFENCE.VM", 0b0`5, rs1, rs2)
+     case System(SFENCE_VMA(rs1, rs2))      => pRtype("SFENCE.VMA", 0b0`5, rs1, rs2)
 
      case UnknownInstruction                => pN0type("UNKNOWN")
 
@@ -5968,7 +5969,7 @@ word Encode(i::instruction) =
 
      case System(   WFI)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x105)
 
-     case System(SFENCE_VM(rs1, rs2))       =>  Rtype(opc(0x1C), 0, 0, rs1, rs2, 0x05)
+     case System(SFENCE_VMA(rs1, rs2))      =>  Rtype(opc(0x1C), 0, 0, rs1, rs2, 0x05)
 
      case System( CSRRW(rd, rs1, csr))      =>  Itype(opc(0x1C), 1, rd, rs1, csr)
      case System( CSRRS(rd, rs1, csr))      =>  Itype(opc(0x1C), 2, rd, rs1, csr)
