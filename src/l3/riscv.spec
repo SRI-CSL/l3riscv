@@ -2341,16 +2341,6 @@ walk32(vaddr::vaddr32, ac::accessType, priv::Privilege, mxr::bool, sum::bool,
 -- capture part of the semantics of SFENCE.  A TLB also improves
 -- simulation speed.
 
--- This implementation stores the global mapping bit from the PTE in
--- the TLB.  This causes an asymmetry between TLB lookup and TLB
--- flush, due to the spec's treatment of an ASID=0 in SFENCE.VM:
---
--- * in TLB lookup, the global bit is used to check for a global
---   match, and this global bit when set overrides the input ASID.
---
--- * in TLB flush, an input ASID of 0 overrides the global bit when
---   checking if a TLB entry needs to be flushed.
-
 -- Each TLBEntry also stores the full PTE and its pAddr, so that it
 -- can write back the PTE when its dirty bit needs to be updated.
 
