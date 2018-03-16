@@ -9,33 +9,32 @@ RISC-V binaries, similar to the Spike simulator for RISC-V.
 It can also be used to generate a machine-readable specification in a simple
 sexpr-based syntax.
 
-NOTE: the current version implements mildly obsolete versions of the ISA
-specifications (version 2.0 of the user spec, and version 1.9 of the privileged
-spec).
-
 Dependencies
 ------------
 
-This model has a fair amount of dependencies: two Standard ML compilers, and L3
-itself.
+This model needs a recent Poly/ML compiler (at least version 5.7.2 if released,
+or built from the latest source at github.com/polyml), and L3 itself.
 
 L3 is available from: http://www.cl.cam.ac.uk/~acjf3/l3
-Ensure that you are using a recent version (L3-2017-09-29 or later).
+Ensure that you are using a recent version (L3-2018-02-09 or later).
 
-L3 itself needs PolyML 5.7, which depending on your platform, you may need to
-install from source from www.polyml.org.  L3 generated code is compiled with
-mlton (http://mlton.org), available as a standard package on most Unix
-platforms.
+The tandem-verification to Spike needs a recent version of Spike installed, and
+the RISCV environment variable set to its installation directory.
+
+Currently, Spike will need to be configured with the
+  --enable-dirty --enable-misaligned
+flags.
 
 Building
 --------
 
 - Ensure that l3 is in your path.
 
+- Ensure that the RISCV environment variable is correctly defined.
+
 - $ make
 
-This will build the interpreter in 'l3riscv.poly' (when compiled with Poly/ML)
-and/or 'l3riscv.mlton' (when compiled with mlton).
+This will build the interpreter in 'l3riscv.poly' when compiled with Poly/ML.
 
 Using the interpreter
 ---------------------
@@ -43,6 +42,10 @@ Using the interpreter
 - Execute a RISC-V ELF binary:
 
   $ ./l3riscv --trace 1 <riscv-binary>
+
+  To execute this in lock-step with a Spike back-end:
+
+  $ ./l3riscv --trace 1 --check true <riscv-binary>
 
 - Disassemble a RISC-V ELF binary:
 
@@ -61,17 +64,20 @@ The specification generated will be in src/il/riscv.l3.
 Known Issues
 ------------
 
-- The interpreter does not currently implement floating-point, RVC or vector
-  instructions.
+- The interpreter does not currently implement RVC or vector instructions.
 
-- There is incomplete support for pure RV32 binaries.  The implementation of the
-  privileged mode is currently only 64-bit.
+- It passes most 64-bit M-, S-, and U-mode tests, and the 32-bit M- and U-mode
+  tests, in Spike-checked mode.
 
-- It passes all but one of the RV64 tests in the riscv-tests suite.  The L3
-  interpreter does not trap on misaligned addresses.  However, the
-  rv64si-p-ma_addr and rv64mi-p-ma_addr tests (misaligned access in
-  supervisor-mode and machine-mode resp.) expect a trap, and fail otherwise.
-  Both approaches are supported by the RISC-V specification.
+  It does not implement the debug-module registers, and fails the
+  rv{32,64}mi-p-breakpoint tests.
+
+  It does not model invalid physical memory, and hence fails the
+  rv{32,64}mi-p-access tests and all rv32ui-v-* tests.
+
+  It has not been tested with the default Spike configuration, which traps on
+  misaligned accesses and traps instead of performing accessed/dirty updates
+  during page-table walks.
 
 Credits
 -------
