@@ -22,5 +22,5 @@ int main(int argc, char **argv)
 
   tv_spike_t s("RV64IMAFD");
   s.init_elf(argv[1]);
-  run(&s);
+  exit(run(&s));
 }
