@@ -31,6 +31,7 @@
  */
 
 #include "tv_spike.h"
+#include <spike/disasm.h>
 #include <fesvr/elfloader.h>
 #include <assert.h>
 #include <iostream>
@@ -118,6 +119,7 @@ char* tv_spike_t::addr_to_mem(reg_t addr)
     if (addr - desc.first < mem->size())
       return mem->contents() + (addr - desc.first);
   }
+  fprintf(stderr, "MS-MEM: nothing backing addr 0x%0" PRIx64 "\n", addr);
   return NULL;
 }
 
@@ -125,14 +127,20 @@ bool tv_spike_t::mmio_load(reg_t addr, size_t len, uint8_t* bytes)
 {
   if (addr + len < addr)
     return false;
-  return bus.load(addr, len, bytes);
+  bool mmio = bus.load(addr, len, bytes);
+  if (mmio) fprintf(stderr, "MMIO read: @0x%0" PRIx64 " %lu bytes\n",
+                    addr, len);
+  return mmio;
 }
 
 bool tv_spike_t::mmio_store(reg_t addr, size_t len, const uint8_t* bytes)
 {
   if (addr + len < addr)
     return false;
-  return bus.store(addr, len, bytes);
+  bool mmio = bus.store(addr, len, bytes);
+  if (mmio) fprintf(stderr, "MMIO write: @0x%0" PRIx64 " %lu bytes\n",
+                    addr, len);
+  return mmio;
 }
 
 void tv_spike_t::read_chunk(addr_t taddr, size_t len, void* dst)
@@ -196,8 +204,8 @@ bool tv_spike_t::check_csr(size_t regno, uint64_t val)
   uint64_t model_val = read_csr(regno);
   bool chk = model_val == val;
   if (verbose_verify && !chk)
-    fprintf(stderr, " CSR reg %lx: expected %0" PRIx64 " got %" PRIx64 "\n",
-            regno, model_val, val);
+    fprintf(stderr, " CSR reg %lx (%s): expected %0" PRIx64 " got %" PRIx64 "\n",
+            regno, csr_name(regno), model_val, val);
   return chk;
 }
 
