@@ -3256,7 +3256,7 @@ define MulDiv > REMUW(rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 define Branch > JAL(rd::reg, imm::imm20) =
 { addr = PC + SignExtend(imm) << 1
-; if   addr<1:0> != 0
+; if   addr<1> and not haveRVC()
   then signalAddressException(E_Fetch_Addr_Align, addr)
   else { writeRD(rd, PC + 4)
        ; branchTo(addr)
@@ -3268,7 +3268,7 @@ define Branch > JAL(rd::reg, imm::imm20) =
 -----------------------------------
 define Branch > JALR(rd::reg, rs1::reg, imm::imm12) =
 { addr = (GPR(rs1) + SignExtend(imm)) && SignExtend('10')
-; if   addr<1:0> != 0
+; if   addr<1> and not haveRVC()
   then signalAddressException(E_Fetch_Addr_Align, addr)
   else { writeRD(rd, PC + 4)
        ; branchTo(addr)
@@ -3285,7 +3285,7 @@ define Branch > BEQ(rs1::reg, rs2::reg, offs::imm12) =
 ; v2 = if in32BitMode() then SignExtend(GPR(rs2)<31:0>) else GPR(rs2)
 ; tg = PC + (SignExtend(offs) << 1)
 ; if   v1 == v2
-  then if   tg<1:0> != 0
+  then if   tg<1> and not haveRVC()
        then signalAddressException(E_Fetch_Addr_Align, tg)
        else branchTo(tg)
   else noBranch(PC + 4)
@@ -3299,7 +3299,7 @@ define Branch > BNE(rs1::reg, rs2::reg, offs::imm12) =
 ; v2 = if in32BitMode() then SignExtend(GPR(rs2)<31:0>) else GPR(rs2)
 ; tg = PC + (SignExtend(offs) << 1)
 ; if   v1 <> v2
-  then if   tg<1:0> != 0
+  then if   tg<1> and not haveRVC()
        then signalAddressException(E_Fetch_Addr_Align, tg)
        else branchTo(tg)
   else noBranch(PC + 4)
@@ -3313,7 +3313,7 @@ define Branch > BLT(rs1::reg, rs2::reg, offs::imm12) =
 ; v2 = if in32BitMode() then SignExtend(GPR(rs2)<31:0>) else GPR(rs2)
 ; tg = PC + (SignExtend(offs) << 1)
 ; if   v1 < v2
-  then if   tg<1:0> != 0
+  then if   tg<1> and not haveRVC()
        then signalAddressException(E_Fetch_Addr_Align, tg)
        else branchTo(tg)
   else noBranch(PC + 4)
@@ -3327,7 +3327,7 @@ define Branch > BLTU(rs1::reg, rs2::reg, offs::imm12) =
 ; v2 = if in32BitMode() then SignExtend(GPR(rs2)<31:0>) else GPR(rs2)
 ; tg = PC + (SignExtend(offs) << 1)
 ; if   v1 <+ v2
-  then if   tg<1:0> != 0
+  then if   tg<1> and not haveRVC()
        then signalAddressException(E_Fetch_Addr_Align, tg)
        else branchTo(tg)
   else noBranch(PC + 4)
@@ -3341,7 +3341,7 @@ define Branch > BGE(rs1::reg, rs2::reg, offs::imm12) =
 ; v2 = if in32BitMode() then SignExtend(GPR(rs2)<31:0>) else GPR(rs2)
 ; tg = PC + (SignExtend(offs) << 1)
 ; if   v1 >= v2
-  then if   tg<1:0> != 0
+  then if   tg<1> and not haveRVC()
        then signalAddressException(E_Fetch_Addr_Align, tg)
        else branchTo(tg)
   else noBranch(PC + 4)
@@ -3355,7 +3355,7 @@ define Branch > BGEU(rs1::reg, rs2::reg, offs::imm12) =
 ; v2 = if in32BitMode() then SignExtend(GPR(rs2)<31:0>) else GPR(rs2)
 ; tg = PC + (SignExtend(offs) << 1)
 ; if   v1 >=+ v2
-  then if   tg<1:0> != 0
+  then if   tg<1> and not haveRVC()
        then signalAddressException(E_Fetch_Addr_Align, tg)
        else branchTo(tg)
   else noBranch(PC + 4)
@@ -5239,7 +5239,7 @@ construct FetchResult
 
 FetchResult Fetch() =
 { vPC    = PC
-; if   vPC<1:0> != 0
+; if   vPC<1:0> != 0 or (haveRVC() and vPC<0>)
   then F_Error(Internal(FETCH_MISALIGNED(vPC)))
   else match translateAddr(vPC, Execute, Instruction)
        { case Some(pPC) => { instw = rawReadInst(pPC)

@@ -2,8 +2,7 @@
 
 - use a similar approach for hardware misaligned access support
 
-- mcpuid needs to be checked (and set appropriately on initialization) as
-  appropriate for each affected instruction.  Atomics, Mul/Div, ...
+- hpm counter and event csrs
 
 - Extend Spike/TV for memory traffic cross-checks.
 
