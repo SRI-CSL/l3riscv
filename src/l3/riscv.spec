@@ -25,8 +25,12 @@
 ---------------------------------------------------------------------------
 
 type id       = bits(8)         -- max 256 cores
-type reg      = bits(5)
+
+type reg      = bits(5)         -- base register names
 type csreg    = bits(12)        -- CSR address space
+type creg     = bits(3)         -- RVC register names
+
+reg creg2reg(r::creg) = 0b01 : r
 
 type byte     = bits(8)
 type half     = bits(16)
@@ -1838,14 +1842,20 @@ string fpreg(r::reg) =
   else                 "ft5"
 }
 
+string   creg(r::creg) =   reg(creg2reg(r))
+string fpcreg(r::creg) = fpreg(creg2reg(r))
+
 string log_w_gpr(r::reg, data::regType) =
     "Reg " : reg(r) : " (" : [[r]::nat] : ") <- 0x" : hex64(data)
 
+string log_w_cpr(r::creg, data::regType) =
+    "Reg " : creg(r) : " (" : [[r]::nat] : ") <- 0x" : hex64(data)
+
 string log_w_fprs(r::reg, data::word) =
-    "FPR " : reg(r) : " (" : [[r]::nat] : ") <- 0x" : hex32(data)
+    "FPR " : fpreg(r) : " (" : [[r]::nat] : ") <- 0x" : hex32(data)
 
 string log_w_fprd(r::reg, data::regType) =
-    "FPR " : reg(r) : " (" : [[r]::nat] : ") <- 0x" : hex64(data)
+    "FPR " : fpreg(r) : " (" : [[r]::nat] : ") <- 0x" : hex64(data)
 
 string log_w_mem_mask(pAddrIdx::pAddrIdx, vAddr::vAddr, mask::regType,
                       data::regType, old::regType, new::regType) =
@@ -5204,9 +5214,285 @@ define System > SFENCE_VMA(rs1::reg, rs2::reg) =
   }
 }
 
+---------------------------------------------------------------------------
+-- Compressed Extension Instructions
+---------------------------------------------------------------------------
+
+-- stack-pointer-based loads and stores
+
 -----------------------------------
--- Unsupported instructions
+-- C.LWSP   rd, imm
 -----------------------------------
+define RVC > C_LWSP(rd::reg, imm::bits(6)) =
+    ()
+
+-----------------------------------
+-- C.LDSP   rd, imm
+-----------------------------------
+define RVC > C_LDSP(rd::reg, imm::bits(6)) =
+    ()
+
+-----------------------------------
+-- C.FLWSP  rd, imm
+-----------------------------------
+define RVC > C_FLWSP(rd::reg, imm::bits(6)) =
+    ()
+
+-----------------------------------
+-- C.FLDSP  rd, imm
+-----------------------------------
+define RVC > C_FLDSP(rd::reg, imm::bits(6)) =
+    ()
+
+-----------------------------------
+-- C.SWSP   rs2, imm
+-----------------------------------
+define RVC > C_SWSP(rs2::reg, imm::bits(6)) =
+    ()
+
+-----------------------------------
+-- C.SDSP   rs2, imm
+-----------------------------------
+define RVC > C_SDSP(rs2::reg, imm::bits(6)) =
+    ()
+
+-----------------------------------
+-- C.FSWSP  rs2, imm
+-----------------------------------
+define RVC > C_FSWSP(rs2::reg, imm::bits(6)) =
+    ()
+
+-----------------------------------
+-- C.FSDSP  rs2, imm
+-----------------------------------
+define RVC > C_FSDSP(rs2::reg, imm::bits(6)) =
+    ()
+
+
+-- register-based loads and stores
+
+-----------------------------------
+-- C.LW     rd, rs1, imm
+-----------------------------------
+define RVC > C_LW(rd::creg, rs1::creg, imm::bits(5)) =
+    ()
+
+-----------------------------------
+-- C.LD     rd, rs1, imm
+-----------------------------------
+define RVC > C_LD(rd::creg, rs1::creg, imm::bits(5)) =
+    ()
+
+-----------------------------------
+-- C.FLW    rd, rs1, imm
+-----------------------------------
+define RVC > C_FLW(rd::creg, rs1::creg, imm::bits(5)) =
+    ()
+
+-----------------------------------
+-- C.FLD    rd, rs1, imm
+-----------------------------------
+define RVC > C_FLD(rd::creg, rs1::creg, imm::bits(5)) =
+    ()
+
+-----------------------------------
+-- C.SW     rs1, rs2, imm
+-----------------------------------
+define RVC > C_SW(rs1::creg, rs2::creg, imm::bits(5)) =
+    ()
+
+-----------------------------------
+-- C.SD     rs1, rs2, imm
+-----------------------------------
+define RVC > C_SD(rs1::creg, rs2::creg, imm::bits(5)) =
+    ()
+
+-----------------------------------
+-- C.FSW    rs1, rs2, imm
+-----------------------------------
+define RVC > C_FSW(rs1::creg, rs2::creg, imm::bits(5)) =
+    ()
+
+-----------------------------------
+-- C.FSD    rs1, rs1, imm
+-----------------------------------
+define RVC > C_FSD(rs1::creg, rs2::creg, imm::bits(5)) =
+    ()
+
+-- control transfer
+
+-----------------------------------
+-- C.J      imm
+-----------------------------------
+define RVC > C_J(imm::bits(11)) =
+    ()
+
+-----------------------------------
+-- C.JAL    imm
+-----------------------------------
+define RVC > C_JAL(imm::bits(11)) =
+    ()
+
+-----------------------------------
+-- C.JR     rs1
+-----------------------------------
+define RVC > C_JR(rs1::reg) =
+    ()
+
+-----------------------------------
+-- C.JALR   rs1
+-----------------------------------
+define RVC > C_JALR(rs1::reg) =
+    ()
+
+-----------------------------------
+-- C.BEQZ   rs1, imm
+-----------------------------------
+define RVC > C_BEQZ(rs1::creg, imm::byte) =
+    ()
+
+-----------------------------------
+-- C.BNEZ   rs1, imm
+-----------------------------------
+define RVC > C_BNEZ(rs1::creg, imm::byte) =
+    ()
+
+-- integer constant-generation
+
+-----------------------------------
+-- C.LI     rd, imm
+-----------------------------------
+define RVC > C_LI(rd::reg, imm::bits(6)) =
+    ()
+
+-----------------------------------
+-- C.LUI    rd, imm
+-----------------------------------
+define RVC > C_LUI(rd::reg, imm::bits(6)) =
+    ()
+
+-- register-immediate integer ops
+
+-----------------------------------
+-- C.ADDI   rds, imm
+-----------------------------------
+define RVC > C_ADDI(rds::reg, imm::bits(6)) =
+    ()
+
+-----------------------------------
+-- C.ADDIW  rds, imm
+-----------------------------------
+define RVC > C_ADDIW(rds::reg, imm::bits(6)) =
+    ()
+
+-----------------------------------
+-- C.ADDI16SP imm
+-----------------------------------
+define RVC > C_ADDI16SP(imm::bits(6)) =
+    ()
+
+-----------------------------------
+-- C.ADDI4SPN rd, imm
+-----------------------------------
+define RVC > C_ADDI4SPN(rd::creg, imm::byte) =
+    ()
+
+-----------------------------------
+-- C.SLLI   rds, imm
+-----------------------------------
+define RVC > C_SLLI(rds::reg, imm::bits(6)) =
+    ()
+
+-----------------------------------
+-- C.SRLI   rds, imm
+-----------------------------------
+define RVC > C_SRLI(rds::creg, imm::bits(6)) =
+    ()
+
+-----------------------------------
+-- C.SRAI   rds, imm
+-----------------------------------
+define RVC > C_SRAI(rds::creg, imm::bits(6)) =
+    ()
+
+-----------------------------------
+-- C.ANDI   rds, imm
+-----------------------------------
+define RVC > C_ANDI(rds::creg, imm::bits(6)) =
+    ()
+
+-- integer register-register operations
+
+-----------------------------------
+-- C.MV     rds, rs2
+-----------------------------------
+define RVC > C_MV(rds::reg, rs2::reg) =
+    ()
+
+-----------------------------------
+-- C.ADD    rds, rs2
+-----------------------------------
+define RVC > C_ADD(rds::reg, rs2::reg) =
+    ()
+
+-----------------------------------
+-- C.AND    rds, rs2
+-----------------------------------
+define RVC > C_AND(rds::creg, rs2::creg) =
+    ()
+
+-----------------------------------
+-- C.OR     rds, rs2
+-----------------------------------
+define RVC > C_OR(rds::creg, rs2::creg) =
+    ()
+
+-----------------------------------
+-- C.XOR    rds, rs2
+-----------------------------------
+define RVC > C_XOR(rds::creg, rs2::creg) =
+    ()
+
+-----------------------------------
+-- C.SUB    rds, rs2
+-----------------------------------
+define RVC > C_SUB(rds::creg, rs2::creg) =
+    ()
+
+-----------------------------------
+-- C.ADDW   rds, rs2
+-----------------------------------
+define RVC > C_ADDW(rds::creg, rs2::creg) =
+    ()
+
+-----------------------------------
+-- C.SUBW   rds, rs2
+-----------------------------------
+define RVC > C_SUBW(rds::creg, rs2::creg) =
+    ()
+
+-- defined nop
+
+-----------------------------------
+-- C.NOP
+-----------------------------------
+define RVC > C_NOP = ()
+
+-- RVC breakpoint
+
+-----------------------------------
+-- C.EBREAK
+-----------------------------------
+
+define RVC > C_EBREAK =
+    signalAddressException(E_Breakpoint, PC)
+
+-----------------------------------
+-- Illegal or unsupported instructions
+-----------------------------------
+define IllegalInstruction =
+    signalException(E_Illegal_Instr)
+
 define UnknownInstruction =
     signalException(E_Illegal_Instr)
 
@@ -5562,7 +5848,93 @@ instruction Decode(w::word) =
      case _                                    => UnknownInstruction
    }
 
--- instruction printer
+instruction decode_RVCQ0(a::Architecture, h::half) =
+   match a, h
+   { case    _, '000 000   000   00    000 00' => IllegalInstruction
+     case    _, '000 k`2 l`4 i`1 j`1     d 00' => RVC(C_ADDI4SPN(d, l : k : j : i))
+     case    _, '001 i`3     s  j`2      d 00' => RVC( C_FLD(d, s, j : i))
+     case    _, '010 j`3     s  i`1 k`1  d 00' => RVC(  C_LW(d, s, k : j : i))
+     case RV32, '011 j`3     s  i`1 k`1  d 00' => RVC( C_FLW(d, s, k : j : i))
+     case RV64, '011 i`3     s  j`2      d 00' => RVC(  C_LD(d, s, j : i))
+
+     case    _, '101 i`3    s1  j`2     s2 00' => RVC( C_FSD(s1, s2, j : i))
+     case    _, '110 j`3    s1  i`1 k`1 s2 00' => RVC(  C_SW(s1, s2, k : j : i))
+     case RV32, '111 j`3    s1  i`1 k`1 s2 00' => RVC( C_FSW(s1, s2, k : j : i))
+     case RV64, '111 i`3    s1  j`2     s2 00' => RVC(  C_SD(s1, s2, j : i))
+
+     case    _, _                              => UnknownInstruction
+   }
+
+instruction decode_RVCQ1(a::Architecture, h::half) =
+   match a, h
+   { case    _, '000 _`1 00000  _`5             01' => RVC(     C_NOP)
+     case    _, '000 j`1 ds     i`5             01' => RVC(    C_ADDI(ds, j : i))
+
+     case RV32, '001 p`1 j`1 n`2 o`1 l`1 m`1 i`3 k`1 01' => RVC(C_JAL(p : o : n : m : l : k : j : i))
+
+     case RV64, '001 j`1 ds     i`5             01' => RVC(   C_ADDIW(ds, j : i))
+     case    _, '010 j`1 d      i`5             01' => RVC(      C_LI(d, j : i))
+     case    _, '011 m`1 00010  i`1 k`1 l`2 j`1 01' => RVC(C_ADDI16SP(m : l : k : j : i))
+     case    _, '011 j`1 d      i`5             01' => RVC(     C_LUI(d, j : i))
+
+     case RV32, '100 0   00  ds i`5             01' => RVC(    C_SRLI(ds, 0b0 : i))
+     case RV64, '100 j`1 00  ds i`5             01' => RVC(    C_SRLI(ds, j : i))
+     case RV32, '100 0   01  ds i`5             01' => RVC(    C_SRAI(ds, 0b0 : i))
+     case RV64, '100 j`1 01  ds i`5             01' => RVC(    C_SRAI(ds, j : i))
+     case    _, '100 j`1 10  ds i`5             01' => RVC(    C_ANDI(ds, j : i))
+
+     case    _, '100 0   11  ds 00  s2          01' => RVC(     C_SUB(ds, s2))
+     case    _, '100 0   11  ds 01  s2          01' => RVC(     C_XOR(ds, s2))
+     case    _, '100 0   11  ds 10  s2          01' => RVC(      C_OR(ds, s2))
+     case    _, '100 0   11  ds 11  s2          01' => RVC(     C_AND(ds, s2))
+
+     case RV64, '100 1   11  ds 00  s2          01' => RVC(    C_SUBW(ds, s2))
+     case RV64, '100 1   11  ds 01  s2          01' => RVC(    C_ADDW(ds, s2))
+
+     case    _, '101 p`1 j`1 n`2 o`1 l`1 m`1 i`3 k`1 01' => RVC(  C_J(p : o : n : m : l : k : j : i))
+
+     case    _, '110 m`1 j`2 s  l`2 i`2 k`1     01' => RVC(    C_BEQZ(s, m : l : k : j : i))
+     case    _, '111 m`1 j`2 s  l`2 i`2 k`1     01' => RVC(    C_BNEZ(s, m : l : k : j : i))
+
+     case    _, _                                   => UnknownInstruction
+   }
+
+instruction decode_RVCQ2(a::Architecture, h::half) =
+   match a, h
+   { case RV32, '000 0   ds  i`5      10' => RVC( C_SLLI(ds, 0b0 : i))
+     case RV64, '000 j`1 ds  i`5      10' => RVC( C_SLLI(ds, j : i))
+
+     case    _, '001 j`1 d   i`2 k`3  10' => RVC(C_FLDSP(d, k : j : i))
+     case    _, '010 j`1 d   i`3 k`2  10' => RVC( C_LWSP(d, k : j : i))
+     case RV32, '011 j`1 d   i`3 k`2  10' => RVC(C_FLWSP(d, k : j : i))
+     case RV64, '011 j`1 d   i`2 k`3  10' => RVC( C_LDSP(d, k : j : i))
+
+     case    _, '100 0   00000  00000 10' => UnknownInstruction -- reserved
+     case    _, '100 0   s1     00000 10' => RVC(   C_JR(s1))
+     case    _, '100 0   d      s2    10' => RVC(   C_MV(d, s2))
+     case    _, '100 1   00000  00000 10' => RVC(C_EBREAK)
+     case    _, '100 1   s1     00000 10' => RVC( C_JALR(s1))
+     case    _, '100 1   ds     s2    10' => RVC(  C_ADD(ds, s2))
+
+     case    _, '101 i`3 j`3    s2    10' => RVC(C_FSDSP(s2, j : i))
+     case    _, '110 i`4 j`2    s2    10' => RVC( C_SWSP(s2, j : i))
+     case RV32, '111 i`4 j`2    s2    10' => RVC(C_FSWSP(s2, j : i))
+     case    _, '111 i`3 j`3    s2    10' => RVC( C_SDSP(s2, j : i))
+
+     case    _, _                         => UnknownInstruction
+   }
+
+instruction decode_RVC(a::Architecture, h::half) =
+   match h
+   { case '_`14 00' => decode_RVCQ0(a, h)
+     case '_`14 01' => decode_RVCQ1(a, h)
+     case '_`14 10' => decode_RVCQ2(a, h)
+     case  _        => #INTERNAL_ERROR("invalid RVC instruction")
+   }
+
+---------------------------------------------------------------------------
+-- Instruction printing
+---------------------------------------------------------------------------
 
 string imm(i::bits(N))  = "0x" : [i]
 string pinst(o::string) = PadRight(#" ", 12, o)
@@ -5605,11 +5977,20 @@ string pUtype(o::string, rd::reg, i::bits(N)) =
 string pUJtype(o::string, rd::reg, i::bits(N)) =
     pinst(o) : " " : reg(rd) : ", " : imm(i<<1)
 
+string pCJtype(o::string, i::bits(N)) =
+    pinst(o) : " " : imm(i<<1)
+
+string pCItype(o::string, i::bits(N)) =
+    pinst(o) : " " : imm(i)
+
 string pN0type(o::string) =
     pinst(o)
 
 string pN1type(o::string, r::reg) =
     pinst(o) : " " : reg(r)
+
+string pN2type(o::string, rd::reg, rs::reg) =
+    pinst(o) : " " : reg(rd) : ", " : reg(rs)
 
 string pFRtype(o::string, rd::reg, rs1::reg, rs2::reg) =
     pinst(o) : " " : fpreg(rd) : ", " : fpreg(rs1) : ", " : fpreg(rs2)
@@ -5631,6 +6012,9 @@ string pCFItype(o::string, rd::reg, rs::reg) =
 
 string pCIFtype(o::string, rd::reg, rs::reg) =
     pinst(o) : " " : reg(rd) : ", " : fpreg(rs)
+
+string pCFStype(o::string, rd::reg, i::bits(N)) =
+    pinst(o) : " " : fpreg(rd) : ", " : imm(i)
 
 string instructionToString(i::instruction) =
    match i
@@ -5811,6 +6195,58 @@ string instructionToString(i::instruction) =
      case AMO(AMOMINU_D(aq, rl, rd, rs1, rs2))  => pARtype("AMOMINU.D", aq, rl, rd, rs1, rs2)
      case AMO(AMOMAXU_D(aq, rl, rd, rs1, rs2))  => pARtype("AMOMAXU.D", aq, rl, rd, rs1, rs2)
 
+     case RVC( C_LWSP(rd, imm))             => pUtype("C.LWSP",    rd, imm)
+     case RVC( C_LDSP(rd, imm))             => pUtype("C.LDSP",    rd, imm)
+     case RVC( C_SWSP(rd, imm))             => pUtype("C.SWSP",    rd, imm)
+     case RVC( C_SDSP(rd, imm))             => pUtype("C.SDSP",    rd, imm)
+
+     case RVC(C_FLWSP(rd, imm))             => pCFStype("C.FLWSP", rd, imm)
+     case RVC(C_FLDSP(rd, imm))             => pCFStype("C.FLDSP", rd, imm)
+     case RVC(C_FSWSP(rd, imm))             => pCFStype("C.FSWSP", rd, imm)
+     case RVC(C_FSDSP(rd, imm))             => pCFStype("C.FSDSP", rd, imm)
+
+     case RVC(   C_LW(rd, rs1, imm))        => pStype("C.LW",   creg2reg(rd),  creg2reg(rs1), imm)
+     case RVC(   C_LD(rd, rs1, imm))        => pStype("C.LD",   creg2reg(rd),  creg2reg(rs1), imm)
+     case RVC(   C_SW(rs1, rs2, imm))       => pStype("C.SW",   creg2reg(rs1), creg2reg(rs2), imm)
+     case RVC(   C_SD(rs1, rs2, imm))       => pStype("C.SD",   creg2reg(rs1), creg2reg(rs2), imm)
+
+     case RVC(  C_FLW(rd, rs1, imm))        => pFItype("C.FLW", creg2reg(rd),  creg2reg(rs1), imm)
+     case RVC(  C_FLD(rd, rs1, imm))        => pFItype("C.FLD", creg2reg(rd),  creg2reg(rs1), imm)
+     case RVC(  C_FSW(rs1, rs2, imm))       => pFStype("C.FSW", creg2reg(rs1), creg2reg(rs2), imm)
+     case RVC(  C_FSD(rs1, rs2, imm))       => pFStype("C.FSD", creg2reg(rs1), creg2reg(rs2), imm)
+
+     case RVC(    C_J(imm))                 => pCJtype("C.J",    imm)
+     case RVC(  C_JAL(imm))                 => pCJtype("C.JAL",  imm)
+     case RVC(   C_JR(rs))                  => pN1type("C.JR",   rs)
+     case RVC( C_JALR(rs))                  => pN1type("C.JALR", rs)
+     case RVC( C_BEQZ(rs, imm))             => pUJtype("C.BEQZ", creg2reg(rs), imm)
+     case RVC( C_BNEZ(rs, imm))             => pUJtype("C.BNEZ", creg2reg(rs), imm)
+
+     case RVC(    C_LI(rd, imm))            => pUtype("C.LI",    rd, imm)
+     case RVC(   C_LUI(rd, imm))            => pUtype("C.LUI",   rd, imm)
+     case RVC(  C_ADDI(rd, imm))            => pUtype("C.ADDI",  rd, imm)
+     case RVC( C_ADDIW(rd, imm))            => pUtype("C.ADDIW", rd, imm)
+     case RVC(  C_SLLI(rd, imm))            => pUtype("C.SLLI",  rd, imm)
+     case RVC(  C_SRLI(rd, imm))            => pUtype("C.SRLI",  creg2reg(rd), imm)
+     case RVC(  C_SRAI(rd, imm))            => pUtype("C.SRAI",  creg2reg(rd), imm)
+     case RVC(  C_ANDI(rd, imm))            => pUtype("C.ANDI",  creg2reg(rd), imm)
+
+     case RVC(    C_MV(rd, rs))             => pN2type("C.MV",   rd, rs)
+     case RVC(   C_ADD(rd, rs))             => pN2type("C.ADD",  rd, rs)
+
+     case RVC(   C_AND(rd, rs))             => pN2type("C.AND",  creg2reg(rd), creg2reg(rs))
+     case RVC(    C_OR(rd, rs))             => pN2type("C.OR",   creg2reg(rd), creg2reg(rs))
+     case RVC(   C_XOR(rd, rs))             => pN2type("C.XOR",  creg2reg(rd), creg2reg(rs))
+     case RVC(   C_SUB(rd, rs))             => pN2type("C.SUB",  creg2reg(rd), creg2reg(rs))
+     case RVC(  C_ADDW(rd, rs))             => pN2type("C.ADDW", creg2reg(rd), creg2reg(rs))
+     case RVC(  C_SUBW(rd, rs))             => pN2type("C.SUBW", creg2reg(rd), creg2reg(rs))
+
+     case RVC(C_ADDI16SP(imm))              => pCItype("C.ADDI16SP", imm)
+     case RVC(C_ADDI4SPN(rd, imm))          => pUtype("C.ADDI4SPN", creg2reg(rd), imm)
+
+     case RVC( C_NOP)                       => pN0type("C.NOP")
+     case RVC( C_EBREAK)                    => pN0type("C.EBREAK")
+
      case System( ECALL)                    => pN0type("ECALL")
      case System(EBREAK)                    => pN0type("EBREAK")
      case System(  URET)                    => pN0type("URET")
@@ -5828,12 +6264,17 @@ string instructionToString(i::instruction) =
 
      case System(SFENCE_VMA(rs1, rs2))      => pRtype("SFENCE.VMA", 0b0`5, rs1, rs2)
 
+     case IllegalInstruction                => pN0type("ILLEGAL")
      case UnknownInstruction                => pN0type("UNKNOWN")
 
      case Internal(FETCH_MISALIGNED(_))     => pN0type("FETCH_MISALIGNED")
      case Internal(FETCH_FAULT(_))          => pN0type("FETCH_FAULT")
    }
 
+
+---------------------------------------------------------------------------
+-- Instruction encoding
+---------------------------------------------------------------------------
 
 word Rtype(o::opcode, f3::bits(3), rd::reg, rs1::reg, rs2::reg, f7::bits(7)) =
     f7 : rs2 : rs1 : f3 : rd : o
