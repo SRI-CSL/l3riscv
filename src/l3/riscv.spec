@@ -1124,8 +1124,11 @@ bool in32BitMode()  = curArch() == RV32
 
 bool haveFPSingle() = MCSR.misa.F
 bool haveFPDouble() = MCSR.misa.D
-
 bool haveFP()       = MCSR.misa.F or MCSR.misa.D
+
+bool haveAtomics()  = MCSR.misa.A
+bool haveRVC()      = MCSR.misa.C
+bool haveMulDiv()   = MCSR.misa.M
 
 asid32 curAsid32()  = satp32(SCSR.satp<31:0>).SATP_ASID
 
@@ -3067,152 +3070,180 @@ define Shift > SRAW(rd::reg, rs1::reg, rs2::reg) =
 -- MUL   rd, rs1, rs2
 -----------------------------------
 define MulDiv > MUL(rd::reg, rs1::reg, rs2::reg) =
-    writeRD(rd, GPR(rs1) * GPR(rs2))
+    if   not haveMulDiv()
+    then signalException(E_Illegal_Instr)
+    else writeRD(rd, GPR(rs1) * GPR(rs2))
 
 -----------------------------------
 -- MULH  rd, rs1, rs2
 -----------------------------------
 define MulDiv > MULH(rd::reg, rs1::reg, rs2::reg) =
-{ v1  = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else GPR(rs1)
-; v2  = if in32BitMode() then SignExtend(GPR(rs2)<31:0>) else GPR(rs2)
-; prod`128 = SignExtend(v1) * SignExtend(v2)
-; res = if in32BitMode() then SignExtend(prod<63:32>) else SignExtend(prod<127:64>)
-; writeRD(rd, res)
+{ if   not haveMulDiv()
+  then signalException(E_Illegal_Instr)
+  else { v1  = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else GPR(rs1)
+       ; v2  = if in32BitMode() then SignExtend(GPR(rs2)<31:0>) else GPR(rs2)
+       ; prod`128 = SignExtend(v1) * SignExtend(v2)
+       ; res = if in32BitMode() then SignExtend(prod<63:32>) else SignExtend(prod<127:64>)
+       ; writeRD(rd, res)
+       }
 }
 
 -----------------------------------
 -- MULHU rd, rs1, rs2
 -----------------------------------
 define MulDiv > MULHU(rd::reg, rs1::reg, rs2::reg) =
-{ v1  = if in32BitMode() then ZeroExtend(GPR(rs1)<31:0>) else ZeroExtend(GPR(rs1))
-; v2  = if in32BitMode() then ZeroExtend(GPR(rs2)<31:0>) else ZeroExtend(GPR(rs2))
-; prod`128 = v1 * v2
-; res = if in32BitMode() then ZeroExtend(prod<63:32>) else prod<127:64>
-; writeRD(rd, res)
+{ if   not haveMulDiv()
+  then signalException(E_Illegal_Instr)
+  else { v1  = if in32BitMode() then ZeroExtend(GPR(rs1)<31:0>) else ZeroExtend(GPR(rs1))
+       ; v2  = if in32BitMode() then ZeroExtend(GPR(rs2)<31:0>) else ZeroExtend(GPR(rs2))
+       ; prod`128 = v1 * v2
+       ; res = if in32BitMode() then ZeroExtend(prod<63:32>) else prod<127:64>
+       ; writeRD(rd, res)
+       }
 }
 
 -----------------------------------
 -- MULHSU rd, rs1, rs2
 -----------------------------------
 define MulDiv > MULHSU(rd::reg, rs1::reg, rs2::reg) =
-{ v1  = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else SignExtend(GPR(rs1))
-; v2  = if in32BitMode() then ZeroExtend(GPR(rs2)<31:0>) else ZeroExtend(GPR(rs2))
-; prod`128 = v1 * v2
-; res = if in32BitMode() then SignExtend(prod<63:32>) else prod<127:64>
-; writeRD(rd, res)
+{ if   not haveMulDiv()
+  then signalException(E_Illegal_Instr)
+  else { v1  = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else SignExtend(GPR(rs1))
+       ; v2  = if in32BitMode() then ZeroExtend(GPR(rs2)<31:0>) else ZeroExtend(GPR(rs2))
+       ; prod`128 = v1 * v2
+       ; res = if in32BitMode() then SignExtend(prod<63:32>) else prod<127:64>
+       ; writeRD(rd, res)
+       }
 }
 
 -----------------------------------
 -- MULW  rd, rs1, rs2
 -----------------------------------
 define MulDiv > MULW(rd::reg, rs1::reg, rs2::reg) =
-    if   in32BitMode()
-    then signalException(E_Illegal_Instr)
-    else { prod`64 = SignExtend(GPR(rs1)<31:0> * GPR(rs2)<31:0>)
-         ; writeRD(rd, SignExtend(prod<31:0>))
-         }
+{ if   in32BitMode() or not haveMulDiv()
+  then signalException(E_Illegal_Instr)
+  else { prod`64 = SignExtend(GPR(rs1)<31:0> * GPR(rs2)<31:0>)
+       ; writeRD(rd, SignExtend(prod<31:0>))
+       }
+}
 
 -----------------------------------
 -- DIV   rd, rs1, rs2
 -----------------------------------
 define MulDiv > DIV(rd::reg, rs1::reg, rs2::reg) =
-    if   GPR(rs2) == 0x0
-    then writeRD(rd, SignExtend(1`1))
-    else { minus_one::regType   = SignExtend(1`1)
-         ; minus_max            = 0b1 << (Size(GPR(rs1)) - 1)
-         ; if   GPR(rs1) == minus_max and GPR(rs2) == minus_one
-           then writeRD(rd, minus_max)
-           else writeRD(rd, GPR(rs1) quot GPR(rs2))
-         }
+{ if   not haveMulDiv()
+  then signalException(E_Illegal_Instr)
+  else if   GPR(rs2) == 0x0
+       then writeRD(rd, SignExtend(1`1))
+       else { minus_one::regType   = SignExtend(1`1)
+            ; minus_max            = 0b1 << (Size(GPR(rs1)) - 1)
+            ; if   GPR(rs1) == minus_max and GPR(rs2) == minus_one
+              then writeRD(rd, minus_max)
+              else writeRD(rd, GPR(rs1) quot GPR(rs2))
+            }
+}
 
 -----------------------------------
 -- REM   rd, rs1, rs2
 -----------------------------------
 define MulDiv > REM(rd::reg, rs1::reg, rs2::reg) =
-    if   GPR(rs2) == 0x0
-    then writeRD(rd, GPR(rs1))
-    else { minus_one::regType   = SignExtend(1`1)
-         ; minus_max            = 0b1 << (Size(GPR(rs1)) - 1)
-         ; if   GPR(rs1) == minus_max and GPR(rs2) == minus_one
-           then writeRD(rd, 0)
-           else writeRD(rd, GPR(rs1) rem GPR(rs2))
-         }
+{ if   not haveMulDiv()
+  then signalException(E_Illegal_Instr)
+  else if   GPR(rs2) == 0x0
+       then writeRD(rd, GPR(rs1))
+       else { minus_one::regType   = SignExtend(1`1)
+            ; minus_max            = 0b1 << (Size(GPR(rs1)) - 1)
+            ; if   GPR(rs1) == minus_max and GPR(rs2) == minus_one
+              then writeRD(rd, 0)
+              else writeRD(rd, GPR(rs1) rem GPR(rs2))
+            }
+}
 
 -----------------------------------
 -- DIVU  rd, rs1, rs2
 -----------------------------------
 define MulDiv > DIVU(rd::reg, rs1::reg, rs2::reg) =
-{ v1 = if in32BitMode() then ZeroExtend(GPR(rs1)<31:0>) else GPR(rs1)
-; v2 = if in32BitMode() then ZeroExtend(GPR(rs2)<31:0>) else GPR(rs2)
-; if v2 == 0x0
-  then writeRD(rd, SignExtend(1`1))
-  else writeRD(rd, v1 div v2)
+{ if   not haveMulDiv()
+  then signalException(E_Illegal_Instr)
+  else { v1 = if in32BitMode() then ZeroExtend(GPR(rs1)<31:0>) else GPR(rs1)
+       ; v2 = if in32BitMode() then ZeroExtend(GPR(rs2)<31:0>) else GPR(rs2)
+       ; if v2 == 0x0
+         then writeRD(rd, SignExtend(1`1))
+         else writeRD(rd, v1 div v2)
+       }
 }
 
 -----------------------------------
 -- REMU  rd, rs1, rs2
 -----------------------------------
 define MulDiv > REMU(rd::reg, rs1::reg, rs2::reg) =
-    if   GPR(rs2) == 0x0
-    then writeRD(rd, GPR(rs1))
-    else writeRD(rd, GPR(rs1) mod GPR(rs2))
+{ if   not haveMulDiv()
+  then signalException(E_Illegal_Instr)
+  else if   GPR(rs2) == 0x0
+       then writeRD(rd, GPR(rs1))
+       else writeRD(rd, GPR(rs1) mod GPR(rs2))
+}
 
 -----------------------------------
 -- DIVW  rd, rs1, rs2
 -----------------------------------
 define MulDiv > DIVW(rd::reg, rs1::reg, rs2::reg) =
-    if   in32BitMode()
-    then signalException(E_Illegal_Instr)
-    else { s1 = GPR(rs1)<31:0>
-         ; s2 = GPR(rs2)<31:0>
-         ; if   s2 == 0x0
-           then writeRD(rd, SignExtend(1`1))
-           else { minus_one::word    = SignExtend(1`1)
-                ; minus_max          = 0b1 << (Size(s1) - 1)
-                ; if   s1 == minus_max and s2 == minus_one
-                  then writeRD(rd, SignExtend(minus_max))
-                  else writeRD(rd, SignExtend(s1 quot s2))
-                }
-         }
+{ if   in32BitMode() or not haveMulDiv()
+  then signalException(E_Illegal_Instr)
+  else { s1 = GPR(rs1)<31:0>
+       ; s2 = GPR(rs2)<31:0>
+       ; if   s2 == 0x0
+         then writeRD(rd, SignExtend(1`1))
+         else { minus_one::word    = SignExtend(1`1)
+              ; minus_max          = 0b1 << (Size(s1) - 1)
+              ; if   s1 == minus_max and s2 == minus_one
+                then writeRD(rd, SignExtend(minus_max))
+                else writeRD(rd, SignExtend(s1 quot s2))
+              }
+       }
+}
 
 -----------------------------------
 -- REMW  rd, rs1, rs2
 -----------------------------------
 define MulDiv > REMW(rd::reg, rs1::reg, rs2::reg) =
-    if   in32BitMode()
-    then signalException(E_Illegal_Instr)
-    else { s1 = GPR(rs1)<31:0>
-         ; s2 = GPR(rs2)<31:0>
-         ; if   s2 == 0x0
-           then writeRD(rd, SignExtend(s1))
-           else writeRD(rd, SignExtend(s1 rem s2))
-         }
+{ if   in32BitMode() or not haveMulDiv()
+  then signalException(E_Illegal_Instr)
+  else { s1 = GPR(rs1)<31:0>
+       ; s2 = GPR(rs2)<31:0>
+       ; if   s2 == 0x0
+         then writeRD(rd, SignExtend(s1))
+         else writeRD(rd, SignExtend(s1 rem s2))
+       }
+}
 
 -----------------------------------
 -- DIVUW rd, rs1, rs2
 -----------------------------------
 define MulDiv > DIVUW(rd::reg, rs1::reg, rs2::reg) =
-    if   in32BitMode()
-    then signalException(E_Illegal_Instr)
-    else { s1 = GPR(rs1)<31:0>
-         ; s2 = GPR(rs2)<31:0>
-         ; if   s2 == 0x0
-           then writeRD(rd, SignExtend(1`1))
-           else writeRD(rd, SignExtend(s1 div s2))
-         }
+{ if   in32BitMode() or not haveMulDiv()
+  then signalException(E_Illegal_Instr)
+  else { s1 = GPR(rs1)<31:0>
+       ; s2 = GPR(rs2)<31:0>
+       ; if   s2 == 0x0
+         then writeRD(rd, SignExtend(1`1))
+         else writeRD(rd, SignExtend(s1 div s2))
+       }
+}
 
 -----------------------------------
 -- REMUW rd, rs1, rs2
 -----------------------------------
 define MulDiv > REMUW(rd::reg, rs1::reg, rs2::reg) =
-    if   in32BitMode()
-    then signalException(E_Illegal_Instr)
-    else { s1 = GPR(rs1)<31:0>
-         ; s2 = GPR(rs2)<31:0>
-         ; if   s2 == 0x0
-           then writeRD(rd, SignExtend(s1))
-           else writeRD(rd, SignExtend(s1 mod s2))
-         }
+{ if   in32BitMode() or not haveMulDiv()
+  then signalException(E_Illegal_Instr)
+  else { s1 = GPR(rs1)<31:0>
+       ; s2 = GPR(rs2)<31:0>
+       ; if   s2 == 0x0
+         then writeRD(rd, SignExtend(s1))
+         else writeRD(rd, SignExtend(s1 mod s2))
+       }
+}
 
 ---------------------------------------------------------------------------
 -- Control Transfer Instructions
@@ -3515,14 +3546,17 @@ define FENCE_I(rd::reg, rs1::reg, imm::imm12) = nothing
 -- LR.W [aq,rl] rd, rs1
 -----------------------------------
 define AMO > LR_W(aq::amo, rl::amo, rd::reg, rs1::reg) =
-{ vAddr = GPR(rs1)
-; if   vAddr<1:0> != 0
-  then signalAddressException(E_SAMO_Addr_Align, vAddr)
-  else match translateAddr(vAddr, Read, Data)
-       { case Some(pAddr) => { writeRD(rd, SignExtend(rawReadData(pAddr)<31:0>))
-                             ; ReserveLoad  <- Some(vAddr)
-                             }
-         case None        => signalAddressException(E_Load_Page_Fault, vAddr)
+{ if   not haveAtomics()
+  then signalException(E_Illegal_Instr)
+  else { vAddr = GPR(rs1)
+       ; if   vAddr<1:0> != 0
+         then signalAddressException(E_SAMO_Addr_Align, vAddr)
+         else match translateAddr(vAddr, Read, Data)
+              { case Some(pAddr) => { writeRD(rd, SignExtend(rawReadData(pAddr)<31:0>))
+                                    ; ReserveLoad  <- Some(vAddr)
+                                    }
+                case None        => signalAddressException(E_Load_Page_Fault, vAddr)
+              }
        }
 }
 
@@ -3530,77 +3564,85 @@ define AMO > LR_W(aq::amo, rl::amo, rd::reg, rs1::reg) =
 -- LR.D [aq,rl] rd, rs1
 -----------------------------------
 define AMO > LR_D(aq::amo, rl::amo, rd::reg, rs1::reg) =
-    if   in32BitMode()
-    then signalException(E_Illegal_Instr)
-    else { vAddr = GPR(rs1)
-         ; if   vAddr<2:0> != 0
-           then signalAddressException(E_SAMO_Addr_Align, vAddr)
-           else match translateAddr(vAddr, Read, Data)
-                { case Some(pAddr) => { writeRD(rd, rawReadData(pAddr))
-                                      ; ReserveLoad <- Some(vAddr)
-                                      }
-                  case None        => signalAddressException(E_Load_Page_Fault, vAddr)
-                }
-         }
+{ if   in32BitMode() or not haveAtomics()
+  then signalException(E_Illegal_Instr)
+  else { vAddr = GPR(rs1)
+       ; if   vAddr<2:0> != 0
+         then signalAddressException(E_SAMO_Addr_Align, vAddr)
+         else match translateAddr(vAddr, Read, Data)
+              { case Some(pAddr) => { writeRD(rd, rawReadData(pAddr))
+                                    ; ReserveLoad <- Some(vAddr)
+                                    }
+                case None        => signalAddressException(E_Load_Page_Fault, vAddr)
+              }
+       }
+}
 
 -----------------------------------
 -- SC.W [aq,rl] rd, rs1, rs2
 -----------------------------------
 define AMO > SC_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ vAddr = GPR(rs1)
-; if   vAddr<1:0> != 0
-  then signalAddressException(E_SAMO_Addr_Align, vAddr)
-  else if   not matchLoadReservation(vAddr)
-       then writeRD(rd, 1)
-       else match translateAddr(vAddr, Write, Data)
-            { case Some(pAddr) => { data = GPR(rs2)
-                                  ; rawWriteData(pAddr, data, 4)
-                                  ; recordStore(vAddr, data, WORD)
-                                  ; writeRD(rd, 0)
-                                  ; ReserveLoad  <- None
-                                  }
-              case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
-            }
+{ if   not haveAtomics()
+  then signalException(E_Illegal_Instr)
+  else { vAddr = GPR(rs1)
+       ; if   vAddr<1:0> != 0
+         then signalAddressException(E_SAMO_Addr_Align, vAddr)
+         else if   not matchLoadReservation(vAddr)
+         then writeRD(rd, 1)
+         else match translateAddr(vAddr, Write, Data)
+              { case Some(pAddr) => { data = GPR(rs2)
+                                    ; rawWriteData(pAddr, data, 4)
+                                    ; recordStore(vAddr, data, WORD)
+                                    ; writeRD(rd, 0)
+                                    ; ReserveLoad  <- None
+                                    }
+                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+              }
+       }
 }
 
 -----------------------------------
 -- SC.D [aq,rl] rd, rs1, rs2
 -----------------------------------
 define AMO > SC_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-    if   in32BitMode()
-    then signalException(E_Illegal_Instr)
-    else { vAddr = GPR(rs1)
-         ; if   vAddr<2:0> != 0
-           then signalAddressException(E_SAMO_Addr_Align, vAddr)
-           else if   not matchLoadReservation(vAddr)
-                then writeRD(rd, 1)
-                else match translateAddr(vAddr, Write, Data)
-                     { case Some(pAddr) => { data = GPR(rs2)
-                                           ; rawWriteData(pAddr, data, 4)
-                                           ; recordStore(vAddr, data, WORD)
-                                           ; writeRD(rd, 0)
-                                           ; ReserveLoad  <- None
-                                           }
-                       case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
-                     }
-         }
+{ if   in32BitMode() or not haveAtomics()
+  then signalException(E_Illegal_Instr)
+  else { vAddr = GPR(rs1)
+       ; if   vAddr<2:0> != 0
+         then signalAddressException(E_SAMO_Addr_Align, vAddr)
+         else if   not matchLoadReservation(vAddr)
+              then writeRD(rd, 1)
+              else match translateAddr(vAddr, Write, Data)
+                   { case Some(pAddr) => { data = GPR(rs2)
+                                         ; rawWriteData(pAddr, data, 4)
+                                         ; recordStore(vAddr, data, WORD)
+                                         ; writeRD(rd, 0)
+                                         ; ReserveLoad  <- None
+                                         }
+                     case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+                   }
+       }
+}
 
 -----------------------------------
 -- AMOSWAP.W [aq,rl] rd, rs1, rs2
 -----------------------------------
 define AMO > AMOSWAP_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ vAddr = GPR(rs1)
-; if   vAddr<1:0> != 0
-  then signalAddressException(E_SAMO_Addr_Align, vAddr)
-  else match translateAddr(vAddr, ReadWrite, Data)
-       { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
-                             ; data = GPR(rs2)
-                             ; writeRD(rd, memv)
-                             ; rawWriteData(pAddr, data, 4)
-                             ; recordLoad(vAddr, memv, WORD)
-                             ; recordAMOStore(vAddr, data, WORD)
-                             }
-         case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+{ if   not haveAtomics()
+  then signalException(E_Illegal_Instr)
+  else { vAddr = GPR(rs1)
+       ; if   vAddr<1:0> != 0
+         then signalAddressException(E_SAMO_Addr_Align, vAddr)
+         else match translateAddr(vAddr, ReadWrite, Data)
+              { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
+                                    ; data = GPR(rs2)
+                                    ; writeRD(rd, memv)
+                                    ; rawWriteData(pAddr, data, 4)
+                                    ; recordLoad(vAddr, memv, WORD)
+                                    ; recordAMOStore(vAddr, data, WORD)
+                                    }
+                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+              }
        }
 }
 
@@ -3608,18 +3650,21 @@ define AMO > AMOSWAP_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -- AMOSWAP.D [aq,rl] rd, rs1, rs2
 -----------------------------------
 define AMO > AMOSWAP_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ vAddr = GPR(rs1)
-; if   vAddr<2:0> != 0
-  then signalAddressException(E_SAMO_Addr_Align, vAddr)
-  else match translateAddr(vAddr, ReadWrite, Data)
-       { case Some(pAddr) => { memv = rawReadData(pAddr)
-                             ; data = GPR(rs2)
-                             ; writeRD(rd, memv)
-                             ; rawWriteData(pAddr, data, 8)
-                             ; recordLoad(vAddr, memv, DOUBLEWORD)
-                             ; recordAMOStore(vAddr, data, DOUBLEWORD)
-                             }
-         case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+{ if   in32BitMode() or not haveAtomics()
+  then signalException(E_Illegal_Instr)
+  else { vAddr = GPR(rs1)
+       ; if   vAddr<2:0> != 0
+         then signalAddressException(E_SAMO_Addr_Align, vAddr)
+         else match translateAddr(vAddr, ReadWrite, Data)
+              { case Some(pAddr) => { memv = rawReadData(pAddr)
+                                    ; data = GPR(rs2)
+                                    ; writeRD(rd, memv)
+                                    ; rawWriteData(pAddr, data, 8)
+                                    ; recordLoad(vAddr, memv, DOUBLEWORD)
+                                    ; recordAMOStore(vAddr, data, DOUBLEWORD)
+                                    }
+                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+              }
        }
 }
 
@@ -3627,19 +3672,22 @@ define AMO > AMOSWAP_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -- AMOADD.W [aq,rl] rd, rs1, rs2
 -----------------------------------
 define AMO > AMOADD_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ vAddr = GPR(rs1)
-; if   vAddr<1:0> != 0
-  then signalAddressException(E_SAMO_Addr_Align, vAddr)
-  else match translateAddr(vAddr, ReadWrite, Data)
-       { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
-                             ; data = GPR(rs2)
-                             ; val  = data + memv
-                             ; writeRD(rd, memv)
-                             ; rawWriteData(pAddr, val, 4)
-                             ; recordLoad(vAddr, memv, WORD)
-                             ; recordAMOStore(vAddr, val, WORD)
-                             }
-         case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+{ if   not haveAtomics()
+  then signalException(E_Illegal_Instr)
+  else { vAddr = GPR(rs1)
+       ; if   vAddr<1:0> != 0
+         then signalAddressException(E_SAMO_Addr_Align, vAddr)
+         else match translateAddr(vAddr, ReadWrite, Data)
+              { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
+                                    ; data = GPR(rs2)
+                                    ; val  = data + memv
+                                    ; writeRD(rd, memv)
+                                    ; rawWriteData(pAddr, val, 4)
+                                    ; recordLoad(vAddr, memv, WORD)
+                                    ; recordAMOStore(vAddr, val, WORD)
+                                    }
+                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+              }
        }
 }
 
@@ -3647,19 +3695,22 @@ define AMO > AMOADD_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -- AMOADD.D [aq,rl] rd, rs1, rs2
 -----------------------------------
 define AMO > AMOADD_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ vAddr = GPR(rs1)
-; if   vAddr<2:0> != 0
-  then signalAddressException(E_SAMO_Addr_Align, vAddr)
-  else match translateAddr(vAddr, ReadWrite, Data)
-       { case Some(pAddr) => { memv = rawReadData(pAddr)
-                             ; data = GPR(rs2)
-                             ; val  = data + memv
-                             ; writeRD(rd, memv)
-                             ; rawWriteData(pAddr, val, 8)
-                             ; recordLoad(vAddr, memv, DOUBLEWORD)
-                             ; recordAMOStore(vAddr, val, DOUBLEWORD)
-                             }
-         case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+{ if   in32BitMode() or not haveAtomics()
+  then signalException(E_Illegal_Instr)
+  else { vAddr = GPR(rs1)
+       ; if   vAddr<2:0> != 0
+         then signalAddressException(E_SAMO_Addr_Align, vAddr)
+         else match translateAddr(vAddr, ReadWrite, Data)
+              { case Some(pAddr) => { memv = rawReadData(pAddr)
+                                    ; data = GPR(rs2)
+                                    ; val  = data + memv
+                                    ; writeRD(rd, memv)
+                                    ; rawWriteData(pAddr, val, 8)
+                                    ; recordLoad(vAddr, memv, DOUBLEWORD)
+                                    ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                    }
+                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+              }
        }
 }
 
@@ -3667,19 +3718,22 @@ define AMO > AMOADD_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -- AMOXOR.W [aq,rl] rd, rs1, rs2
 -----------------------------------
 define AMO > AMOXOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ vAddr = GPR(rs1)
-; if   vAddr<1:0> != 0
-  then signalAddressException(E_SAMO_Addr_Align, vAddr)
-  else match translateAddr(vAddr, ReadWrite, Data)
-       { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
-                             ; data = GPR(rs2)
-                             ; val  = data ?? memv
-                             ; writeRD(rd, memv)
-                             ; rawWriteData(pAddr, val, 4)
-                             ; recordLoad(vAddr, memv, WORD)
-                             ; recordAMOStore(vAddr, val, WORD)
-                             }
-         case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+{ if   not haveAtomics()
+  then signalException(E_Illegal_Instr)
+  else { vAddr = GPR(rs1)
+       ; if   vAddr<1:0> != 0
+         then signalAddressException(E_SAMO_Addr_Align, vAddr)
+         else match translateAddr(vAddr, ReadWrite, Data)
+              { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
+                                    ; data = GPR(rs2)
+                                    ; val  = data ?? memv
+                                    ; writeRD(rd, memv)
+                                    ; rawWriteData(pAddr, val, 4)
+                                    ; recordLoad(vAddr, memv, WORD)
+                                    ; recordAMOStore(vAddr, val, WORD)
+                                    }
+                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+              }
        }
 }
 
@@ -3687,19 +3741,22 @@ define AMO > AMOXOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -- AMOXOR.D [aq,rl] rd, rs1, rs2
 -----------------------------------
 define AMO > AMOXOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ vAddr = GPR(rs1)
-; if   vAddr<2:0> != 0
-  then signalAddressException(E_SAMO_Addr_Align, vAddr)
-  else match translateAddr(vAddr, ReadWrite, Data)
-       { case Some(pAddr) => { memv = rawReadData(pAddr)
-                             ; data = GPR(rs2)
-                             ; val  = data ?? memv
-                             ; writeRD(rd, memv)
-                             ; rawWriteData(pAddr, val, 8)
-                             ; recordLoad(vAddr, memv, DOUBLEWORD)
-                             ; recordAMOStore(vAddr, val, DOUBLEWORD)
-                             }
-         case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+{ if   in32BitMode() or not haveAtomics()
+  then signalException(E_Illegal_Instr)
+  else { vAddr = GPR(rs1)
+       ; if   vAddr<2:0> != 0
+         then signalAddressException(E_SAMO_Addr_Align, vAddr)
+         else match translateAddr(vAddr, ReadWrite, Data)
+              { case Some(pAddr) => { memv = rawReadData(pAddr)
+                                    ; data = GPR(rs2)
+                                    ; val  = data ?? memv
+                                    ; writeRD(rd, memv)
+                                    ; rawWriteData(pAddr, val, 8)
+                                    ; recordLoad(vAddr, memv, DOUBLEWORD)
+                                    ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                    }
+                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+              }
        }
 }
 
@@ -3707,19 +3764,22 @@ define AMO > AMOXOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -- AMOAND.W [aq,rl] rd, rs1, rs2
 -----------------------------------
 define AMO > AMOAND_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ vAddr = GPR(rs1)
-; if   vAddr<1:0> != 0
-  then signalAddressException(E_SAMO_Addr_Align, vAddr)
-  else match translateAddr(vAddr, ReadWrite, Data)
-       { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
-                             ; data = GPR(rs2)
-                             ; val  = data && memv
-                             ; writeRD(rd, memv)
-                             ; rawWriteData(pAddr, val, 4)
-                             ; recordLoad(vAddr, memv, WORD)
-                             ; recordAMOStore(vAddr, val, WORD)
-                             }
-         case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+{ if   not haveAtomics()
+  then signalException(E_Illegal_Instr)
+  else { vAddr = GPR(rs1)
+       ; if   vAddr<1:0> != 0
+         then signalAddressException(E_SAMO_Addr_Align, vAddr)
+         else match translateAddr(vAddr, ReadWrite, Data)
+              { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
+                                    ; data = GPR(rs2)
+                                    ; val  = data && memv
+                                    ; writeRD(rd, memv)
+                                    ; rawWriteData(pAddr, val, 4)
+                                    ; recordLoad(vAddr, memv, WORD)
+                                    ; recordAMOStore(vAddr, val, WORD)
+                                    }
+                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+              }
        }
 }
 
@@ -3727,19 +3787,22 @@ define AMO > AMOAND_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -- AMOAND.D [aq,rl] rd, rs1, rs2
 -----------------------------------
 define AMO > AMOAND_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ vAddr = GPR(rs1)
-; if   vAddr<2:0> != 0
-  then signalAddressException(E_SAMO_Addr_Align, vAddr)
-  else match translateAddr(vAddr, ReadWrite, Data)
-       { case Some(pAddr) => { memv = rawReadData(pAddr)
-                             ; data = GPR(rs2)
-                             ; val  = data && memv
-                             ; writeRD(rd, memv)
-                             ; rawWriteData(pAddr, val, 8)
-                             ; recordLoad(vAddr, memv, DOUBLEWORD)
-                             ; recordAMOStore(vAddr, val, DOUBLEWORD)
-                             }
-         case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+{ if   in32BitMode() or not haveAtomics()
+  then signalException(E_Illegal_Instr)
+  else { vAddr = GPR(rs1)
+       ; if   vAddr<2:0> != 0
+         then signalAddressException(E_SAMO_Addr_Align, vAddr)
+         else match translateAddr(vAddr, ReadWrite, Data)
+              { case Some(pAddr) => { memv = rawReadData(pAddr)
+                                    ; data = GPR(rs2)
+                                    ; val  = data && memv
+                                    ; writeRD(rd, memv)
+                                    ; rawWriteData(pAddr, val, 8)
+                                    ; recordLoad(vAddr, memv, DOUBLEWORD)
+                                    ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                    }
+                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+              }
        }
 }
 
@@ -3747,19 +3810,22 @@ define AMO > AMOAND_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -- AMOOR.W [aq,rl] rd, rs1, rs2
 -----------------------------------
 define AMO > AMOOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ vAddr = GPR(rs1)
-; if   vAddr<1:0> != 0
-  then signalAddressException(E_SAMO_Addr_Align, vAddr)
-  else match translateAddr(vAddr, ReadWrite, Data)
-       { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
-                             ; data = GPR(rs2)
-                             ; val  = data || memv
-                             ; writeRD(rd, memv)
-                             ; rawWriteData(pAddr, val, 4)
-                             ; recordLoad(vAddr, memv, WORD)
-                             ; recordAMOStore(vAddr, val, WORD)
-                             }
-         case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+{ if   not haveAtomics()
+  then signalException(E_Illegal_Instr)
+  else { vAddr = GPR(rs1)
+       ; if   vAddr<1:0> != 0
+         then signalAddressException(E_SAMO_Addr_Align, vAddr)
+         else match translateAddr(vAddr, ReadWrite, Data)
+              { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
+                                    ; data = GPR(rs2)
+                                    ; val  = data || memv
+                                    ; writeRD(rd, memv)
+                                    ; rawWriteData(pAddr, val, 4)
+                                    ; recordLoad(vAddr, memv, WORD)
+                                    ; recordAMOStore(vAddr, val, WORD)
+                                    }
+                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+              }
        }
 }
 
@@ -3767,19 +3833,22 @@ define AMO > AMOOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -- AMOOR.D [aq,rl] rd, rs1, rs2
 -----------------------------------
 define AMO > AMOOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ vAddr = GPR(rs1)
-; if   vAddr<2:0> != 0
-  then signalAddressException(E_SAMO_Addr_Align, vAddr)
-  else match translateAddr(vAddr, ReadWrite, Data)
-       { case Some(pAddr) => { memv = rawReadData(pAddr)
-                             ; data = GPR(rs2)
-                             ; val  = data || memv
-                             ; writeRD(rd, memv)
-                             ; rawWriteData(pAddr, val, 8)
-                             ; recordLoad(vAddr, memv, DOUBLEWORD)
-                             ; recordAMOStore(vAddr, val, DOUBLEWORD)
-                             }
-         case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+{ if   in32BitMode() or not haveAtomics()
+  then signalException(E_Illegal_Instr)
+  else { vAddr = GPR(rs1)
+       ; if   vAddr<2:0> != 0
+         then signalAddressException(E_SAMO_Addr_Align, vAddr)
+         else match translateAddr(vAddr, ReadWrite, Data)
+              { case Some(pAddr) => { memv = rawReadData(pAddr)
+                                    ; data = GPR(rs2)
+                                    ; val  = data || memv
+                                    ; writeRD(rd, memv)
+                                    ; rawWriteData(pAddr, val, 8)
+                                    ; recordLoad(vAddr, memv, DOUBLEWORD)
+                                    ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                    }
+                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+              }
        }
 }
 
@@ -3787,19 +3856,22 @@ define AMO > AMOOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -- AMOMIN.W [aq,rl] rd, rs1, rs2
 -----------------------------------
 define AMO > AMOMIN_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ vAddr = GPR(rs1)
-; if   vAddr<1:0> != 0
-  then signalAddressException(E_SAMO_Addr_Align, vAddr)
-  else match translateAddr(vAddr, ReadWrite, Data)
-       { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
-                             ; data = GPR(rs2)
-                             ; val  = SignedMin(data, memv)
-                             ; writeRD(rd, memv)
-                             ; rawWriteData(pAddr, val, 4)
-                             ; recordLoad(vAddr, memv, WORD)
-                             ; recordAMOStore(vAddr, val, WORD)
-                             }
-         case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+{ if   not haveAtomics()
+  then signalException(E_Illegal_Instr)
+  else { vAddr = GPR(rs1)
+       ; if   vAddr<1:0> != 0
+         then signalAddressException(E_SAMO_Addr_Align, vAddr)
+         else match translateAddr(vAddr, ReadWrite, Data)
+              { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
+                                    ; data = GPR(rs2)
+                                    ; val  = SignedMin(data, memv)
+                                    ; writeRD(rd, memv)
+                                    ; rawWriteData(pAddr, val, 4)
+                                    ; recordLoad(vAddr, memv, WORD)
+                                    ; recordAMOStore(vAddr, val, WORD)
+                                    }
+                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+              }
        }
 }
 
@@ -3807,19 +3879,22 @@ define AMO > AMOMIN_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -- AMOMIN.D [aq,rl] rd, rs1, rs2
 -----------------------------------
 define AMO > AMOMIN_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ vAddr = GPR(rs1)
-; if   vAddr<2:0> != 0
-  then signalAddressException(E_SAMO_Addr_Align, vAddr)
-  else match translateAddr(vAddr, ReadWrite, Data)
-       { case Some(pAddr) => { memv = rawReadData(pAddr)
-                             ; data = GPR(rs2)
-                             ; val  = SignedMin(data, memv)
-                             ; writeRD(rd, memv)
-                             ; rawWriteData(pAddr, val, 8)
-                             ; recordLoad(vAddr, memv, DOUBLEWORD)
-                             ; recordAMOStore(vAddr, val, DOUBLEWORD)
-                             }
-         case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+{ if   in32BitMode() or not haveAtomics()
+  then signalException(E_Illegal_Instr)
+  else { vAddr = GPR(rs1)
+       ; if   vAddr<2:0> != 0
+         then signalAddressException(E_SAMO_Addr_Align, vAddr)
+         else match translateAddr(vAddr, ReadWrite, Data)
+              { case Some(pAddr) => { memv = rawReadData(pAddr)
+                                    ; data = GPR(rs2)
+                                    ; val  = SignedMin(data, memv)
+                                    ; writeRD(rd, memv)
+                                    ; rawWriteData(pAddr, val, 8)
+                                    ; recordLoad(vAddr, memv, DOUBLEWORD)
+                                    ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                    }
+                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+              }
        }
 }
 
@@ -3827,19 +3902,22 @@ define AMO > AMOMIN_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -- AMOMAX.W [aq,rl] rd, rs1, rs2
 -----------------------------------
 define AMO > AMOMAX_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ vAddr = GPR(rs1)
-; if   vAddr<1:0> != 0
-  then signalAddressException(E_SAMO_Addr_Align, vAddr)
-  else match translateAddr(vAddr, ReadWrite, Data)
-       { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
-                             ; data = GPR(rs2)
-                             ; val  = SignedMax(data, memv)
-                             ; writeRD(rd, memv)
-                             ; rawWriteData(pAddr, val, 4)
-                             ; recordLoad(vAddr, memv, WORD)
-                             ; recordAMOStore(vAddr, val, WORD)
-                             }
-         case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+{ if   not haveAtomics()
+  then signalException(E_Illegal_Instr)
+  else { vAddr = GPR(rs1)
+       ; if   vAddr<1:0> != 0
+         then signalAddressException(E_SAMO_Addr_Align, vAddr)
+         else match translateAddr(vAddr, ReadWrite, Data)
+              { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
+                                    ; data = GPR(rs2)
+                                    ; val  = SignedMax(data, memv)
+                                    ; writeRD(rd, memv)
+                                    ; rawWriteData(pAddr, val, 4)
+                                    ; recordLoad(vAddr, memv, WORD)
+                                    ; recordAMOStore(vAddr, val, WORD)
+                                    }
+                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+              }
        }
 }
 
@@ -3847,19 +3925,22 @@ define AMO > AMOMAX_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -- AMOMAX.D [aq,rl] rd, rs1, rs2
 -----------------------------------
 define AMO > AMOMAX_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ vAddr = GPR(rs1)
-; if   vAddr<2:0> != 0
-  then signalAddressException(E_SAMO_Addr_Align, vAddr)
-  else match translateAddr(vAddr, ReadWrite, Data)
-       { case Some(pAddr) => { memv = rawReadData(pAddr)
-                             ; data = GPR(rs2)
-                             ; val  = SignedMax(data, memv)
-                             ; writeRD(rd, memv)
-                             ; rawWriteData(pAddr, val, 8)
-                             ; recordLoad(vAddr, memv, DOUBLEWORD)
-                             ; recordAMOStore(vAddr, val, DOUBLEWORD)
-                             }
-         case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+{ if   in32BitMode() or not haveAtomics()
+  then signalException(E_Illegal_Instr)
+  else { vAddr = GPR(rs1)
+       ; if   vAddr<2:0> != 0
+         then signalAddressException(E_SAMO_Addr_Align, vAddr)
+         else match translateAddr(vAddr, ReadWrite, Data)
+              { case Some(pAddr) => { memv = rawReadData(pAddr)
+                                    ; data = GPR(rs2)
+                                    ; val  = SignedMax(data, memv)
+                                    ; writeRD(rd, memv)
+                                    ; rawWriteData(pAddr, val, 8)
+                                    ; recordLoad(vAddr, memv, DOUBLEWORD)
+                                    ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                    }
+                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+              }
        }
 }
 
@@ -3867,19 +3948,22 @@ define AMO > AMOMAX_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -- AMOMINU.W [aq,rl] rd, rs1, rs2
 -----------------------------------
 define AMO > AMOMINU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ vAddr = GPR(rs1)
-; if   vAddr<1:0> != 0
-  then signalAddressException(E_SAMO_Addr_Align, vAddr)
-  else match translateAddr(vAddr, ReadWrite, Data)
-       { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
-                             ; data = GPR(rs2)
-                             ; val  = Min(data, memv)
-                             ; writeRD(rd, memv)
-                             ; rawWriteData(pAddr, val, 4)
-                             ; recordLoad(vAddr, memv, WORD)
-                             ; recordAMOStore(vAddr, val, WORD)
-                             }
-         case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+{ if   not haveAtomics()
+  then signalException(E_Illegal_Instr)
+  else { vAddr = GPR(rs1)
+       ; if   vAddr<1:0> != 0
+         then signalAddressException(E_SAMO_Addr_Align, vAddr)
+         else match translateAddr(vAddr, ReadWrite, Data)
+              { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
+                                    ; data = GPR(rs2)
+                                    ; val  = Min(data, memv)
+                                    ; writeRD(rd, memv)
+                                    ; rawWriteData(pAddr, val, 4)
+                                    ; recordLoad(vAddr, memv, WORD)
+                                    ; recordAMOStore(vAddr, val, WORD)
+                                    }
+                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+              }
        }
 }
 
@@ -3887,19 +3971,22 @@ define AMO > AMOMINU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -- AMOMINU.D [aq,rl] rd, rs1, rs2
 -----------------------------------
 define AMO > AMOMINU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ vAddr = GPR(rs1)
-; if   vAddr<2:0> != 0
-  then signalAddressException(E_SAMO_Addr_Align, vAddr)
-  else match translateAddr(vAddr, ReadWrite, Data)
-       { case Some(pAddr) => { memv = rawReadData(pAddr)
-                             ; data = GPR(rs2)
-                             ; val  = Min(data, memv)
-                             ; writeRD(rd, memv)
-                             ; rawWriteData(pAddr, val, 8)
-                             ; recordLoad(vAddr, memv, DOUBLEWORD)
-                             ; recordAMOStore(vAddr, val, DOUBLEWORD)
-                             }
-         case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+{ if   in32BitMode() or not haveAtomics()
+  then signalException(E_Illegal_Instr)
+  else { vAddr = GPR(rs1)
+       ; if   vAddr<2:0> != 0
+         then signalAddressException(E_SAMO_Addr_Align, vAddr)
+         else match translateAddr(vAddr, ReadWrite, Data)
+              { case Some(pAddr) => { memv = rawReadData(pAddr)
+                                    ; data = GPR(rs2)
+                                    ; val  = Min(data, memv)
+                                    ; writeRD(rd, memv)
+                                    ; rawWriteData(pAddr, val, 8)
+                                    ; recordLoad(vAddr, memv, DOUBLEWORD)
+                                    ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                    }
+                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+              }
        }
 }
 
@@ -3907,19 +3994,22 @@ define AMO > AMOMINU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -- AMOMAXU.W [aq,rl] rd, rs1, rs2
 -----------------------------------
 define AMO > AMOMAXU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ vAddr = GPR(rs1)
-; if   vAddr<1:0> != 0
-  then signalAddressException(E_SAMO_Addr_Align, vAddr)
-  else match translateAddr(vAddr, ReadWrite, Data)
-       { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
-                             ; data = GPR(rs2)
-                             ; val  = Max(data, memv)
-                             ; writeRD(rd, memv)
-                             ; rawWriteData(pAddr, val, 4)
-                             ; recordLoad(vAddr, memv, WORD)
-                             ; recordAMOStore(vAddr, val, WORD)
-                             }
-         case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+{ if   not haveAtomics()
+  then signalException(E_Illegal_Instr)
+  else { vAddr = GPR(rs1)
+       ; if   vAddr<1:0> != 0
+         then signalAddressException(E_SAMO_Addr_Align, vAddr)
+         else match translateAddr(vAddr, ReadWrite, Data)
+              { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
+                                    ; data = GPR(rs2)
+                                    ; val  = Max(data, memv)
+                                    ; writeRD(rd, memv)
+                                    ; rawWriteData(pAddr, val, 4)
+                                    ; recordLoad(vAddr, memv, WORD)
+                                    ; recordAMOStore(vAddr, val, WORD)
+                                    }
+                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+              }
        }
 }
 
@@ -3927,19 +4017,22 @@ define AMO > AMOMAXU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -- AMOMAXU.D [aq,rl] rd, rs1, rs2
 -----------------------------------
 define AMO > AMOMAXU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
-{ vAddr = GPR(rs1)
-; if   vAddr<2:0> != 0
-  then signalAddressException(E_SAMO_Addr_Align, vAddr)
-  else match translateAddr(vAddr, ReadWrite, Data)
-       { case Some(pAddr) => { memv = rawReadData(pAddr)
-                             ; data = GPR(rs2)
-                             ; val  = Max(data, memv)
-                             ; writeRD(rd, memv)
-                             ; rawWriteData(pAddr, val, 8)
-                             ; recordLoad(vAddr, memv, DOUBLEWORD)
-                             ; recordAMOStore(vAddr, val, DOUBLEWORD)
-                             }
-         case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+{ if   in32BitMode() or not haveAtomics()
+  then signalException(E_Illegal_Instr)
+  else { vAddr = GPR(rs1)
+       ; if   vAddr<2:0> != 0
+         then signalAddressException(E_SAMO_Addr_Align, vAddr)
+         else match translateAddr(vAddr, ReadWrite, Data)
+              { case Some(pAddr) => { memv = rawReadData(pAddr)
+                                    ; data = GPR(rs2)
+                                    ; val  = Max(data, memv)
+                                    ; writeRD(rd, memv)
+                                    ; rawWriteData(pAddr, val, 8)
+                                    ; recordLoad(vAddr, memv, DOUBLEWORD)
+                                    ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                    }
+                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+              }
        }
 }
 
