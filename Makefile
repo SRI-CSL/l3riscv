@@ -54,7 +54,7 @@ TVSPIKE_LIBS    = -L $(RISCV)/lib -lfesvr -lriscv -Wl,-rpath=$(RISCV)/lib
 # make targets
 #######################################
 
-all: l3riscv.poly tv_spike.so l3riscv.mlton ilspec holspec
+all: l3riscv.poly tv_spike.so ilspec holspec
 
 ${SMLSRCDIR}/riscv.sig ${SMLSRCDIR}/riscv.sml: ${L3SRC}
 	echo 'SMLExport.spec ("${L3SRC}", "${SMLSRCDIR}/riscv intinf")' | l3
@@ -62,10 +62,10 @@ ${SMLSRCDIR}/riscv.sig ${SMLSRCDIR}/riscv.sml: ${L3SRC}
 l3riscv.poly: ${SMLLIB} ${SMLSRC} Makefile tv_spike.so
 	$(POLYC) -o $@ ${SMLSRCDIR}/poly_run.sml
 
-l3riscv.mlton: ${SMLLIB} ${SMLSRC} Makefile
-	$(MLTON) $(MLTON_OPTS) \
-              $(MLTON_LIB_OPTS) \
-              -output $@ ${SMLSRCDIR}/$(MLBFILE) $(L3LIBDIR)/sse_float.c $(L3LIBDIR)/mlton_sse_float.c
+# l3riscv.mlton: ${SMLLIB} ${SMLSRC} Makefile
+# 	$(MLTON) $(MLTON_OPTS) \
+#               $(MLTON_LIB_OPTS) \
+#               -output $@ ${SMLSRCDIR}/$(MLBFILE) $(L3LIBDIR)/sse_float.c $(L3LIBDIR)/mlton_sse_float.c
 
 tv_spike.so: ${TVSPIKE_SRC} Makefile
 	g++ -Wall -o $@ -shared -fPIC ${TVSPIKE_INC} ${TVSPIKE_LIBS} ${TVSPIKE_SRC}
