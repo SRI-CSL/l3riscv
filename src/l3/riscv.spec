@@ -6302,6 +6302,10 @@ opcode opc(code::bits(8)) = code<4:0> : '11'
 bits(7) amofunc(code::bits(5), aq::amo, rl::amo) =
     code : aq : rl
 
+-- FIXME: dummy to silence l3 warning.  Encode can return either half or word,
+-- and affects the usage in model.sml.  Defer fixing this until later.
+word EncodeRVC(rvc::RVC) = 0
+
 word Encode(i::instruction) =
    match i
    { case Branch(  BEQ(rs1, rs2, imm))      => SBtype(opc(0x18), 0, rs1, rs2, imm)
@@ -6477,6 +6481,8 @@ word Encode(i::instruction) =
      case AMO(AMOMINU_D(aq, rl, rd, rs1, rs2))  => Rtype(opc(0x0B), 3, rd, rs1, rs2, amofunc('11000', aq, rl))
      case AMO(AMOMAXU_D(aq, rl, rd, rs1, rs2))  => Rtype(opc(0x0B), 3, rd, rs1, rs2, amofunc('11100', aq, rl))
 
+     case RVC(rvc)                          =>  EncodeRVC(rvc)
+
      case System( ECALL)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x000)
      case System(EBREAK)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x001)
      case System(  URET)                    =>  Itype(opc(0x1C), 0, 0, 0, 0x002)
@@ -6494,6 +6500,7 @@ word Encode(i::instruction) =
      case System(CSRRSI(rd, imm, csr))      =>  Itype(opc(0x1C), 6, rd, imm, csr)
      case System(CSRRCI(rd, imm, csr))      =>  Itype(opc(0x1C), 7, rd, imm, csr)
 
+     case IllegalInstruction                => 0
      case UnknownInstruction                => 0
 
      case Internal(FETCH_MISALIGNED(_))     => 0
