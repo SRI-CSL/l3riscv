@@ -26,11 +26,19 @@
 
 type id       = bits(8)         -- max 256 cores
 
+-- register types and abi-special names
+
 type reg      = bits(5)         -- base register names
 type csreg    = bits(12)        -- CSR address space
 type creg     = bits(3)         -- RVC register names
 
 reg creg2reg(r::creg) = 0b01 : r
+
+reg  Z_reg  = 0
+reg RA_reg  = 1
+reg SP_reg  = 2
+
+-- data types
 
 type byte     = bits(8)
 type half     = bits(16)
@@ -2845,18 +2853,24 @@ bool canDoAtomics()  = MCSR.misa.A
 -----------------------------------
 -- ADDI  rd, rs1, imm
 -----------------------------------
-define ArithI > ADDI(rd::reg, rs1::reg, imm::imm12) =
+unit run_arithi_addi(rd::reg, rs1::reg, imm::imm12) =
     writeRD(rd, GPR(rs1) + SignExtend(imm))
+
+define ArithI > ADDI(rd::reg, rs1::reg, imm::imm12) =
+    run_arithi_addi(rd, rs1, imm)
 
 -----------------------------------
 -- ADDIW rd, rs1, imm   (RV64I)
 -----------------------------------
-define ArithI > ADDIW(rd::reg, rs1::reg, imm::imm12) =
+unit run_arithi_addiw(rd::reg, rs1::reg, imm::imm12) =
     if   in32BitMode()
     then signalException(E_Illegal_Instr)
     else { temp = GPR(rs1) + SignExtend(imm)
          ; writeRD(rd, SignExtend(temp<31:0>))
          }
+
+define ArithI > ADDIW(rd::reg, rs1::reg, imm::imm12) =
+    run_arithi_addiw(rd, rs1, imm)
 
 -----------------------------------
 -- SLTI  rd, rs1, imm
@@ -2877,8 +2891,11 @@ define ArithI > SLTIU(rd::reg, rs1::reg, imm::imm12) =
 -----------------------------------
 -- ANDI  rd, rs1, imm
 -----------------------------------
-define ArithI > ANDI(rd::reg, rs1::reg, imm::imm12) =
+unit run_arithi_andi(rd::reg, rs1::reg, imm::imm12) =
     writeRD(rd, GPR(rs1) && SignExtend(imm))
+
+define ArithI > ANDI(rd::reg, rs1::reg, imm::imm12) =
+    run_arithi_andi(rd, rs1, imm)
 
 -----------------------------------
 -- ORI   rd, rs1, imm
@@ -2896,30 +2913,39 @@ define ArithI > XORI(rd::reg, rs1::reg, imm::imm12) =
 -----------------------------------
 -- SLLI  rd, rs1, imm
 -----------------------------------
-define Shift > SLLI(rd::reg, rs1::reg, imm::bits(6)) =
+unit run_shift_slli(rd::reg, rs1::reg, imm::bits(6)) =
     if   in32BitMode() and imm<5>
     then signalException(E_Illegal_Instr)
     else writeRD(rd, GPR(rs1) << [imm])
 
+define Shift > SLLI(rd::reg, rs1::reg, imm::bits(6)) =
+    run_shift_slli(rd, rs1, imm)
+
 -----------------------------------
 -- SRLI  rd, rs1, imm
 -----------------------------------
-define Shift > SRLI(rd::reg, rs1::reg, imm::bits(6)) =
+unit run_shift_srli(rd::reg, rs1::reg, imm::bits(6)) =
     if   in32BitMode() and imm<5>
     then signalException(E_Illegal_Instr)
     else { v1 = if in32BitMode() then ZeroExtend(GPR(rs1)<31:0>) else GPR(rs1)
          ; writeRD(rd, v1 >>+ [imm])
          }
 
+define Shift > SRLI(rd::reg, rs1::reg, imm::bits(6)) =
+    run_shift_srli(rd, rs1, imm)
+
 -----------------------------------
 -- SRAI  rd, rs1, imm
 -----------------------------------
-define Shift > SRAI(rd::reg, rs1::reg, imm::bits(6)) =
+unit run_shift_srai(rd::reg, rs1::reg, imm::bits(6)) =
     if   in32BitMode() and imm<5>
     then signalException(E_Illegal_Instr)
     else { v1 = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else GPR(rs1)
          ; writeRD(rd, v1 >> [imm])
          }
+
+define Shift > SRAI(rd::reg, rs1::reg, imm::bits(6)) =
+    run_shift_srai(rd, rs1, imm)
 
 -----------------------------------
 -- SLLIW rd, rs1, imm   (RV64I)
@@ -2948,8 +2974,11 @@ define Shift > SRAIW(rd::reg, rs1::reg, imm::bits(5)) =
 -----------------------------------
 -- LUI   rd, imm
 -----------------------------------
-define ArithI > LUI(rd::reg, imm::imm20) =
+unit run_arithi_lui(rd::reg, imm::imm20) =
     writeRD(rd, SignExtend(imm : 0`12))
+
+define ArithI > LUI(rd::reg, imm::imm20) =
+    run_arithi_lui(rd, imm)
 
 -----------------------------------
 -- AUIPC rd, imm
@@ -2963,30 +2992,42 @@ define ArithI > AUIPC(rd::reg, imm::imm20) =
 -----------------------------------
 -- ADD   rd, rs1, rs2
 -----------------------------------
-define ArithR > ADD(rd::reg, rs1::reg, rs2::reg) =
+unit run_arithr_add(rd::reg, rs1::reg, rs2::reg) =
     writeRD(rd, GPR(rs1) + GPR(rs2))
+
+define ArithR > ADD(rd::reg, rs1::reg, rs2::reg) =
+    run_arithr_add(rd, rs1, rs2)
 
 -----------------------------------
 -- ADDW  rd, rs1, rs2   (RV64I)
 -----------------------------------
-define ArithR > ADDW(rd::reg, rs1::reg, rs2::reg) =
+unit run_arithr_addw(rd::reg, rs1::reg, rs2::reg) =
     if   in32BitMode()
     then signalException(E_Illegal_Instr)
     else writeRD(rd, SignExtend(GPR(rs1)<31:0> + GPR(rs2)<31:0>))
 
+define ArithR > ADDW(rd::reg, rs1::reg, rs2::reg) =
+    run_arithr_addw(rd, rs1, rs2)
+
 -----------------------------------
 -- SUB   rd, rs1, rs2
 -----------------------------------
-define ArithR > SUB(rd::reg, rs1::reg, rs2::reg) =
+unit run_arithr_sub(rd::reg, rs1::reg, rs2::reg) =
     writeRD(rd, GPR(rs1) - GPR(rs2))
+
+define ArithR > SUB(rd::reg, rs1::reg, rs2::reg) =
+    run_arithr_sub(rd, rs1, rs2)
 
 -----------------------------------
 -- SUBW  rd, rs1, rs2   (RV64I)
 -----------------------------------
-define ArithR > SUBW(rd::reg, rs1::reg, rs2::reg) =
+unit run_arithr_subw(rd::reg, rs1::reg, rs2::reg) =
     if   in32BitMode()
     then signalException(E_Illegal_Instr)
     else writeRD(rd, SignExtend(GPR(rs1)<31:0> - GPR(rs2)<31:0>))
+
+define ArithR > SUBW(rd::reg, rs1::reg, rs2::reg) =
+    run_arithr_subw(rd, rs1, rs2)
 
 -----------------------------------
 -- SLT   rd, rs1, rs2
@@ -3009,20 +3050,29 @@ define ArithR > SLTU(rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 -- AND   rd, rs1, rs2
 -----------------------------------
-define ArithR > AND(rd::reg, rs1::reg, rs2::reg) =
+unit run_arithr_and(rd::reg, rs1::reg, rs2::reg) =
     writeRD(rd, GPR(rs1) && GPR(rs2))
+
+define ArithR > AND(rd::reg, rs1::reg, rs2::reg) =
+    run_arithr_and(rd, rs1, rs2)
 
 -----------------------------------
 -- OR    rd, rs1, rs2
 -----------------------------------
-define ArithR > OR(rd::reg, rs1::reg, rs2::reg) =
+unit run_arithr_or(rd::reg, rs1::reg, rs2::reg) =
     writeRD(rd, GPR(rs1) || GPR(rs2))
+
+define ArithR > OR(rd::reg, rs1::reg, rs2::reg) =
+    run_arithr_or(rd, rs1, rs2)
 
 -----------------------------------
 -- XOR   rd, rs1, rs2
 -----------------------------------
-define ArithR > XOR(rd::reg, rs1::reg, rs2::reg) =
+unit run_arithr_xor(rd::reg, rs1::reg, rs2::reg) =
     writeRD(rd, GPR(rs1) ?? GPR(rs2))
+
+define ArithR > XOR(rd::reg, rs1::reg, rs2::reg) =
+    run_arithr_xor(rd, rs1, rs2)
 
 -----------------------------------
 -- SLL   rd, rs1, rs2
@@ -3264,33 +3314,39 @@ define MulDiv > REMUW(rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 -- JAL   rd, offs
 -----------------------------------
-define Branch > JAL(rd::reg, imm::imm20) =
+unit run_branch_jal(rd::reg, imm::imm20, rvc::bool) =
 { addr = PC + SignExtend(imm) << 1
 ; if   addr<1> and not haveRVC()
   then signalAddressException(E_Fetch_Addr_Align, addr)
-  else { writeRD(rd, PC + 4)
+  else { writeRD(rd, PC + (if rvc then 2 else 4))
        ; branchTo(addr)
        }
 }
 
+define Branch > JAL(rd::reg, imm::imm20) =
+    run_branch_jal(rd, imm, false)
+
 -----------------------------------
 -- JALR  rd, rs1, imm
 -----------------------------------
-define Branch > JALR(rd::reg, rs1::reg, imm::imm12) =
+unit run_branch_jalr(rd::reg, rs1::reg, imm::imm12, rvc::bool) =
 { addr = (GPR(rs1) + SignExtend(imm)) && SignExtend('10')
 ; if   addr<1> and not haveRVC()
   then signalAddressException(E_Fetch_Addr_Align, addr)
-  else { writeRD(rd, PC + 4)
+  else { writeRD(rd, PC + (if rvc then 2 else 4))
        ; branchTo(addr)
        }
 }
+
+define Branch > JALR(rd::reg, rs1::reg, imm::imm12) =
+    run_branch_jalr(rd, rs1, imm, false)
 
 -- conditional branches
 
 -----------------------------------
 -- BEQ   rs1, rs2, offs
 -----------------------------------
-define Branch > BEQ(rs1::reg, rs2::reg, offs::imm12) =
+unit run_branch_beq(rs1::reg, rs2::reg, offs::imm12, rvc::bool) =
 { v1 = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else GPR(rs1)
 ; v2 = if in32BitMode() then SignExtend(GPR(rs2)<31:0>) else GPR(rs2)
 ; tg = PC + (SignExtend(offs) << 1)
@@ -3298,13 +3354,16 @@ define Branch > BEQ(rs1::reg, rs2::reg, offs::imm12) =
   then if   tg<1> and not haveRVC()
        then signalAddressException(E_Fetch_Addr_Align, tg)
        else branchTo(tg)
-  else noBranch(PC + 4)
+  else noBranch(PC + (if rvc then 2 else 4))
 }
+
+define Branch > BEQ(rs1::reg, rs2::reg, offs::imm12) =
+    run_branch_beq(rs1, rs2, offs, false)
 
 -----------------------------------
 -- BNE   rs1, rs2, offs
 -----------------------------------
-define Branch > BNE(rs1::reg, rs2::reg, offs::imm12) =
+unit run_branch_bne(rs1::reg, rs2::reg, offs::imm12, rvc::bool) =
 { v1 = if in32BitMode() then SignExtend(GPR(rs1)<31:0>) else GPR(rs1)
 ; v2 = if in32BitMode() then SignExtend(GPR(rs2)<31:0>) else GPR(rs2)
 ; tg = PC + (SignExtend(offs) << 1)
@@ -3312,8 +3371,11 @@ define Branch > BNE(rs1::reg, rs2::reg, offs::imm12) =
   then if   tg<1> and not haveRVC()
        then signalAddressException(E_Fetch_Addr_Align, tg)
        else branchTo(tg)
-  else noBranch(PC + 4)
+  else noBranch(PC + (if rvc then 2 else 4))
 }
+
+define Branch > BNE(rs1::reg, rs2::reg, offs::imm12) =
+    run_branch_bne(rs1, rs2, offs, false)
 
 -----------------------------------
 -- BLT   rs1, rs2, offs
@@ -3378,7 +3440,7 @@ define Branch > BGEU(rs1::reg, rs2::reg, offs::imm12) =
 -----------------------------------
 -- LW    rd, rs1, offs
 -----------------------------------
-define Load > LW(rd::reg, rs1::reg, offs::imm12) =
+unit run_load_lw(rd::reg, rs1::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
 ; match translateAddr(vAddr, Read, Data)
   { case Some(pAddr) => { val = SignExtend(rawReadData(pAddr)<31:0>)
@@ -3388,6 +3450,9 @@ define Load > LW(rd::reg, rs1::reg, offs::imm12) =
     case None        => signalAddressException(E_Load_Page_Fault, vAddr)
   }
 }
+
+define Load > LW(rd::reg, rs1::reg, offs::imm12) =
+    run_load_lw(rd::reg, rs1::reg, offs::imm12)
 
 -----------------------------------
 -- LWU   rd, rs1, offs  (RV64I)
@@ -3465,7 +3530,7 @@ define Load > LBU(rd::reg, rs1::reg, offs::imm12) =
 -----------------------------------
 -- LD    rd, rs1, offs  (RV64I)
 -----------------------------------
-define Load > LD(rd::reg, rs1::reg, offs::imm12) =
+unit run_load_ld(rd::reg, rs1::reg, offs::imm12) =
     if   in32BitMode()
     then signalException(E_Illegal_Instr)
     else { vAddr = GPR(rs1) + SignExtend(offs)
@@ -3478,10 +3543,13 @@ define Load > LD(rd::reg, rs1::reg, offs::imm12) =
            }
          }
 
+define Load > LD(rd::reg, rs1::reg, offs::imm12) =
+    run_load_ld(rd, rs1, offs)
+
 -----------------------------------
 -- SW    rs1, rs2, offs
 -----------------------------------
-define Store > SW(rs1::reg, rs2::reg, offs::imm12) =
+unit run_store_sw(rs1::reg, rs2::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
 ; match translateAddr(vAddr, Write, Data)
   { case Some(pAddr) => { data = GPR(rs2)
@@ -3491,6 +3559,9 @@ define Store > SW(rs1::reg, rs2::reg, offs::imm12) =
     case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
   }
 }
+
+define Store > SW(rs1::reg, rs2::reg, offs::imm12) =
+    run_store_sw(rs1, rs2, offs)
 
 -----------------------------------
 -- SH    rs1, rs2, offs
@@ -3523,7 +3594,7 @@ define Store > SB(rs1::reg, rs2::reg, offs::imm12) =
 -----------------------------------
 -- SD    rs1, rs2, offs (RV64I)
 -----------------------------------
-define Store > SD(rs1::reg, rs2::reg, offs::imm12) =
+unit run_store_sd(rs1::reg, rs2::reg, offs::imm12) =
     if   in32BitMode()
     then signalException(E_Illegal_Instr)
     else { vAddr = GPR(rs1) + SignExtend(offs)
@@ -3535,6 +3606,9 @@ define Store > SD(rs1::reg, rs2::reg, offs::imm12) =
              case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
            }
          }
+
+define Store > SD(rs1::reg, rs2::reg, offs::imm12) =
+    run_store_sd(rs1, rs2, offs)
 
 ---------------------------------------------------------------------------
 -- Memory model
@@ -4056,8 +4130,7 @@ define AMO > AMOMAXU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
 -----------------------------------
 -- FLW   rd, rs2, offs
 -----------------------------------
-
-define FPLoad > FLW(rd::reg, rs1::reg, offs::imm12) =
+unit run_fpload_flw(rd::reg, rs1::reg, offs::imm12) =
 { if   not canDoFPSingle()
   then signalException(E_Illegal_Instr)
   else { vAddr = GPR(rs1) + SignExtend(offs)
@@ -4071,11 +4144,13 @@ define FPLoad > FLW(rd::reg, rs1::reg, offs::imm12) =
        }
 }
 
+define FPLoad > FLW(rd::reg, rs1::reg, offs::imm12) =
+    run_fpload_flw(rd, rs1, offs)
+
 -----------------------------------
 -- FSW   rs1, rs2, offs
 -----------------------------------
-
-define FPStore > FSW(rs1::reg, rs2::reg, offs::imm12) =
+unit run_fpstore_fsw(rs1::reg, rs2::reg, offs::imm12) =
 { if   not canDoFPSingle()
   then signalException(E_Illegal_Instr)
   else { vAddr = GPR(rs1) + SignExtend(offs)
@@ -4088,6 +4163,9 @@ define FPStore > FSW(rs1::reg, rs2::reg, offs::imm12) =
                    }
        }
 }
+
+define FPStore > FSW(rs1::reg, rs2::reg, offs::imm12) =
+    run_fpstore_fsw(rs1, rs2, offs)
 
 -- Computational
 
@@ -4544,7 +4622,7 @@ define FConv > FCLASS_S(rd::reg, rs::reg) =
 -- FLD   rd, rs2, offs
 -----------------------------------
 
-define FPLoad > FLD(rd::reg, rs1::reg, offs::imm12) =
+unit run_fpload_fld(rd::reg, rs1::reg, offs::imm12) =
 { if   not canDoFPDouble()
   then signalException(E_Illegal_Instr)
   else { vAddr = GPR(rs1) + SignExtend(offs)
@@ -4558,11 +4636,14 @@ define FPLoad > FLD(rd::reg, rs1::reg, offs::imm12) =
        }
 }
 
+define FPLoad > FLD(rd::reg, rs1::reg, offs::imm12) =
+    run_fpload_fld(rd, rs1, offs)
+
 -----------------------------------
 -- FSD   rs1, rs2, offs
 -----------------------------------
 
-define FPStore > FSD(rs1::reg, rs2::reg, offs::imm12) =
+unit run_fpstore_fsd(rs1::reg, rs2::reg, offs::imm12) =
 { if   not canDoFPDouble()
   then signalException(E_Illegal_Instr)
   else { vAddr = GPR(rs1) + SignExtend(offs)
@@ -4575,6 +4656,9 @@ define FPStore > FSD(rs1::reg, rs2::reg, offs::imm12) =
                    }
        }
 }
+
+define FPStore > FSD(rs1::reg, rs2::reg, offs::imm12) =
+    run_fpstore_fsd(rs1, rs2, offs)
 
 -- Computational
 
@@ -5224,49 +5308,49 @@ define System > SFENCE_VMA(rs1::reg, rs2::reg) =
 -- C.LWSP   rd, imm
 -----------------------------------
 define RVC > C_LWSP(rd::reg, imm::bits(6)) =
-    ()
+    run_load_lw(rd, SP_reg, ZeroExtend(imm : 0b0`2))
 
 -----------------------------------
 -- C.LDSP   rd, imm
 -----------------------------------
 define RVC > C_LDSP(rd::reg, imm::bits(6)) =
-    ()
+    run_load_ld(rd, SP_reg, ZeroExtend(imm : 0b0`3))
 
 -----------------------------------
 -- C.FLWSP  rd, imm
 -----------------------------------
 define RVC > C_FLWSP(rd::reg, imm::bits(6)) =
-    ()
+    run_fpload_flw(rd, SP_reg, ZeroExtend(imm : 0b0`2))
 
 -----------------------------------
 -- C.FLDSP  rd, imm
 -----------------------------------
 define RVC > C_FLDSP(rd::reg, imm::bits(6)) =
-    ()
+    run_fpload_fld(rd, SP_reg, ZeroExtend(imm : 0b0`2))
 
 -----------------------------------
 -- C.SWSP   rs2, imm
 -----------------------------------
 define RVC > C_SWSP(rs2::reg, imm::bits(6)) =
-    ()
+    run_store_sw(SP_reg, rs2, ZeroExtend(imm : 0b0`2))
 
 -----------------------------------
 -- C.SDSP   rs2, imm
 -----------------------------------
 define RVC > C_SDSP(rs2::reg, imm::bits(6)) =
-    ()
+    run_store_sd(SP_reg, rs2, ZeroExtend(imm : 0b0`3))
 
 -----------------------------------
 -- C.FSWSP  rs2, imm
 -----------------------------------
 define RVC > C_FSWSP(rs2::reg, imm::bits(6)) =
-    ()
+    run_fpstore_fsw(SP_reg, rs2, ZeroExtend(imm : 0b0`2))
 
 -----------------------------------
 -- C.FSDSP  rs2, imm
 -----------------------------------
 define RVC > C_FSDSP(rs2::reg, imm::bits(6)) =
-    ()
+    run_fpstore_fsd(SP_reg, rs2, ZeroExtend(imm : 0b0`3))
 
 
 -- register-based loads and stores
@@ -5275,49 +5359,49 @@ define RVC > C_FSDSP(rs2::reg, imm::bits(6)) =
 -- C.LW     rd, rs1, imm
 -----------------------------------
 define RVC > C_LW(rd::creg, rs1::creg, imm::bits(5)) =
-    ()
+    run_load_lw(creg2reg(rd), creg2reg(rs1), ZeroExtend(imm : 0b0`2))
 
 -----------------------------------
 -- C.LD     rd, rs1, imm
 -----------------------------------
 define RVC > C_LD(rd::creg, rs1::creg, imm::bits(5)) =
-    ()
+    run_load_ld(creg2reg(rd), creg2reg(rs1), ZeroExtend(imm : 0b0`3))
 
 -----------------------------------
 -- C.FLW    rd, rs1, imm
 -----------------------------------
 define RVC > C_FLW(rd::creg, rs1::creg, imm::bits(5)) =
-    ()
+    run_fpload_flw(creg2reg(rd), creg2reg(rs1), ZeroExtend(imm : 0b0`2))
 
 -----------------------------------
 -- C.FLD    rd, rs1, imm
 -----------------------------------
 define RVC > C_FLD(rd::creg, rs1::creg, imm::bits(5)) =
-    ()
+    run_fpload_fld(creg2reg(rd), creg2reg(rs1), ZeroExtend(imm : 0b0`3))
 
 -----------------------------------
 -- C.SW     rs1, rs2, imm
 -----------------------------------
 define RVC > C_SW(rs1::creg, rs2::creg, imm::bits(5)) =
-    ()
+    run_store_sw(creg2reg(rs1), creg2reg(rs2), ZeroExtend(imm : 0b0`2))
 
 -----------------------------------
 -- C.SD     rs1, rs2, imm
 -----------------------------------
 define RVC > C_SD(rs1::creg, rs2::creg, imm::bits(5)) =
-    ()
+    run_store_sd(creg2reg(rs1), creg2reg(rs2), ZeroExtend(imm : 0b0`3))
 
 -----------------------------------
 -- C.FSW    rs1, rs2, imm
 -----------------------------------
 define RVC > C_FSW(rs1::creg, rs2::creg, imm::bits(5)) =
-    ()
+    run_fpstore_fsw(creg2reg(rs1), creg2reg(rs2), ZeroExtend(imm : 0b0`2))
 
 -----------------------------------
 -- C.FSD    rs1, rs1, imm
 -----------------------------------
 define RVC > C_FSD(rs1::creg, rs2::creg, imm::bits(5)) =
-    ()
+    run_fpstore_fsd(creg2reg(rs1), creg2reg(rs2), ZeroExtend(imm : 0b0`3))
 
 -- control transfer
 
@@ -5325,37 +5409,37 @@ define RVC > C_FSD(rs1::creg, rs2::creg, imm::bits(5)) =
 -- C.J      imm
 -----------------------------------
 define RVC > C_J(imm::bits(11)) =
-    ()
+    run_branch_jal(Z_reg, SignExtend(imm), true)
 
 -----------------------------------
 -- C.JAL    imm
 -----------------------------------
 define RVC > C_JAL(imm::bits(11)) =
-    ()
+    run_branch_jal(RA_reg, SignExtend(imm), true)
 
 -----------------------------------
 -- C.JR     rs1
 -----------------------------------
 define RVC > C_JR(rs1::reg) =
-    ()
+    run_branch_jalr(Z_reg, rs1, 0, true)
 
 -----------------------------------
 -- C.JALR   rs1
 -----------------------------------
 define RVC > C_JALR(rs1::reg) =
-    ()
+    run_branch_jalr(RA_reg, rs1, 0, true)
 
 -----------------------------------
 -- C.BEQZ   rs1, imm
 -----------------------------------
 define RVC > C_BEQZ(rs1::creg, imm::byte) =
-    ()
+    run_branch_beq(creg2reg(rs1), Z_reg, SignExtend(imm), true)
 
 -----------------------------------
 -- C.BNEZ   rs1, imm
 -----------------------------------
 define RVC > C_BNEZ(rs1::creg, imm::byte) =
-    ()
+    run_branch_bne(creg2reg(rs1), Z_reg, SignExtend(imm), true)
 
 -- integer constant-generation
 
@@ -5363,13 +5447,13 @@ define RVC > C_BNEZ(rs1::creg, imm::byte) =
 -- C.LI     rd, imm
 -----------------------------------
 define RVC > C_LI(rd::reg, imm::bits(6)) =
-    ()
+    run_arithi_addi(rd, Z_reg, SignExtend(imm))
 
 -----------------------------------
 -- C.LUI    rd, imm
 -----------------------------------
 define RVC > C_LUI(rd::reg, imm::bits(6)) =
-    ()
+    run_arithi_lui(rd, SignExtend(imm))
 
 -- register-immediate integer ops
 
@@ -5377,99 +5461,99 @@ define RVC > C_LUI(rd::reg, imm::bits(6)) =
 -- C.ADDI   rds, imm
 -----------------------------------
 define RVC > C_ADDI(rds::reg, imm::bits(6)) =
-    ()
+    run_arithi_addi(rds, rds, SignExtend(imm))
 
 -----------------------------------
 -- C.ADDIW  rds, imm
 -----------------------------------
 define RVC > C_ADDIW(rds::reg, imm::bits(6)) =
-    ()
+    run_arithi_addiw(rds, rds, SignExtend(imm))
 
 -----------------------------------
 -- C.ADDI16SP imm
 -----------------------------------
 define RVC > C_ADDI16SP(imm::bits(6)) =
-    ()
+    run_arithi_addi(SP_reg, SP_reg, SignExtend(imm : 0b0`4))
 
 -----------------------------------
 -- C.ADDI4SPN rd, imm
 -----------------------------------
 define RVC > C_ADDI4SPN(rd::creg, imm::byte) =
-    ()
+    run_arithi_addi(creg2reg(rd), SP_reg, ZeroExtend(imm : 0b0`2))
 
 -----------------------------------
 -- C.SLLI   rds, imm
 -----------------------------------
 define RVC > C_SLLI(rds::reg, imm::bits(6)) =
-    ()
+    run_shift_slli(rds, rds, imm)
 
 -----------------------------------
 -- C.SRLI   rds, imm
 -----------------------------------
 define RVC > C_SRLI(rds::creg, imm::bits(6)) =
-    ()
+    run_shift_srli(creg2reg(rds), creg2reg(rds), imm)
 
 -----------------------------------
 -- C.SRAI   rds, imm
 -----------------------------------
 define RVC > C_SRAI(rds::creg, imm::bits(6)) =
-    ()
+    run_shift_srai(creg2reg(rds), creg2reg(rds), imm)
 
 -----------------------------------
 -- C.ANDI   rds, imm
 -----------------------------------
 define RVC > C_ANDI(rds::creg, imm::bits(6)) =
-    ()
+    run_arithi_andi(creg2reg(rds), creg2reg(rds), SignExtend(imm))
 
 -- integer register-register operations
 
 -----------------------------------
 -- C.MV     rds, rs2
 -----------------------------------
-define RVC > C_MV(rds::reg, rs2::reg) =
-    ()
+define RVC > C_MV(rd::reg, rs2::reg) =
+    run_arithr_add(rd, Z_reg, rs2)
 
 -----------------------------------
 -- C.ADD    rds, rs2
 -----------------------------------
 define RVC > C_ADD(rds::reg, rs2::reg) =
-    ()
+    run_arithr_add(rds, rds, rs2)
 
 -----------------------------------
 -- C.AND    rds, rs2
 -----------------------------------
 define RVC > C_AND(rds::creg, rs2::creg) =
-    ()
+    run_arithr_and(creg2reg(rds), creg2reg(rds), creg2reg(rs2))
 
 -----------------------------------
 -- C.OR     rds, rs2
 -----------------------------------
 define RVC > C_OR(rds::creg, rs2::creg) =
-    ()
+    run_arithr_or(creg2reg(rds), creg2reg(rds), creg2reg(rs2))
 
 -----------------------------------
 -- C.XOR    rds, rs2
 -----------------------------------
 define RVC > C_XOR(rds::creg, rs2::creg) =
-    ()
+    run_arithr_xor(creg2reg(rds), creg2reg(rds), creg2reg(rs2))
 
 -----------------------------------
 -- C.SUB    rds, rs2
 -----------------------------------
 define RVC > C_SUB(rds::creg, rs2::creg) =
-    ()
+    run_arithr_sub(creg2reg(rds), creg2reg(rds), creg2reg(rs2))
 
 -----------------------------------
 -- C.ADDW   rds, rs2
 -----------------------------------
 define RVC > C_ADDW(rds::creg, rs2::creg) =
-    ()
+    run_arithr_addw(creg2reg(rds), creg2reg(rds), creg2reg(rs2))
 
 -----------------------------------
 -- C.SUBW   rds, rs2
 -----------------------------------
 define RVC > C_SUBW(rds::creg, rs2::creg) =
-    ()
+    run_arithr_subw(creg2reg(rds), creg2reg(rds), creg2reg(rs2))
 
 -- defined nop
 
