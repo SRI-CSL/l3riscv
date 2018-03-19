@@ -6621,83 +6621,82 @@ unit checkTimers() =
 }
 
 unit Next =
-{ var interrupt = false
-; initDelta ()
-
--- Interrupts are prioritized above synchronous traps, so first check
--- if we have a pending interrupt before fetching.
-
-; match curInterrupt()
-  { case Some(i, delegateePriv) =>
-    { interrupt <- true
-    ; excHandler(true, interruptIndex(i), curPrivilege, delegateePriv, PC, None)
-    }
-    case None =>
-      match Fetch()
-      { case F_Result(w) =>
-        { inst = Decode(w)
-        ; mark_log(LOG_INSN, log_instruction(w, inst))
-        ; Run(inst)
-        }
-        case F_Error(inst) =>
-        { mark_log(LOG_INSN, log_instruction([0::word], inst))
-        ; Run(inst)
-        }
-      }
-  }
+{ initDelta ()
 
 ; tickClock()
 
-  -- fetch only if we are not handling an interrupt
-; if interrupt then ()
-  else match NextFetch
-  { case Some(Trap(e)) =>
-             { NextFetch <- None
-             ; delegate = excHandlerDelegate(e.trap)
-             ; excHandler(false, [e.trap]::exc_code, curPrivilege, delegate, PC, e.badaddr)
-             }
-    case Some(Uret) =>
-             { NextFetch    <- None
-             ; mark_log(LOG_INSN, ["ret-ing from " : privName(curPrivilege)
-                                   : " to " : privName(User)])
-             ; curPrivilege <- User
-             ; MCSR.mstatus <- uret(MCSR.mstatus)
-             ; PC           <- UCSR.uepc
+-- Interrupts are prioritized above synchronous traps, so first check
+-- if we have a pending interrupt before fetch/execute.
 
-             ; recordMStatus(MCSR.mstatus)
-             }
-    case Some(Sret) =>
-             { NextFetch    <- None
-             ; mark_log(LOG_INSN, ["ret-ing from " : privName(curPrivilege)
-                                   : " to " : privName(if MCSR.mstatus.M_SPP then Supervisor else User)])
-             ; curPrivilege <- if MCSR.mstatus.M_SPP then Supervisor else User
-             ; MCSR.mstatus <- sret(MCSR.mstatus)
-             ; PC           <- SCSR.sepc
+; match curInterrupt()
+  { -- interrupt-handling
+    case Some(i, delegateePriv) =>
+    { excHandler(true, interruptIndex(i), curPrivilege, delegateePriv, PC, None) }
 
-             ; recordMStatus(MCSR.mstatus)
-             }
-    case Some(Mret) =>
-             { NextFetch    <- None
-             ; mark_log(LOG_INSN, ["ret-ing from " : privName(curPrivilege)
-                                   : " to " : privName(privilege(MCSR.mstatus.M_MPP))])
-             ; curPrivilege <- privilege(MCSR.mstatus.M_MPP)
-             ; MCSR.mstatus <- mret(MCSR.mstatus)
-             ; PC           <- MCSR.mepc
-
-             ; recordMStatus(MCSR.mstatus)
-             }
-    case Some(BranchTo(pc)) =>
-             { incrInstret()
-             ; NextFetch    <- None
-             ; PC           <- pc
-             -- mstatus should not have changed, preserve previous value in the delta
-             }
+    -- fetch/execute/exception-handling
     case None =>
-             { incrInstret()
-             ; PC           <- PC + 4
-             -- mstatus could have changed due to a csr write
-             ; recordMStatus(MCSR.mstatus)
-             }
+    { match Fetch()
+      { case F_Result(w) =>
+                 { inst = Decode(w)
+                 ; mark_log(LOG_INSN, log_instruction(w, inst))
+                 ; Run(inst)
+                 }
+        case F_Error(inst) =>
+                 { mark_log(LOG_INSN, log_instruction([0::word], inst))
+                 ; Run(inst)
+                 }
+      }
+
+    ; match NextFetch
+      { case Some(Trap(e)) =>
+                 { NextFetch <- None
+                 ; delegate = excHandlerDelegate(e.trap)
+                 ; excHandler(false, [e.trap]::exc_code, curPrivilege, delegate, PC, e.badaddr)
+                 }
+        case Some(Uret) =>
+                 { NextFetch    <- None
+                 ; mark_log(LOG_INSN, ["ret-ing from " : privName(curPrivilege)
+                                       : " to " : privName(User)])
+                 ; curPrivilege <- User
+                 ; MCSR.mstatus <- uret(MCSR.mstatus)
+                 ; PC           <- UCSR.uepc
+
+                 ; recordMStatus(MCSR.mstatus)
+                 }
+        case Some(Sret) =>
+                 { NextFetch    <- None
+                 ; mark_log(LOG_INSN, ["ret-ing from " : privName(curPrivilege)
+                                       : " to " : privName(if MCSR.mstatus.M_SPP then Supervisor else User)])
+                 ; curPrivilege <- if MCSR.mstatus.M_SPP then Supervisor else User
+                 ; MCSR.mstatus <- sret(MCSR.mstatus)
+                 ; PC           <- SCSR.sepc
+
+                 ; recordMStatus(MCSR.mstatus)
+                 }
+        case Some(Mret) =>
+                 { NextFetch    <- None
+                 ; mark_log(LOG_INSN, ["ret-ing from " : privName(curPrivilege)
+                                       : " to " : privName(privilege(MCSR.mstatus.M_MPP))])
+                 ; curPrivilege <- privilege(MCSR.mstatus.M_MPP)
+                 ; MCSR.mstatus <- mret(MCSR.mstatus)
+                 ; PC           <- MCSR.mepc
+
+                 ; recordMStatus(MCSR.mstatus)
+                 }
+        case Some(BranchTo(pc)) =>
+                 { incrInstret()
+                 ; NextFetch    <- None
+                 ; PC           <- pc
+                 -- mstatus should not have changed, preserve previous value in the delta
+                 }
+        case None =>
+                 { incrInstret()
+                 ; PC           <- PC + 4
+                 -- mstatus could have changed due to a csr write
+                 ; recordMStatus(MCSR.mstatus)
+                 }
+      }
+    }
   }
 ; recordPC(PC, curPrivilege)
 }
