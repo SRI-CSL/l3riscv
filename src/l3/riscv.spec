@@ -2123,11 +2123,21 @@ unit writeFPRD(rd::reg, val::regType) =
 }
 
 ---------------------------------------------------------------------------
--- Raw memory access
+-- Physical memory access
 ---------------------------------------------------------------------------
 
 declare MEM :: pAddrIdx -> regType -- raw memory, laid out in blocks
                                    -- of (|pAddr|-|pAddrIdx|) bits
+
+-- Some physical addresses are not memory addresses.  This is a
+-- platform-specific issue, and is externally supplied to the spec in
+-- the form of a predicate on physical addresses.  This could be
+-- implemented using the pmpaddr/pmpcfg scheme, but Spike/riscv-tests
+-- currently don't use it.
+--
+-- TODO: MMIO will require extending this basic mechanism.
+construct PAddr { PAddr :: pAddr }
+declare validMemAddrPred :: (PAddr * nat) -> bool
 
 -- Spike HTIF compatibility
 -- The riscv-test suite uses the tohost MMIO port to indicate test completion
@@ -2157,7 +2167,7 @@ regType rawReadData(pAddr::pAddr) =
        }
 }
 
-unit rawWriteData(pAddr::pAddr, data::regType, nbytes::nat) =
+unit rawWriteMem(pAddr::pAddr, data::regType, nbytes::nat) =
 { mask     = ([ZeroExtend(1`1)::regType] << (nbytes * 8)) - 1
 ; pAddrIdx = pAddr<63:3>
 ; align    = [pAddr<2:0>] :: nat
@@ -2192,6 +2202,13 @@ unit rawWriteData(pAddr::pAddr, data::regType, nbytes::nat) =
   else ()
 }
 
+bool memWriteData(pAddr::pAddr, data::regType, nbytes::nat) =
+    if   validMemAddrPred(PAddr(ZeroExtend(pAddr)), nbytes)
+    then { rawWriteMem(pAddr, data, nbytes)
+         ; true
+         }
+    else false
+
 half rawReadInstGranule(pAddr::pAddr) =
 { pAddrIdx = pAddr<63:3>
 ; data     = MEM(pAddrIdx)
@@ -2200,8 +2217,13 @@ half rawReadInstGranule(pAddr::pAddr) =
 ; if pAddr<1> then word<31:16> else word<15:0>
 }
 
--- helper used to preload memory contents
-unit rawWriteMem(pAddr::pAddr, data::regType) =
+half option memReadInstGranule(pAddr::pAddr) =
+    if   validMemAddrPred(PAddr(ZeroExtend(pAddr)), 2)
+    then Some(rawReadInstGranule(pAddr))
+    else None
+
+-- helper used to preload memory contents, used only from outside the model.
+unit extRawWriteMem(pAddr::pAddr, data::regType) =
 { pAddrIdx = pAddr<63:3>
 ; MEM(pAddrIdx) <- data
 ; mark_log(LOG_MEM, log_w_mem(pAddrIdx, pAddr, data))
@@ -2480,7 +2502,9 @@ paddr32 option translate32(vAddr::vaddr32, ac::accessType, priv::Privilege, mxr:
                       ; tlb([idx])          <- Some(n_ent)
                       ; TLB32               <- tlb
                       -- update memory
-                      ; rawWriteData(ZeroExtend(n_ent.pteAddr), ZeroExtend(n_ent.&pte), 4)
+                      ; if   memWriteData(ZeroExtend(n_ent.pteAddr), ZeroExtend(n_ent.&pte), 4)
+                        then ()
+                        else #INTERNAL_ERROR("Invalid physical address in TLB: " : [n_ent.pteAddr])
                       -- done
                       ; Some(n_ent.pAddr || ZeroExtend(vAddr && n_ent.vAddrMask))
                       }
@@ -2509,9 +2533,13 @@ paddr32 option translate32(vAddr::vaddr32, ac::accessType, priv::Privilege, mxr:
             { if   enable_dirty_update
               then { var pte_w = pte
                    ; pte_w.PTE_BITS <- &pbits
-                   ; rawWriteData(ZeroExtend(pteAddr), ZeroExtend(&pte_w), 4)
-                   ; TLB32 <- addToTLB32(asid, vAddr, pAddr, pte_w, pteAddr, i, global, TLB32)
-                   ; Some(pAddr)
+                   ; if   memWriteData(ZeroExtend(pteAddr), ZeroExtend(&pte_w), 4)
+                     then { TLB32 <- addToTLB32(asid, vAddr, pAddr, pte_w, pteAddr, i, global, TLB32)
+                          ; Some(pAddr)
+                          }
+                     else { mark_log(LOG_ADDRTR, "pte is not in valid physical memory: " : [pteAddr])
+                          ; None
+                          }
                    }
               else { mark_log(LOG_ADDRTR, "pte needs dirty/accessed update!")
                    ; None
@@ -2719,7 +2747,9 @@ paddr39 option translate39(vAddr::vaddr39, ac::accessType, priv::Privilege, mxr:
                       ; tlb([idx])          <- Some(n_ent)
                       ; TLB39               <- tlb
                       -- update memory
-                      ; rawWriteData(ZeroExtend(n_ent.pteAddr), n_ent.&pte, 8)
+                      ; if   memWriteData(ZeroExtend(n_ent.pteAddr), n_ent.&pte, 8)
+                        then ()
+                        else #INTERNAL_ERROR("Invalid physical address in TLB:" : [n_ent.pteAddr])
                       -- done
                       ; Some(n_ent.pAddr || ZeroExtend(vAddr && n_ent.vAddrMask))
                       }
@@ -2748,9 +2778,13 @@ paddr39 option translate39(vAddr::vaddr39, ac::accessType, priv::Privilege, mxr:
             { if   enable_dirty_update
               then { var pte_w = pte
                    ; pte_w.PTE_BITS <- &pbits
-                   ; rawWriteData(ZeroExtend(pteAddr), &pte_w, 8)
-                   ; TLB39 <- addToTLB39(asid, vAddr, pAddr, pte_w, pteAddr, i, global, TLB39)
-                   ; Some(pAddr)
+                   ; if   memWriteData(ZeroExtend(pteAddr), &pte_w, 8)
+                     then { TLB39 <- addToTLB39(asid, vAddr, pAddr, pte_w, pteAddr, i, global, TLB39)
+                          ; Some(pAddr)
+                          }
+                     else { mark_log(LOG_ADDRTR, "pte is not in valid physical memory: " : [pteAddr])
+                          ; None
+                          }
                    }
               else { mark_log(LOG_ADDRTR, "pte needs dirty/accessed update!")
                    ; None
@@ -3554,8 +3588,9 @@ unit run_store_sw(rs1::reg, rs2::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
 ; match translateAddr(vAddr, Write, Data)
   { case Some(pAddr) => { data = GPR(rs2)
-                        ; rawWriteData(pAddr, data, 4)
-                        ; recordStore(vAddr, data, WORD)
+                        ; if   memWriteData(pAddr, data, 4)
+                          then recordStore(vAddr, data, WORD)
+                          else signalAddressException(E_SAMO_Access_Fault, vAddr)
                         }
     case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
   }
@@ -3571,8 +3606,9 @@ define Store > SH(rs1::reg, rs2::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
 ; match translateAddr(vAddr, Write, Data)
   { case Some(pAddr) => { data = GPR(rs2)
-                        ; rawWriteData(pAddr, data, 2)
-                        ; recordStore(vAddr, data, HALFWORD)
+                        ; if   memWriteData(pAddr, data, 2)
+                          then recordStore(vAddr, data, HALFWORD)
+                          else signalAddressException(E_SAMO_Access_Fault, vAddr)
                         }
     case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
   }
@@ -3585,8 +3621,9 @@ define Store > SB(rs1::reg, rs2::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
 ; match translateAddr(vAddr, Write, Data)
   { case Some(pAddr) => { data = GPR(rs2)
-                        ; rawWriteData(pAddr, data, 1)
-                        ; recordStore(vAddr, data, BYTE)
+                        ; if   memWriteData(pAddr, data, 1)
+                          then recordStore(vAddr, data, BYTE)
+                          else signalAddressException(E_SAMO_Access_Fault, vAddr)
                         }
     case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
   }
@@ -3601,8 +3638,9 @@ unit run_store_sd(rs1::reg, rs2::reg, offs::imm12) =
     else { vAddr = GPR(rs1) + SignExtend(offs)
          ; match translateAddr(vAddr, Write, Data)
            { case Some(pAddr) => { data = GPR(rs2)
-                                 ; rawWriteData(pAddr, data, 8)
-                                 ; recordStore(vAddr, data, DOUBLEWORD)
+                                 ; if   memWriteData(pAddr, data, 8)
+                                   then recordStore(vAddr, data, DOUBLEWORD)
+                                   else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                  }
              case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
            }
@@ -3672,17 +3710,19 @@ define AMO > SC_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
   else { vAddr = GPR(rs1)
        ; if   vAddr<1:0> != 0
          then signalAddressException(E_SAMO_Addr_Align, vAddr)
-         else if   not matchLoadReservation(vAddr)
-         then writeRD(rd, 1)
-         else match translateAddr(vAddr, Write, Data)
-              { case Some(pAddr) => { data = GPR(rs2)
-                                    ; rawWriteData(pAddr, data, 4)
-                                    ; recordStore(vAddr, data, WORD)
-                                    ; writeRD(rd, 0)
-                                    ; ReserveLoad  <- None
-                                    }
-                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
-              }
+         else if not matchLoadReservation(vAddr)
+              then writeRD(rd, 1)
+              else match translateAddr(vAddr, Write, Data)
+                   { case Some(pAddr) => { data = GPR(rs2)
+                                         ; if   memWriteData(pAddr, data, 4)
+                                           then { recordStore(vAddr, data, WORD)
+                                                ; writeRD(rd, 0)
+                                                ; ReserveLoad  <- None
+                                                }
+                                           else signalAddressException(E_SAMO_Access_Fault, vAddr)
+                                         }
+                     case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+                   }
        }
 }
 
@@ -3699,10 +3739,12 @@ define AMO > SC_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
               then writeRD(rd, 1)
               else match translateAddr(vAddr, Write, Data)
                    { case Some(pAddr) => { data = GPR(rs2)
-                                         ; rawWriteData(pAddr, data, 4)
-                                         ; recordStore(vAddr, data, WORD)
-                                         ; writeRD(rd, 0)
-                                         ; ReserveLoad  <- None
+                                         ; if   memWriteData(pAddr, data, 4)
+                                           then { recordStore(vAddr, data, WORD)
+                                                ; writeRD(rd, 0)
+                                                ; ReserveLoad  <- None
+                                                }
+                                           else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                          }
                      case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
                    }
@@ -3721,10 +3763,12 @@ define AMO > AMOSWAP_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
          else match translateAddr(vAddr, ReadWrite, Data)
               { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
                                     ; data = GPR(rs2)
-                                    ; writeRD(rd, memv)
-                                    ; rawWriteData(pAddr, data, 4)
-                                    ; recordLoad(vAddr, memv, WORD)
-                                    ; recordAMOStore(vAddr, data, WORD)
+                                    ; if   memWriteData(pAddr, data, 4)
+                                      then { writeRD(rd, memv)
+                                           ; recordLoad(vAddr, memv, WORD)
+                                           ; recordAMOStore(vAddr, data, WORD)
+                                           }
+                                      else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                     }
                 case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
               }
@@ -3743,10 +3787,12 @@ define AMO > AMOSWAP_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
          else match translateAddr(vAddr, ReadWrite, Data)
               { case Some(pAddr) => { memv = rawReadData(pAddr)
                                     ; data = GPR(rs2)
-                                    ; writeRD(rd, memv)
-                                    ; rawWriteData(pAddr, data, 8)
-                                    ; recordLoad(vAddr, memv, DOUBLEWORD)
-                                    ; recordAMOStore(vAddr, data, DOUBLEWORD)
+                                    ; if   memWriteData(pAddr, data, 8)
+                                      then { writeRD(rd, memv)
+                                           ; recordLoad(vAddr, memv, DOUBLEWORD)
+                                           ; recordAMOStore(vAddr, data, DOUBLEWORD)
+                                           }
+                                      else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                     }
                 case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
               }
@@ -3766,10 +3812,12 @@ define AMO > AMOADD_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
               { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
                                     ; data = GPR(rs2)
                                     ; val  = data + memv
-                                    ; writeRD(rd, memv)
-                                    ; rawWriteData(pAddr, val, 4)
-                                    ; recordLoad(vAddr, memv, WORD)
-                                    ; recordAMOStore(vAddr, val, WORD)
+                                    ; if   memWriteData(pAddr, val, 4)
+                                      then { writeRD(rd, memv)
+                                           ; recordLoad(vAddr, memv, WORD)
+                                           ; recordAMOStore(vAddr, val, WORD)
+                                           }
+                                      else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                     }
                 case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
               }
@@ -3789,10 +3837,12 @@ define AMO > AMOADD_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
               { case Some(pAddr) => { memv = rawReadData(pAddr)
                                     ; data = GPR(rs2)
                                     ; val  = data + memv
-                                    ; writeRD(rd, memv)
-                                    ; rawWriteData(pAddr, val, 8)
-                                    ; recordLoad(vAddr, memv, DOUBLEWORD)
-                                    ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                    ; if   memWriteData(pAddr, val, 8)
+                                      then { writeRD(rd, memv)
+                                           ; recordLoad(vAddr, memv, DOUBLEWORD)
+                                           ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                           }
+                                      else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                     }
                 case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
               }
@@ -3812,10 +3862,12 @@ define AMO > AMOXOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
               { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
                                     ; data = GPR(rs2)
                                     ; val  = data ?? memv
-                                    ; writeRD(rd, memv)
-                                    ; rawWriteData(pAddr, val, 4)
-                                    ; recordLoad(vAddr, memv, WORD)
-                                    ; recordAMOStore(vAddr, val, WORD)
+                                    ; if   memWriteData(pAddr, val, 4)
+                                      then { writeRD(rd, memv)
+                                           ; recordLoad(vAddr, memv, WORD)
+                                           ; recordAMOStore(vAddr, val, WORD)
+                                           }
+                                      else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                     }
                 case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
               }
@@ -3835,10 +3887,12 @@ define AMO > AMOXOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
               { case Some(pAddr) => { memv = rawReadData(pAddr)
                                     ; data = GPR(rs2)
                                     ; val  = data ?? memv
-                                    ; writeRD(rd, memv)
-                                    ; rawWriteData(pAddr, val, 8)
-                                    ; recordLoad(vAddr, memv, DOUBLEWORD)
-                                    ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                    ; if   memWriteData(pAddr, val, 8)
+                                      then { writeRD(rd, memv)
+                                           ; recordLoad(vAddr, memv, DOUBLEWORD)
+                                           ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                           }
+                                      else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                     }
                 case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
               }
@@ -3858,10 +3912,12 @@ define AMO > AMOAND_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
               { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
                                     ; data = GPR(rs2)
                                     ; val  = data && memv
-                                    ; writeRD(rd, memv)
-                                    ; rawWriteData(pAddr, val, 4)
-                                    ; recordLoad(vAddr, memv, WORD)
-                                    ; recordAMOStore(vAddr, val, WORD)
+                                    ; if   memWriteData(pAddr, val, 4)
+                                      then { writeRD(rd, memv)
+                                           ; recordLoad(vAddr, memv, WORD)
+                                           ; recordAMOStore(vAddr, val, WORD)
+                                           }
+                                      else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                     }
                 case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
               }
@@ -3881,10 +3937,12 @@ define AMO > AMOAND_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
               { case Some(pAddr) => { memv = rawReadData(pAddr)
                                     ; data = GPR(rs2)
                                     ; val  = data && memv
-                                    ; writeRD(rd, memv)
-                                    ; rawWriteData(pAddr, val, 8)
-                                    ; recordLoad(vAddr, memv, DOUBLEWORD)
-                                    ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                    ; if   memWriteData(pAddr, val, 8)
+                                      then { writeRD(rd, memv)
+                                           ; recordLoad(vAddr, memv, DOUBLEWORD)
+                                           ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                           }
+                                      else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                     }
                 case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
               }
@@ -3904,10 +3962,12 @@ define AMO > AMOOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
               { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
                                     ; data = GPR(rs2)
                                     ; val  = data || memv
-                                    ; writeRD(rd, memv)
-                                    ; rawWriteData(pAddr, val, 4)
-                                    ; recordLoad(vAddr, memv, WORD)
-                                    ; recordAMOStore(vAddr, val, WORD)
+                                    ; if   memWriteData(pAddr, val, 4)
+                                      then { writeRD(rd, memv)
+                                           ; recordLoad(vAddr, memv, WORD)
+                                           ; recordAMOStore(vAddr, val, WORD)
+                                           }
+                                      else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                     }
                 case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
               }
@@ -3927,10 +3987,12 @@ define AMO > AMOOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
               { case Some(pAddr) => { memv = rawReadData(pAddr)
                                     ; data = GPR(rs2)
                                     ; val  = data || memv
-                                    ; writeRD(rd, memv)
-                                    ; rawWriteData(pAddr, val, 8)
-                                    ; recordLoad(vAddr, memv, DOUBLEWORD)
-                                    ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                    ; if   memWriteData(pAddr, val, 8)
+                                      then { writeRD(rd, memv)
+                                           ; recordLoad(vAddr, memv, DOUBLEWORD)
+                                           ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                           }
+                                      else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                     }
                 case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
               }
@@ -3950,10 +4012,12 @@ define AMO > AMOMIN_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
               { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
                                     ; data = GPR(rs2)
                                     ; val  = SignedMin(data, memv)
-                                    ; writeRD(rd, memv)
-                                    ; rawWriteData(pAddr, val, 4)
-                                    ; recordLoad(vAddr, memv, WORD)
-                                    ; recordAMOStore(vAddr, val, WORD)
+                                    ; if   memWriteData(pAddr, val, 4)
+                                      then { writeRD(rd, memv)
+                                           ; recordLoad(vAddr, memv, WORD)
+                                           ; recordAMOStore(vAddr, val, WORD)
+                                           }
+                                      else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                     }
                 case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
               }
@@ -3973,10 +4037,12 @@ define AMO > AMOMIN_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
               { case Some(pAddr) => { memv = rawReadData(pAddr)
                                     ; data = GPR(rs2)
                                     ; val  = SignedMin(data, memv)
-                                    ; writeRD(rd, memv)
-                                    ; rawWriteData(pAddr, val, 8)
-                                    ; recordLoad(vAddr, memv, DOUBLEWORD)
-                                    ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                    ; if   memWriteData(pAddr, val, 8)
+                                      then { writeRD(rd, memv)
+                                           ; recordLoad(vAddr, memv, DOUBLEWORD)
+                                           ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                           }
+                                      else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                     }
                 case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
               }
@@ -3996,10 +4062,12 @@ define AMO > AMOMAX_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
               { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
                                     ; data = GPR(rs2)
                                     ; val  = SignedMax(data, memv)
-                                    ; writeRD(rd, memv)
-                                    ; rawWriteData(pAddr, val, 4)
-                                    ; recordLoad(vAddr, memv, WORD)
-                                    ; recordAMOStore(vAddr, val, WORD)
+                                    ; if   memWriteData(pAddr, val, 4)
+                                      then { writeRD(rd, memv)
+                                           ; recordLoad(vAddr, memv, WORD)
+                                           ; recordAMOStore(vAddr, val, WORD)
+                                           }
+                                      else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                     }
                 case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
               }
@@ -4019,10 +4087,12 @@ define AMO > AMOMAX_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
               { case Some(pAddr) => { memv = rawReadData(pAddr)
                                     ; data = GPR(rs2)
                                     ; val  = SignedMax(data, memv)
-                                    ; writeRD(rd, memv)
-                                    ; rawWriteData(pAddr, val, 8)
-                                    ; recordLoad(vAddr, memv, DOUBLEWORD)
-                                    ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                    ; if   memWriteData(pAddr, val, 8)
+                                      then { writeRD(rd, memv)
+                                           ; recordLoad(vAddr, memv, DOUBLEWORD)
+                                           ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                           }
+                                      else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                     }
                 case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
               }
@@ -4042,10 +4112,12 @@ define AMO > AMOMINU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
               { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
                                     ; data = GPR(rs2)
                                     ; val  = Min(data, memv)
-                                    ; writeRD(rd, memv)
-                                    ; rawWriteData(pAddr, val, 4)
-                                    ; recordLoad(vAddr, memv, WORD)
-                                    ; recordAMOStore(vAddr, val, WORD)
+                                    ; if   memWriteData(pAddr, val, 4)
+                                      then { writeRD(rd, memv)
+                                           ; recordLoad(vAddr, memv, WORD)
+                                           ; recordAMOStore(vAddr, val, WORD)
+                                           }
+                                      else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                     }
                 case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
               }
@@ -4065,10 +4137,12 @@ define AMO > AMOMINU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
               { case Some(pAddr) => { memv = rawReadData(pAddr)
                                     ; data = GPR(rs2)
                                     ; val  = Min(data, memv)
-                                    ; writeRD(rd, memv)
-                                    ; rawWriteData(pAddr, val, 8)
-                                    ; recordLoad(vAddr, memv, DOUBLEWORD)
-                                    ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                    ; if   memWriteData(pAddr, val, 8)
+                                      then { writeRD(rd, memv)
+                                           ; recordLoad(vAddr, memv, DOUBLEWORD)
+                                           ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                           }
+                                      else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                     }
                 case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
               }
@@ -4088,10 +4162,12 @@ define AMO > AMOMAXU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
               { case Some(pAddr) => { memv = SignExtend(rawReadData(pAddr)<31:0>)
                                     ; data = GPR(rs2)
                                     ; val  = Max(data, memv)
-                                    ; writeRD(rd, memv)
-                                    ; rawWriteData(pAddr, val, 4)
-                                    ; recordLoad(vAddr, memv, WORD)
-                                    ; recordAMOStore(vAddr, val, WORD)
+                                    ; if   memWriteData(pAddr, val, 4)
+                                      then { writeRD(rd, memv)
+                                           ; recordLoad(vAddr, memv, WORD)
+                                           ; recordAMOStore(vAddr, val, WORD)
+                                           }
+                                      else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                     }
                 case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
               }
@@ -4111,10 +4187,12 @@ define AMO > AMOMAXU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
               { case Some(pAddr) => { memv = rawReadData(pAddr)
                                     ; data = GPR(rs2)
                                     ; val  = Max(data, memv)
-                                    ; writeRD(rd, memv)
-                                    ; rawWriteData(pAddr, val, 8)
-                                    ; recordLoad(vAddr, memv, DOUBLEWORD)
-                                    ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                    ; if   memWriteData(pAddr, val, 8)
+                                      then { writeRD(rd, memv)
+                                           ; recordLoad(vAddr, memv, DOUBLEWORD)
+                                           ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                           }
+                                      else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                     }
                 case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
               }
@@ -4157,8 +4235,9 @@ unit run_fpstore_fsw(rs1::reg, rs2::reg, offs::imm12) =
   else { vAddr = GPR(rs1) + SignExtend(offs)
        ; match translateAddr(vAddr, Write, Data)
                    { case Some(pAddr) => { data = FPRS(rs2)
-                                         ; rawWriteData(pAddr, ZeroExtend(data), 4)
-                                         ; recordStore(vAddr, ZeroExtend(data), WORD)
+                                         ; if   memWriteData(pAddr, ZeroExtend(data), 4)
+                                           then recordStore(vAddr, ZeroExtend(data), WORD)
+                                           else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                          }
                      case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
                    }
@@ -4650,8 +4729,9 @@ unit run_fpstore_fsd(rs1::reg, rs2::reg, offs::imm12) =
   else { vAddr = GPR(rs1) + SignExtend(offs)
        ; match translateAddr(vAddr, Write, Data)
                    { case Some(pAddr) => { data = FPRD(rs2)
-                                         ; rawWriteData(pAddr, data, 8)
-                                         ; recordStore(vAddr, data, DOUBLEWORD)
+                                         ; if   memWriteData(pAddr, data, 8)
+                                           then recordStore(vAddr, data, DOUBLEWORD)
+                                           else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                          }
                      case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
                    }
@@ -5597,6 +5677,11 @@ define Internal > FETCH_FAULT(addr::regType) =
 ; recordFetchException()
 }
 
+define Internal > FETCH_ACCESS(addr::regType) =
+{ signalAddressException(E_Fetch_Access_Fault, [addr])
+; recordFetchException()
+}
+
 define Run
 
 --------------------------------------------------
@@ -5617,22 +5702,29 @@ FetchResult Fetch() =
   then F_Error(Internal(FETCH_MISALIGNED(vPC)))
   else match translateAddr(vPC, Execute, Instruction)
        { case Some(pPClo) =>
-         { ilo  = rawReadInstGranule(pPClo)
-         ; if   isRVC(ilo)
-           then { recordFetch(ZeroExtend(ilo))
-                ; F_RVC(ilo)
-                }
-           else match translateAddr(vPC + 2, Execute, Instruction)
-                { case Some(pPChi) =>
-                  { ihi  = rawReadInstGranule(pPChi)
-                  ; inst = [ ihi : ilo ]
-                  ; recordFetch(inst)
-                  ; F_Base(inst)
-                  }
-                  case None =>
-                       F_Error(Internal(FETCH_FAULT(vPC)))
-                }
-         }
+           match memReadInstGranule(pPClo)
+           { case Some(ilo) =>
+                 if   isRVC(ilo)
+                 then { recordFetch(ZeroExtend(ilo))
+                      ; F_RVC(ilo)
+                      }
+                 else match translateAddr(vPC + 2, Execute, Instruction)
+                      { case Some(pPChi) =>
+                          match memReadInstGranule(pPChi)
+                          { case Some(ihi) =>
+                            { inst = [ ihi : ilo ]
+                            ; recordFetch(inst)
+                            ; F_Base(inst)
+                            }
+                            case None =>
+                                 F_Error(Internal(FETCH_ACCESS(vPC)))
+                          }
+                        case None =>
+                             F_Error(Internal(FETCH_FAULT(vPC)))
+                      }
+             case None =>
+                  F_Error(Internal(FETCH_ACCESS(vPC)))
+           }
          case None =>
               F_Error(Internal(FETCH_FAULT(vPC)))
        }
@@ -6371,6 +6463,7 @@ string instructionToString(i::instruction) =
 
      case Internal(FETCH_MISALIGNED(_))     => pN0type("FETCH_MISALIGNED")
      case Internal(FETCH_FAULT(_))          => pN0type("FETCH_FAULT")
+     case Internal(FETCH_ACCESS(_))          => pN0type("FETCH_ACCESS")
    }
 
 
@@ -6607,6 +6700,7 @@ word Encode(i::instruction) =
 
      case Internal(FETCH_MISALIGNED(_))     => 0
      case Internal(FETCH_FAULT(_))          => 0
+     case Internal(FETCH_ACCESS(_))         => 0
    }
 
 ---------------------------------------------------------------------------

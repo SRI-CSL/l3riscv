@@ -88,7 +88,7 @@ fun storeVecInMemHelper vec (base : int) (i : int) =
         val addr    = IntInf.fromInt (base + j)
         val vlen    = Word8Vector.length vec
     in  if   j < vlen
-        then ( riscv.rawWriteMem (BitsN.fromInt (addr, IntInf.fromInt 64), bits64)
+        then ( riscv.extRawWriteMem (BitsN.fromInt (addr, IntInf.fromInt 64), bits64)
              ; storeVecInMemHelper vec base (i+1)
              )
         else
@@ -108,6 +108,23 @@ fun storeVecInMem (base : int, memsz : int, vec) =
                      )
     in  storeVecInMemHelper padded base 0
     end
+
+(* Physical memory model: match Spike for now, but needs to be configurable. *)
+
+val RSTVEC_BASE = 0x1000
+val RSTVEC_SIZE = 0x20
+val DRAM_BASE   = 0x80000000
+val DRAM_SIZE   = 2048 * 1024 * 1024
+
+val physMemRanges : (IntInf.int * IntInf.int) list ref =
+    ref [ (RSTVEC_BASE, RSTVEC_SIZE)
+        , (DRAM_BASE,   DRAM_SIZE)
+        ]
+
+fun isMemoryAddr intAddr =
+    List.exists (fn (s, r) =>
+                    s <= intAddr andalso intAddr < (s + r)
+                ) (!physMemRanges)
 
 (* Multi-core utilities *)
 
@@ -362,6 +379,14 @@ end
 
 (* Platform initialization *)
 
+fun physAddrIsMemory (p : riscv.PAddr, n : IntInf.int) =
+    case p of riscv.PAddr a =>
+        let val addr = BitsN.toInt a
+            val nend = IntInf.-(n, 1)
+        in  isMemoryAddr addr
+            andalso isMemoryAddr (IntInf.+(addr, nend))
+        end
+
 fun initPlatform cores =
     ( riscv.print     := debugPrint
     ; riscv.println   := debugPrintln
@@ -370,6 +395,7 @@ fun initPlatform cores =
     ; riscv.initMem (BitsN.fromInt
                          ((if !check then 0xaaaaaaaaAAAAAAAA else 0x0)
                          , 64))
+    ; riscv.validMemAddrPred    := physAddrIsMemory
     ; riscv.enable_dirty_update := true
     ; if   !check
       then setChecker (Oracle.init ("RV64IMAFD"))
@@ -413,7 +439,7 @@ fun insertResetVec pc =
         val pc_hi        = IntInf.~>> (pc_int, Word.fromInt 32)
         fun insert (addr : IntInf.int) words =
             case words of
-                w :: tl        => ( riscv.rawWriteData (BitsN.fromInt (addr, 64), (w, 4))
+                w :: tl        => ( riscv.rawWriteMem (BitsN.fromInt (addr, 64), (w, 4))
                                   ; insert (IntInf.+ (addr, 4)) tl
                                   )
               | []             => addr
