@@ -2192,11 +2192,12 @@ unit rawWriteData(pAddr::pAddr, data::regType, nbytes::nat) =
   else ()
 }
 
-word rawReadInst(pAddr::pAddr) =
+half rawReadInstGranule(pAddr::pAddr) =
 { pAddrIdx = pAddr<63:3>
 ; data     = MEM(pAddrIdx)
 ; mark_log(LOG_MEM, log_r_mem(pAddrIdx, pAddr, data))
-; if pAddr<2> then data<63:32> else data<31:0>
+; word     = if pAddr<2> then data<63:32> else data<31:0>
+; if pAddr<1> then word<31:16> else word<15:0>
 }
 
 -- helper used to preload memory contents
@@ -5604,19 +5605,36 @@ define Run
 
 construct FetchResult
 { F_Error   :: instruction
-, F_Result  :: word
+, F_RVC     :: half
+, F_Base    :: word
 }
 
+bool isRVC(h::half) = not (h<1> and h<0>)
+
 FetchResult Fetch() =
-{ vPC    = PC
-; if   vPC<1:0> != 0 or (haveRVC() and vPC<0>)
+{ vPC  = PC
+; if   (not haveRVC() and vPC<1:0> != 0) or (haveRVC() and vPC<0>)
   then F_Error(Internal(FETCH_MISALIGNED(vPC)))
   else match translateAddr(vPC, Execute, Instruction)
-       { case Some(pPC) => { instw = rawReadInst(pPC)
-                           ; recordFetch(instw)
-                           ; F_Result(instw)
-                           }
-         case None      => F_Error(Internal(FETCH_FAULT(vPC)))
+       { case Some(pPClo) =>
+         { ilo  = rawReadInstGranule(pPClo)
+         ; if   isRVC(ilo)
+           then { recordFetch(ZeroExtend(ilo))
+                ; F_RVC(ilo)
+                }
+           else match translateAddr(vPC + 2, Execute, Instruction)
+                { case Some(pPChi) =>
+                  { ihi  = rawReadInstGranule(pPChi)
+                  ; inst = [ ihi : ilo ]
+                  ; recordFetch(inst)
+                  ; F_Base(inst)
+                  }
+                  case None =>
+                       F_Error(Internal(FETCH_FAULT(vPC)))
+                }
+         }
+         case None =>
+              F_Error(Internal(FETCH_FAULT(vPC)))
        }
 }
 
@@ -6008,7 +6026,7 @@ instruction decode_RVCQ2(a::Architecture, h::half) =
      case    _, _                         => UnknownInstruction
    }
 
-instruction decode_RVC(a::Architecture, h::half) =
+instruction DecodeRVC(a::Architecture, h::half) =
    match h
    { case '_`14 00' => decode_RVCQ0(a, h)
      case '_`14 01' => decode_RVCQ1(a, h)
@@ -6636,9 +6654,17 @@ unit Next =
     -- fetch/execute/exception-handling
     case None =>
     { match Fetch()
-      { case F_Result(w) =>
+      { case F_Base(w) =>
                  { inst = Decode(w)
                  ; mark_log(LOG_INSN, log_instruction(w, inst))
+                 ; Run(inst)
+                 }
+        case F_RVC(h) =>
+                 { -- FIXME: which XLEN to use here?  Depending on
+                   -- privilege, MXL, SXL and UXL could apply. There
+                   -- is a virtualization hole here for RVC.
+                   inst = DecodeRVC(curArch(), h)
+                 ; mark_log(LOG_INSN, log_instruction(ZeroExtend(h), inst))
                  ; Run(inst)
                  }
         case F_Error(inst) =>

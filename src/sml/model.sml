@@ -46,6 +46,7 @@ val verifier_trace_lvl  = ref 1
 
 fun hex s  = L3.lowercase (BitsN.toHexString s)
 fun phex n = StringCvt.padLeft #"0" (n div 4) o hex
+val hex16  = phex 16
 val hex32  = phex 32
 val hex64  = phex 64
 
@@ -159,18 +160,41 @@ fun dumpRegisters core =
     end
 end
 
-fun disassemble pc range =
+local
+    fun disRVC arch addr ilo =
+        let val inst = riscv.DecodeRVC (arch, ilo)
+        in  print ("0x" ^ (L3.padLeftString(#"0", (10, BitsN.toHexString addr)))
+                   ^ ": 0x" ^ hex16 ilo
+                   ^ ":     " ^ riscv.instructionToString inst
+                   ^ "\n"
+                  )
+        end
+    fun disBase addr ilo ihi =
+        let val word = BitsN.concat [ihi, ilo]
+            val inst = riscv.Decode word
+        in  print ("0x" ^ (L3.padLeftString(#"0", (10, BitsN.toHexString addr)))
+                   ^ ": 0x" ^ hex32 word
+                   ^ ": " ^ riscv.instructionToString inst
+                   ^ "\n"
+                  )
+        end
+in
+fun disassemble arch pc range =
     if range <= 0 then ()
-    else let val addr = BitsN.fromInt (pc, IntInf.fromInt 64)
-             val word = riscv.rawReadInst (addr)
-             val inst = riscv.Decode word
-         in  print ("0x" ^ (L3.padLeftString(#"0", (10, BitsN.toHexString addr)))
-                    ^ ": 0x" ^ hex32 word
-                    ^ ": " ^ riscv.instructionToString inst
-                    ^ "\n"
-                   )
-           ; disassemble (pc + 4) (range - 4)
+    else let val addr   = BitsN.fromInt (pc, IntInf.fromInt 64)
+             val ilo    = riscv.rawReadInstGranule (addr)
+             val is_rvc = riscv.isRVC ilo
+         in  if   is_rvc
+             then ( disRVC arch addr ilo
+                  ; disassemble arch (pc + 2) (range - 2)
+                  )
+             else ( let val pc_plus_2 = BitsN.+(addr, BitsN.fromInt(2, 64))
+                    in  disBase addr ilo (riscv.rawReadInstGranule pc_plus_2)
+                      ; disassemble arch (pc + 4) (range - 4)
+                    end
+                  )
          end
+end
 
 fun verifierTrace (lvl, str) =
     if   lvl <= !verifier_trace_lvl
@@ -409,7 +433,7 @@ fun insertResetVec pc =
 
 (* Program load *)
 
-fun loadElf segms dis =
+fun loadElf arch segms dis =
     List.app (fn s =>
                  if   (#ptype s) = Elf.PT_LOAD
                  then (let val vaddr   = Int.fromLarge (#vaddr s)
@@ -431,7 +455,7 @@ fun loadElf segms dis =
                            then mem_size := IntInf.fromInt (vaddr + memsz - mem_end)
                            else ()
                          (* TODO: should check flags for executable segment *)
-                         ; if   dis then disassemble (#vaddr s) (#memsz s)
+                         ; if   dis then disassemble arch (#vaddr s) (#memsz s)
                            else ()
                        end)
                  else ( print ("Skipping segment ...\n")
@@ -463,14 +487,13 @@ fun setupElf file dis =
         val symbs  = Elf.getSymbols elf hdr nsects
         val pc     = if !boot then reset_addr else (LargeInt.toInt (#entry hdr))
         val tohost = List.find (match_symb "tohost") symbs
+        val arch   = if (#class hdr) = Elf.BIT_32 then riscv.RV32 else riscv.RV64
     in  set_tohost tohost
       (* FIXME: instead of presenting as RV64 in misa/mstatus for RV32 ELF
        * files, we should support presenting as RV32 using writable xXLs.  This
        * should be made to support tandem-verification with spike.
-       *    if   (#class hdr) = Elf.BIT_32
-       *    then riscv.RV32 else riscv.RV64
        *)
-      ; initCores ( riscv.RV64
+      ; initCores ( riscv.RV64 (* TODO: use arch instead? *)
                   , IntInf.fromInt pc
                   )
       ; print ("L3RISCV: pc set to 0x" ^ (hx64 (Word64.fromInt pc))
@@ -484,7 +507,7 @@ fun setupElf file dis =
              )
         else ()
       ; be := (if (#endian hdr = Elf.BIG) then true else false)
-      ; loadElf segms dis
+      ; loadElf arch segms dis
       ; if   !trace_elf
         then ( print ("\nMem base: " ^ (hxi64 (!mem_base_addr)))
              ; print ("\nMem size: " ^ (hxi64 (!mem_size))
