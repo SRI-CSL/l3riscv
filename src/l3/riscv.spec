@@ -2136,8 +2136,7 @@ declare MEM :: pAddrIdx -> regType -- raw memory, laid out in blocks
 -- currently don't use it.
 --
 -- TODO: MMIO will require extending this basic mechanism.
-construct PAddr { PAddr :: pAddr }
-declare validMemAddrPred :: (PAddr * nat) -> bool
+declare validMemAddrPred :: (pAddr * nat) -> bool
 
 -- Spike HTIF compatibility
 -- The riscv-test suite uses the tohost MMIO port to indicate test completion
@@ -2168,7 +2167,7 @@ regType rawReadData(pAddr::pAddr, nbytes::nat) =
 }
 
 regType option memReadData(pAddr::pAddr, nbytes::nat) =
-    if   validMemAddrPred(PAddr(ZeroExtend(pAddr)), nbytes)
+    if   validMemAddrPred(ZeroExtend(pAddr), nbytes)
     then Some(rawReadData(pAddr, nbytes))
     else None
 
@@ -2208,7 +2207,7 @@ unit rawWriteMem(pAddr::pAddr, data::regType, nbytes::nat) =
 }
 
 bool memWriteData(pAddr::pAddr, data::regType, nbytes::nat) =
-    if   validMemAddrPred(PAddr(ZeroExtend(pAddr)), nbytes)
+    if   validMemAddrPred(ZeroExtend(pAddr), nbytes)
     then { rawWriteMem(pAddr, data, nbytes)
          ; true
          }
@@ -2223,7 +2222,7 @@ half rawReadInstGranule(pAddr::pAddr) =
 }
 
 half option memReadInstGranule(pAddr::pAddr) =
-    if   validMemAddrPred(PAddr(ZeroExtend(pAddr)), 2)
+    if   validMemAddrPred(ZeroExtend(pAddr), 2)
     then Some(rawReadInstGranule(pAddr))
     else None
 

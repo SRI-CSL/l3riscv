@@ -379,13 +379,11 @@ end
 
 (* Platform initialization *)
 
-fun physAddrIsMemory (p : riscv.PAddr, n : IntInf.int) =
-    case p of riscv.PAddr a =>
-        let val addr = BitsN.toInt a
-            val nend = IntInf.-(n, 1)
-        in  isMemoryAddr addr
-            andalso isMemoryAddr (IntInf.+(addr, nend))
-        end
+fun physAddrIsMemory (a : BitsN.nbit, n : IntInf.int) =
+    let val addr = BitsN.toInt a
+        val nend = IntInf.-(n, 1)
+    in  isMemoryAddr addr andalso isMemoryAddr (IntInf.+(addr, nend))
+    end
 
 fun initPlatform cores =
     ( riscv.print     := debugPrint
