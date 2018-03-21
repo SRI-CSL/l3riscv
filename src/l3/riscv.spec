@@ -2148,7 +2148,7 @@ declare done :: bool               -- internal flag to request termination
 unit initMem(val::regType) =
     MEM <- InitMap(val)
 
-regType memReadData(pAddr::pAddr, nbytes::nat) =
+regType rawReadData(pAddr::pAddr, nbytes::nat) =
 { pAddrIdx = pAddr<63:3>
 ; align    = [pAddr<2:0>]::nat
 ; if align == 0   -- aligned read
@@ -2166,6 +2166,11 @@ regType memReadData(pAddr::pAddr, nbytes::nat) =
        ; data
        }
 }
+
+regType option memReadData(pAddr::pAddr, nbytes::nat) =
+    if   validMemAddrPred(PAddr(ZeroExtend(pAddr)), nbytes)
+    then Some(rawReadData(pAddr, nbytes))
+    else None
 
 unit rawWriteMem(pAddr::pAddr, data::regType, nbytes::nat) =
 { mask     = ([ZeroExtend(1`1)::regType] << (nbytes * 8)) - 1
@@ -2292,6 +2297,47 @@ pteBits option updatePTEBits(p::pteBits, ac::accessType) =
   else None
 }
 
+-- possible failures for an address translation
+construct PTW_Failure
+{ PTW_Access         -- memory error accessing a PTE
+, PTW_Invalid_PTE
+, PTW_No_Permission
+, PTW_Misaligned     -- misaligned superpage
+, PTW_No_Mapping
+, PTW_PTE_Update     -- PTE update needed but is not enabled
+}
+
+ExceptionType translationException(ac::accessType, f::PTW_Failure) =
+  match ac, f
+  { case Read, PTW_Access               => E_Load_Access_Fault
+    case Read, PTW_Invalid_PTE          => E_Load_Page_Fault
+    case Read, PTW_No_Permission        => E_Load_Page_Fault
+    case Read, PTW_Misaligned           => E_Load_Page_Fault
+    case Read, PTW_No_Mapping           => E_Load_Page_Fault
+    case Read, PTW_PTE_Update           => E_Load_Page_Fault
+
+    case Write, PTW_Access              => E_SAMO_Access_Fault
+    case Write, PTW_Invalid_PTE         => E_SAMO_Page_Fault
+    case Write, PTW_No_Permission       => E_SAMO_Page_Fault
+    case Write, PTW_Misaligned          => E_SAMO_Page_Fault
+    case Write, PTW_No_Mapping          => E_SAMO_Page_Fault
+    case Write, PTW_PTE_Update          => E_SAMO_Page_Fault
+
+    case Execute, PTW_Access            => E_Fetch_Access_Fault
+    case Execute, PTW_Invalid_PTE       => E_Fetch_Page_Fault
+    case Execute, PTW_No_Permission     => E_Fetch_Page_Fault
+    case Execute, PTW_Misaligned        => E_Fetch_Page_Fault
+    case Execute, PTW_No_Mapping        => E_Fetch_Page_Fault
+    case Execute, PTW_PTE_Update        => E_Fetch_Page_Fault
+
+    -- atomics never raise load exceptions
+    case ReadWrite, PTW_Access          => E_SAMO_Access_Fault
+    case ReadWrite, PTW_Invalid_PTE     => E_SAMO_Page_Fault
+    case ReadWrite, PTW_No_Permission   => E_SAMO_Page_Fault
+    case ReadWrite, PTW_Misaligned      => E_SAMO_Page_Fault
+    case ReadWrite, PTW_No_Mapping      => E_SAMO_Page_Fault
+    case ReadWrite, PTW_PTE_Update      => E_SAMO_Page_Fault
+  }
 -- Sv32 memory translation
 --------------------------
 
@@ -2324,60 +2370,78 @@ paddr32 curPTB32() =
 
 -- 32-bit page table walker.
 ---------------------------------------------------------------------------
--- This returns the physical address for the input vaddr32 as the
--- first element of the returned tuple.  The remaining elements are
--- for the TLB implementation: the PTE entry itself, the address of
--- the PTE in memory (so that it can be updated) by the TLB, the level
--- of the PTE entry, and whether the mapping is marked as a global
--- mapping.
+-- On success, this returns the physical address for the input vaddr32
+-- as the first element of the returned tuple.  The remaining elements
+-- are for the TLB implementation: the PTE entry itself, the address
+-- of the PTE in memory (so that it can be updated) by the TLB, the
+-- level of the PTE entry, and whether the mapping is marked as a
+-- global mapping.
 
-(paddr32 * SV32_PTE * paddr32 * nat * bool) option
+construct PTW32_Result
+{ PTW32_Success     :: paddr32 * SV32_PTE * paddr32 * nat * bool
+, PTW32_Failure     :: PTW_Failure
+}
+
+PTW32_Result
 walk32(vaddr::vaddr32, ac::accessType, priv::Privilege, mxr::bool, sum::bool,
        ptb::paddr32, level::nat, global::bool) =
 { va        = SV32_Vaddr(vaddr)
 ; pt_ofs    = ZeroExtend((va.VA_VPNi >>+ (level * SV32_LEVEL_BITS))<(SV32_LEVEL_BITS-1):0>) << PTE32_LOG_SIZE
 ; pte_addr  = ptb + pt_ofs
-; pte       = SV32_PTE(memReadData(ZeroExtend(pte_addr), 4)<31:0>)
-; pbits     = pteBits(pte.PTE_BITS)
-; mark_log(LOG_ADDRTR, ["walk32(vaddr=0x" : PadLeft(#"0", 16, [&va]) : "): level=" : [level]
-                        : " pt_base=0x" : PadLeft(#"0", 16, [ptb])
-                        : " pt_ofs=" : [[pt_ofs]::nat]
-                        : " pte_addr=0x" : PadLeft(#"0", 16, [pte_addr])
-                        : " pte=0x" : PadLeft(#"0", 16, [&pte])])
-; if   isInvalidPTE(pbits)
-  then { mark_log(LOG_ADDRTR, "walk32: invalid PTE")
-       ; None
-       }
-  else { if   isPTEPtr(&pbits)
-         then { -- ptr to next level
-                if   level == 0
-                then { mark_log(LOG_ADDRTR, "last-level PTE contains a pointer!")
-                     ; None
-                     }
-                else walk32(vaddr, ac, priv, mxr, sum,
-                            ZeroExtend(pte.PTE_PPNi << PAGESIZE_BITS), level - 1, global or pbits.PTE_G)
-              }
-         else { -- leaf PTE
-                if   not checkPTEPermission(ac, priv, mxr, sum, pbits)
-                then { mark_log(LOG_ADDRTR, "PTE permission check failure!")
-                     ; None
-                     }
-                else { if   level > 0
-                       then { mask = (1 << (level * SV32_LEVEL_BITS)) - 1
-                            ; if   pte.PTE_PPNi && mask != ZeroExtend(0b0`1)
-                              then { mark_log(LOG_ADDRTR, "misaligned superpage mapping!")
-                                   ; None
-                                   }
-                              else { ppn = pte.PTE_PPNi || (ZeroExtend(va.VA_VPNi) && mask)
-                                   ; Some(ppn : va.VA_PgOfs, pte, pte_addr, level, global or pbits.PTE_G)
-                                   }
-                            }
-                       else Some(pte.PTE_PPNi : va.VA_PgOfs, pte, pte_addr, level, global or pbits.PTE_G)
-                     }
-              }
-       }
-}
+; match memReadData(ZeroExtend(pte_addr), 4)
+  { case None    =>
+    { mark_log(LOG_ADDRTR, ["walk32(vaddr=0x" : PadLeft(#"0", 16, [&va]) : "): level=" : [level]
+                            : " pt_base=0x" : PadLeft(#"0", 16, [ptb])
+                            : " pt_ofs=" : [[pt_ofs]::nat]
+                            : " pte_addr=0x" : PadLeft(#"0", 16, [pte_addr])
+                            : ": invalid pte address!"])
+    ; PTW32_Failure(PTW_Access)
+    }
 
+    case Some(v) =>
+    { pte   = SV32_PTE(v<31:0>)
+    ; pbits = pteBits(pte.PTE_BITS)
+    ; mark_log(LOG_ADDRTR, ["walk32(vaddr=0x" : PadLeft(#"0", 16, [&va]) : "): level=" : [level]
+                            : " pt_base=0x" : PadLeft(#"0", 16, [ptb])
+                            : " pt_ofs=" : [[pt_ofs]::nat]
+                            : " pte_addr=0x" : PadLeft(#"0", 16, [pte_addr])
+                            : " pte=0x" : PadLeft(#"0", 16, [&pte])])
+
+    ; if   isInvalidPTE(pbits)
+      then { mark_log(LOG_ADDRTR, "walk32: invalid PTE!")
+           ; PTW32_Failure(PTW_Invalid_PTE)
+           }
+      else { if   isPTEPtr(&pbits)
+             then { -- ptr to next level
+                    if   level == 0
+                    then { mark_log(LOG_ADDRTR, "walk32: last-level PTE contains a pointer!")
+                         ; PTW32_Failure(PTW_Invalid_PTE)
+                         }
+                    else walk32(vaddr, ac, priv, mxr, sum,
+                                ZeroExtend(pte.PTE_PPNi << PAGESIZE_BITS), level - 1, global or pbits.PTE_G)
+                  }
+             else { -- leaf PTE
+                    if   not checkPTEPermission(ac, priv, mxr, sum, pbits)
+                    then { mark_log(LOG_ADDRTR, "walk32: PTE permission check failure!")
+                         ; PTW32_Failure(PTW_No_Permission)
+                         }
+                    else { if   level > 0
+                           then { mask = (1 << (level * SV32_LEVEL_BITS)) - 1
+                                ; if   pte.PTE_PPNi && mask != ZeroExtend(0b0`1)
+                                  then { mark_log(LOG_ADDRTR, "walk32: misaligned superpage mapping!")
+                                       ; PTW32_Failure(PTW_Misaligned)
+                                       }
+                                  else { ppn = pte.PTE_PPNi || (ZeroExtend(va.VA_VPNi) && mask)
+                                       ; PTW32_Success(ppn : va.VA_PgOfs, pte, pte_addr, level, global or pbits.PTE_G)
+                                       }
+                                }
+                           else PTW32_Success(pte.PTE_PPNi : va.VA_PgOfs, pte, pte_addr, level, global or pbits.PTE_G)
+                         }
+                  }
+           }
+    }
+  }
+}
 
 -- 32-bit TLB
 ---------------------------------------------------------------------------
@@ -2475,7 +2539,7 @@ TLB32_Map flushTLB32(asid::asid32 option, addr::vaddr32 option, curTLB::TLB32_Ma
 ; tlb
 }
 
-declare  c_tlb32 :: id -> TLB32_Map
+declare c_tlb32 :: id -> TLB32_Map
 
 component TLB32 :: TLB32_Map
 { value        = c_tlb32(procID)
@@ -2484,7 +2548,12 @@ component TLB32 :: TLB32_Map
 
 -- Sv32 address translation
 
-paddr32 option translate32(vAddr::vaddr32, ac::accessType, priv::Privilege, mxr::bool, sum::bool, level::nat) =
+construct TR32_Result
+{ TR32_Address  :: paddr32
+, TR32_Failure  :: PTW_Failure
+}
+
+TR32_Result translate32(vAddr::vaddr32, ac::accessType, priv::Privilege, mxr::bool, sum::bool, level::nat) =
 { asid = curAsid32()
 ; match lookupTLB32(asid, vAddr, TLB32)
   { case Some(ent, idx) =>
@@ -2492,7 +2561,7 @@ paddr32 option translate32(vAddr::vaddr32, ac::accessType, priv::Privilege, mxr:
       then { mark_log(LOG_ADDRTR, "TLB32 hit!")
            ; match updatePTEBits(pteBits(ent.pte.PTE_BITS), ac)
              { case None =>
-                  Some(ent.pAddr || ZeroExtend(vAddr && ent.vAddrMask))
+                  TR32_Address(ent.pAddr || ZeroExtend(vAddr && ent.vAddrMask))
                case Some(pbits) =>
                { if   enable_dirty_update
                  then { var n_ent = ent
@@ -2503,31 +2572,31 @@ paddr32 option translate32(vAddr::vaddr32, ac::accessType, priv::Privilege, mxr:
                       ; TLB32               <- tlb
                       -- update memory
                       ; if   memWriteData(ZeroExtend(n_ent.pteAddr), ZeroExtend(n_ent.&pte), 4)
-                        then ()
-                        else #INTERNAL_ERROR("Invalid physical address in TLB: " : [n_ent.pteAddr])
-                      -- done
-                      ; Some(n_ent.pAddr || ZeroExtend(vAddr && n_ent.vAddrMask))
+                        then TR32_Address(n_ent.pAddr || ZeroExtend(vAddr && n_ent.vAddrMask))
+                        else { mark_log(LOG_ADDRTR, "Invalid physical address in TLB: " : [n_ent.pteAddr])
+                             ; TR32_Failure(PTW_Access)
+                             }
                       }
                  else { mark_log(LOG_ADDRTR, "tlb/pte needs dirty/accessed update!")
-                      ; None
+                      ; TR32_Failure(PTW_PTE_Update)
                       }
                }
              }
            }
       else { mark_log(LOG_ADDRTR, "TLB32 permission check failure")
-           ; None
+           ; TR32_Failure(PTW_No_Permission)
            }
     }
     case None =>
     { mark_log(LOG_ADDRTR, "TLB32 miss!")
     ; match walk32(vAddr, ac, priv, mxr, sum, curPTB32(), level, false)
-      { case None   =>
-          None
-        case Some(pAddr, pte, pteAddr, i, global)  =>
+      { case PTW32_Failure(f) => TR32_Failure(f)
+
+        case PTW32_Success(pAddr, pte, pteAddr, i, global)  =>
         { match updatePTEBits(pteBits(pte.PTE_BITS), ac)
           { case None =>
             { TLB32 <- addToTLB32(asid, vAddr, pAddr, pte, pteAddr, i, global, TLB32)
-            ; Some(pAddr)
+            ; TR32_Address(pAddr)
             }
             case Some(pbits) =>
             { if   enable_dirty_update
@@ -2535,14 +2604,14 @@ paddr32 option translate32(vAddr::vaddr32, ac::accessType, priv::Privilege, mxr:
                    ; pte_w.PTE_BITS <- &pbits
                    ; if   memWriteData(ZeroExtend(pteAddr), ZeroExtend(&pte_w), 4)
                      then { TLB32 <- addToTLB32(asid, vAddr, pAddr, pte_w, pteAddr, i, global, TLB32)
-                          ; Some(pAddr)
+                          ; TR32_Address(pAddr)
                           }
                      else { mark_log(LOG_ADDRTR, "pte is not in valid physical memory: " : [pteAddr])
-                          ; None
+                          ; TR32_Failure(PTW_Access)
                           }
                    }
               else { mark_log(LOG_ADDRTR, "pte needs dirty/accessed update!")
-                   ; None
+                   ; TR32_Failure(PTW_PTE_Update)
                    }
             }
           }
@@ -2584,51 +2653,69 @@ paddr39 curPTB39() =
 
 -- 64-bit page table walker.
 
-(paddr39 * SV39_PTE * paddr39 * nat * bool) option
+construct PTW39_Result
+{ PTW39_Success     :: paddr39 * SV39_PTE * paddr39 * nat * bool
+, PTW39_Failure     :: PTW_Failure
+}
+
+PTW39_Result
 walk39(vaddr::vaddr39, ac::accessType, priv::Privilege, mxr::bool, sum::bool,
        ptb::paddr39, level::nat, global::bool) =
 { va        = SV39_Vaddr(vaddr)
 ; pt_ofs    = ZeroExtend((va.VA_VPNi >>+ (level * SV39_LEVEL_BITS))<(SV39_LEVEL_BITS-1):0>) << PTE39_LOG_SIZE
 ; pte_addr  = ptb + pt_ofs
-; pte       = SV39_PTE(memReadData(ZeroExtend(pte_addr), 8))
-; pbits     = pteBits(pte.PTE_BITS)
-; mark_log(LOG_ADDRTR, ["walk39(vaddr=0x" : PadLeft(#"0", 16, [&va]) : "): level=" : [level]
-                        : " pt_base=0x" : PadLeft(#"0", 16, [ptb])
-                        : " pt_ofs=" : [[pt_ofs]::nat]
-                        : " pte_addr=0x" : PadLeft(#"0", 16, [pte_addr])
-                        : " pte=0x" : PadLeft(#"0", 16, [&pte])])
-; if   isInvalidPTE(pbits)
-  then { mark_log(LOG_ADDRTR, "walk39: invalid PTE!")
-       ; None
-       }
-  else { if   isPTEPtr(&pbits)
-         then { -- ptr to next level
-                if   level == 0
-                then { mark_log(LOG_ADDRTR, "last-level PTE contains a pointer!")
-                     ; None
-                     }
-                else walk39(vaddr, ac, priv, mxr, sum,
-                            ZeroExtend(pte.PTE_PPNi << PAGESIZE_BITS), level - 1, global or pbits.PTE_G)
-              }
-         else { -- leaf PTE
-                if   not checkPTEPermission(ac, priv, mxr, sum, pbits)
-                then { mark_log(LOG_ADDRTR, "PTE permission check failure!")
-                     ; None
-                     }
-                else { if   level > 0
-                       then { mask = (1 << (level * SV39_LEVEL_BITS)) - 1
-                            ; if   pte.PTE_PPNi && mask != ZeroExtend(0b0`1)
-                              then { mark_log(LOG_ADDRTR, "misaligned superpage mapping!")
-                                   ; None
-                                   }
-                              else { ppn = pte.PTE_PPNi || (ZeroExtend(va.VA_VPNi) && mask)
-                                   ; Some(ppn : va.VA_PgOfs, pte, pte_addr, level, global or pbits.PTE_G)
-                                   }
-                            }
-                       else Some(pte.PTE_PPNi : va.VA_PgOfs, pte, pte_addr, level, global or pbits.PTE_G)
-                     }
-              }
-       }
+; match memReadData(ZeroExtend(pte_addr), 8)
+  { case None    =>
+    { mark_log(LOG_ADDRTR, ["walk39(vaddr=0x" : PadLeft(#"0", 16, [&va]) : "): level=" : [level]
+                            : " pt_base=0x" : PadLeft(#"0", 16, [ptb])
+                            : " pt_ofs=" : [[pt_ofs]::nat]
+                            : " pte_addr=0x" : PadLeft(#"0", 16, [pte_addr])
+                            : ": invalid pte address"])
+    ; PTW39_Failure(PTW_Access)
+    }
+
+    case Some(v) =>
+    { pte       = SV39_PTE(v)
+    ; pbits     = pteBits(pte.PTE_BITS)
+    ; mark_log(LOG_ADDRTR, ["walk39(vaddr=0x" : PadLeft(#"0", 16, [&va]) : "): level=" : [level]
+                            : " pt_base=0x" : PadLeft(#"0", 16, [ptb])
+                            : " pt_ofs=" : [[pt_ofs]::nat]
+                            : " pte_addr=0x" : PadLeft(#"0", 16, [pte_addr])
+                            : " pte=0x" : PadLeft(#"0", 16, [&pte])])
+    ; if   isInvalidPTE(pbits)
+      then { mark_log(LOG_ADDRTR, "walk39: invalid PTE!")
+           ; PTW39_Failure(PTW_Invalid_PTE)
+           }
+      else { if   isPTEPtr(&pbits)
+             then { -- ptr to next level
+                    if   level == 0
+                    then { mark_log(LOG_ADDRTR, "walk39: last-level PTE contains a pointer!")
+                         ; PTW39_Failure(PTW_Invalid_PTE)
+                         }
+                    else walk39(vaddr, ac, priv, mxr, sum,
+                                ZeroExtend(pte.PTE_PPNi << PAGESIZE_BITS), level - 1, global or pbits.PTE_G)
+                  }
+             else { -- leaf PTE
+                    if   not checkPTEPermission(ac, priv, mxr, sum, pbits)
+                    then { mark_log(LOG_ADDRTR, "walk39: PTE permission check failure!")
+                         ; PTW39_Failure(PTW_No_Permission)
+                         }
+                    else { if   level > 0
+                           then { mask = (1 << (level * SV39_LEVEL_BITS)) - 1
+                                ; if   pte.PTE_PPNi && mask != ZeroExtend(0b0`1)
+                                  then { mark_log(LOG_ADDRTR, "misaligned superpage mapping!")
+                                       ; PTW39_Failure(PTW_Misaligned)
+                                       }
+                                  else { ppn = pte.PTE_PPNi || (ZeroExtend(va.VA_VPNi) && mask)
+                                       ; PTW39_Success(ppn : va.VA_PgOfs, pte, pte_addr, level, global or pbits.PTE_G)
+                                       }
+                                }
+                           else PTW39_Success(pte.PTE_PPNi : va.VA_PgOfs, pte, pte_addr, level, global or pbits.PTE_G)
+                         }
+                  }
+           }
+    }
+  }
 }
 
 -- 64-bit TLB
@@ -2729,7 +2816,12 @@ component TLB39 :: TLB39_Map
 
 -- Sv39 address translation
 
-paddr39 option translate39(vAddr::vaddr39, ac::accessType, priv::Privilege, mxr::bool, sum::bool, level::nat) =
+construct TR39_Result
+{ TR39_Address  :: paddr39
+, TR39_Failure  :: PTW_Failure
+}
+
+TR39_Result translate39(vAddr::vaddr39, ac::accessType, priv::Privilege, mxr::bool, sum::bool, level::nat) =
 { asid = curAsid64()
 ; match lookupTLB39(asid, vAddr, TLB39)
   { case Some(ent, idx) =>
@@ -2737,7 +2829,7 @@ paddr39 option translate39(vAddr::vaddr39, ac::accessType, priv::Privilege, mxr:
       then { mark_log(LOG_ADDRTR, "TLB39 hit!")
            ; match updatePTEBits(pteBits(ent.pte.PTE_BITS), ac)
              { case None =>
-                  Some(ent.pAddr || ZeroExtend(vAddr && ent.vAddrMask))
+                  TR39_Address(ent.pAddr || ZeroExtend(vAddr && ent.vAddrMask))
                case Some(pbits) =>
                { if   enable_dirty_update
                  then { var n_ent = ent
@@ -2751,28 +2843,28 @@ paddr39 option translate39(vAddr::vaddr39, ac::accessType, priv::Privilege, mxr:
                         then ()
                         else #INTERNAL_ERROR("Invalid physical address in TLB:" : [n_ent.pteAddr])
                       -- done
-                      ; Some(n_ent.pAddr || ZeroExtend(vAddr && n_ent.vAddrMask))
+                      ; TR39_Address(n_ent.pAddr || ZeroExtend(vAddr && n_ent.vAddrMask))
                       }
                  else { mark_log(LOG_ADDRTR, "tlb/pte needs dirty/accessed update!")
-                      ; None
+                      ; TR39_Failure(PTW_PTE_Update)
                       }
                }
              }
            }
       else { mark_log(LOG_ADDRTR, "TLB39 permission check failure")
-           ; None
+           ; TR39_Failure(PTW_No_Permission)
            }
     }
     case None =>
     { mark_log(LOG_ADDRTR, "TLB39 miss!")
     ; match walk39(vAddr, ac, priv, mxr, sum, curPTB39(), level, false)
-      { case None =>
-          None
-        case Some(pAddr, pte, pteAddr, i, global) =>
+      { case PTW39_Failure(f) => TR39_Failure(f)
+
+        case PTW39_Success(pAddr, pte, pteAddr, i, global) =>
         { match updatePTEBits(pteBits(pte.PTE_BITS), ac)
           { case None =>
             { TLB39 <- addToTLB39(asid, vAddr, pAddr, pte, pteAddr, i, global, TLB39)
-            ; Some(pAddr)
+            ; TR39_Address(pAddr)
             }
             case Some(pbits) =>
             { if   enable_dirty_update
@@ -2780,14 +2872,14 @@ paddr39 option translate39(vAddr::vaddr39, ac::accessType, priv::Privilege, mxr:
                    ; pte_w.PTE_BITS <- &pbits
                    ; if   memWriteData(ZeroExtend(pteAddr), &pte_w, 8)
                      then { TLB39 <- addToTLB39(asid, vAddr, pAddr, pte_w, pteAddr, i, global, TLB39)
-                          ; Some(pAddr)
+                          ; TR39_Address(pAddr)
                           }
                      else { mark_log(LOG_ADDRTR, "pte is not in valid physical memory: " : [pteAddr])
-                          ; None
+                          ; TR39_Failure(PTW_Access)
                           }
                    }
               else { mark_log(LOG_ADDRTR, "pte needs dirty/accessed update!")
-                   ; None
+                   ; TR39_Failure(PTW_PTE_Update)
                    }
             }
           }
@@ -2819,10 +2911,15 @@ SATP_Mode translationMode(priv::Privilege) =
          }
 
 -- top-level address translation dispatcher
---
+
+construct TR_Result
+{ TR_Address  :: pAddr
+, TR_Failure  :: ExceptionType
+}
+
 -- vAddr here is assumed to be appropriately formatted for the
 -- current M_UXL.
-pAddr option translateAddr(vAddr::regType, ac::accessType, ft::fetchType) =
+TR_Result translateAddr(vAddr::regType, ac::accessType, ft::fetchType) =
 { priv = match ft
          { case Instruction => curPrivilege
            case Data        => if   MCSR.mstatus.M_MPRV
@@ -2833,20 +2930,21 @@ pAddr option translateAddr(vAddr::regType, ac::accessType, ft::fetchType) =
 ; sum  = MCSR.mstatus.M_SUM
 ; mode = translationMode(priv)
 ; match mode
-  { case Sbare  => Some(vAddr)  -- no translation
+  { case Sbare  => TR_Address(vAddr)  -- no translation
 
+    -- translated physical addresses are zero-extended to full-width
     case Sv32   => match translate32(vAddr<31:0>, ac, priv, mxr, sum, SV32_LEVELS - 1)
-                   { case Some(pa32)  => Some(ZeroExtend(pa32))
-                     case None        => None
+                   { case TR32_Address(pa32) => TR_Address(ZeroExtend(pa32))
+                     case TR32_Failure(f)    => TR_Failure(translationException(ac, f))
                    }
     case Sv39   => match translate39(vAddr<38:0>, ac, priv, mxr, sum, SV39_LEVELS - 1)
-                   { case Some(pa39)  => Some(ZeroExtend(pa39))
-                     case None        => None
+                   { case TR39_Address(pa39) => TR_Address(ZeroExtend(pa39))
+                     case TR39_Failure(f)    => TR_Failure(translationException(ac, f))
                    }
 
 --  case Sv48   => translate64(vAddr, ft, ac, priv, 3)
 
-    case     _  => None
+    case     _  => #INTERNAL_ERROR("Unsupported address translation scheme " : [mode])
   }
 }
 
@@ -3478,11 +3576,16 @@ define Branch > BGEU(rs1::reg, rs2::reg, offs::imm12) =
 unit run_load_lw(rd::reg, rs1::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
 ; match translateAddr(vAddr, Read, Data)
-  { case Some(pAddr) => { val = SignExtend(memReadData(pAddr, 4)<31:0>)
+  { case TR_Address(pAddr) =>
+      match memReadData(pAddr, 4)
+      { case Some(v) => { val = SignExtend(v<31:0>)
                         ; writeRD(rd, val)
                         ; recordLoad(vAddr, val, WORD)
                         }
-    case None        => signalAddressException(E_Load_Page_Fault, vAddr)
+        case None    => signalAddressException(E_Load_Access_Fault, vAddr)
+      }
+
+    case TR_Failure(e) => signalAddressException(e, vAddr)
   }
 }
 
@@ -3497,11 +3600,16 @@ define Load > LWU(rd::reg, rs1::reg, offs::imm12) =
   then signalException(E_Illegal_Instr)
   else { vAddr = GPR(rs1) + SignExtend(offs)
        ; match translateAddr(vAddr, Read, Data)
-         { case Some(pAddr) => { val = ZeroExtend(memReadData(pAddr, 4)<31:0>)
+         { case TR_Address(pAddr) =>
+             match memReadData(pAddr, 4)
+             { case Some(v) => { val = ZeroExtend(v<31:0>)
                                ; writeRD(rd, val)
                                ; recordLoad(vAddr, val, WORD)
                                }
-           case None        => signalAddressException(E_Load_Page_Fault, vAddr)
+               case None    => signalAddressException(E_Load_Access_Fault, vAddr)
+             }
+
+           case TR_Failure(e) => signalAddressException(e, vAddr)
          }
        }
 }
@@ -3512,11 +3620,16 @@ define Load > LWU(rd::reg, rs1::reg, offs::imm12) =
 define Load > LH(rd::reg, rs1::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
 ; match translateAddr(vAddr, Read, Data)
-  { case Some(pAddr) => { val = SignExtend(memReadData(pAddr, 2)<15:0>)
+  { case TR_Address(pAddr) =>
+      match memReadData(pAddr, 2)
+      { case Some(v) => { val = SignExtend(v<15:0>)
                         ; writeRD(rd, val)
                         ; recordLoad(vAddr, val, HALFWORD)
                         }
-    case None        => signalAddressException(E_Load_Page_Fault, vAddr)
+        case None    => signalAddressException(E_Load_Access_Fault, vAddr)
+      }
+
+    case TR_Failure(e) => signalAddressException(e, vAddr)
   }
 }
 
@@ -3526,11 +3639,16 @@ define Load > LH(rd::reg, rs1::reg, offs::imm12) =
 define Load > LHU(rd::reg, rs1::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
 ; match translateAddr(vAddr, Read, Data)
-  { case Some(pAddr) => { val = ZeroExtend(memReadData(pAddr, 2)<15:0>)
+  { case TR_Address(pAddr) =>
+      match memReadData(pAddr, 2)
+      { case Some(v) => { val = ZeroExtend(v<15:0>)
                         ; writeRD(rd, val)
                         ; recordLoad(vAddr, val, HALFWORD)
                         }
-    case None        => signalAddressException(E_Load_Page_Fault, vAddr)
+        case None    => signalAddressException(E_Load_Access_Fault, vAddr)
+      }
+
+    case TR_Failure(e) => signalAddressException(e, vAddr)
   }
 }
 
@@ -3540,11 +3658,16 @@ define Load > LHU(rd::reg, rs1::reg, offs::imm12) =
 define Load > LB(rd::reg, rs1::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
 ; match translateAddr(vAddr, Read, Data)
-  { case Some(pAddr) => { val = SignExtend(memReadData(pAddr, 1)<7:0>)
+  { case TR_Address(pAddr) =>
+      match memReadData(pAddr, 1)
+      { case Some(v) => { val = SignExtend(v<7:0>)
                         ; writeRD(rd, val)
                         ; recordLoad(vAddr, val, BYTE)
                         }
-    case None        => signalAddressException(E_Load_Page_Fault, vAddr)
+        case None    => signalAddressException(E_Load_Access_Fault, vAddr)
+      }
+
+    case TR_Failure(e) => signalAddressException(e, vAddr)
   }
 }
 
@@ -3554,11 +3677,16 @@ define Load > LB(rd::reg, rs1::reg, offs::imm12) =
 define Load > LBU(rd::reg, rs1::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
 ; match translateAddr(vAddr, Read, Data)
-  { case Some(pAddr) => { val = ZeroExtend(memReadData(pAddr, 1)<7:0>)
+  { case TR_Address(pAddr) =>
+      match memReadData(pAddr, 1)
+      { case Some(v) => { val = ZeroExtend(v<7:0>)
                         ; writeRD(rd, val)
                         ; recordLoad(vAddr, val, BYTE)
                         }
-    case None        => signalAddressException(E_Load_Page_Fault, vAddr)
+        case None    => signalAddressException(E_Load_Access_Fault, vAddr)
+      }
+
+    case TR_Failure(e) => signalAddressException(e, vAddr)
   }
 }
 
@@ -3570,11 +3698,15 @@ unit run_load_ld(rd::reg, rs1::reg, offs::imm12) =
     then signalException(E_Illegal_Instr)
     else { vAddr = GPR(rs1) + SignExtend(offs)
          ; match translateAddr(vAddr, Read, Data)
-           { case Some(pAddr) => { val = memReadData(pAddr, 8)
-                                 ; writeRD(rd, val)
-                                 ; recordLoad(vAddr, val, DOUBLEWORD)
-                                 }
-             case None        => signalAddressException(E_Load_Page_Fault, vAddr)
+           { case TR_Address(pAddr) =>
+               match memReadData(pAddr, 8)
+               { case Some(val) => { writeRD(rd, val)
+                                   ; recordLoad(vAddr, val, DOUBLEWORD)
+                                   }
+                 case None      => signalAddressException(E_Load_Access_Fault, vAddr)
+               }
+
+             case TR_Failure(e) => signalAddressException(e, vAddr)
            }
          }
 
@@ -3587,12 +3719,12 @@ define Load > LD(rd::reg, rs1::reg, offs::imm12) =
 unit run_store_sw(rs1::reg, rs2::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
 ; match translateAddr(vAddr, Write, Data)
-  { case Some(pAddr) => { data = GPR(rs2)
-                        ; if   memWriteData(pAddr, data, 4)
-                          then recordStore(vAddr, data, WORD)
-                          else signalAddressException(E_SAMO_Access_Fault, vAddr)
-                        }
-    case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+  { case TR_Address(pAddr) => { data = GPR(rs2)
+                              ; if   memWriteData(pAddr, data, 4)
+                                then recordStore(vAddr, data, WORD)
+                                else signalAddressException(E_SAMO_Access_Fault, vAddr)
+                              }
+    case TR_Failure(e)     => signalAddressException(e, vAddr)
   }
 }
 
@@ -3605,12 +3737,12 @@ define Store > SW(rs1::reg, rs2::reg, offs::imm12) =
 define Store > SH(rs1::reg, rs2::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
 ; match translateAddr(vAddr, Write, Data)
-  { case Some(pAddr) => { data = GPR(rs2)
-                        ; if   memWriteData(pAddr, data, 2)
-                          then recordStore(vAddr, data, HALFWORD)
-                          else signalAddressException(E_SAMO_Access_Fault, vAddr)
-                        }
-    case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+  { case TR_Address(pAddr) => { data = GPR(rs2)
+                              ; if   memWriteData(pAddr, data, 2)
+                                then recordStore(vAddr, data, HALFWORD)
+                                else signalAddressException(E_SAMO_Access_Fault, vAddr)
+                              }
+    case TR_Failure(e)     => signalAddressException(e, vAddr)
   }
 }
 
@@ -3620,12 +3752,12 @@ define Store > SH(rs1::reg, rs2::reg, offs::imm12) =
 define Store > SB(rs1::reg, rs2::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
 ; match translateAddr(vAddr, Write, Data)
-  { case Some(pAddr) => { data = GPR(rs2)
-                        ; if   memWriteData(pAddr, data, 1)
-                          then recordStore(vAddr, data, BYTE)
-                          else signalAddressException(E_SAMO_Access_Fault, vAddr)
-                        }
-    case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+  { case TR_Address(pAddr) => { data = GPR(rs2)
+                              ; if   memWriteData(pAddr, data, 1)
+                                then recordStore(vAddr, data, BYTE)
+                                else signalAddressException(E_SAMO_Access_Fault, vAddr)
+                              }
+    case TR_Failure(e)     => signalAddressException(e, vAddr)
   }
 }
 
@@ -3637,12 +3769,12 @@ unit run_store_sd(rs1::reg, rs2::reg, offs::imm12) =
     then signalException(E_Illegal_Instr)
     else { vAddr = GPR(rs1) + SignExtend(offs)
          ; match translateAddr(vAddr, Write, Data)
-           { case Some(pAddr) => { data = GPR(rs2)
-                                 ; if   memWriteData(pAddr, data, 8)
-                                   then recordStore(vAddr, data, DOUBLEWORD)
-                                   else signalAddressException(E_SAMO_Access_Fault, vAddr)
-                                 }
-             case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+           { case TR_Address(pAddr) => { data = GPR(rs2)
+                                       ; if   memWriteData(pAddr, data, 8)
+                                         then recordStore(vAddr, data, DOUBLEWORD)
+                                         else signalAddressException(E_SAMO_Access_Fault, vAddr)
+                                       }
+             case TR_Failure(e)     => signalAddressException(e, vAddr)
            }
          }
 
@@ -3675,10 +3807,15 @@ define AMO > LR_W(aq::amo, rl::amo, rd::reg, rs1::reg) =
        ; if   vAddr<1:0> != 0
          then signalAddressException(E_SAMO_Addr_Align, vAddr)
          else match translateAddr(vAddr, Read, Data)
-              { case Some(pAddr) => { writeRD(rd, SignExtend(memReadData(pAddr, 4)<31:0>))
+              { case TR_Address(pAddr) =>
+                  match memReadData(pAddr, 4)
+                  { case Some(v) => { writeRD(rd, SignExtend(v<31:0>))
                                     ; ReserveLoad  <- Some(vAddr)
                                     }
-                case None        => signalAddressException(E_Load_Page_Fault, vAddr)
+                    case None    => signalAddressException(E_Load_Access_Fault, vAddr)
+                  }
+
+                case TR_Failure(e) => signalAddressException(e, vAddr)
               }
        }
 }
@@ -3693,10 +3830,15 @@ define AMO > LR_D(aq::amo, rl::amo, rd::reg, rs1::reg) =
        ; if   vAddr<2:0> != 0
          then signalAddressException(E_SAMO_Addr_Align, vAddr)
          else match translateAddr(vAddr, Read, Data)
-              { case Some(pAddr) => { writeRD(rd, memReadData(pAddr, 8))
+              { case TR_Address(pAddr) =>
+                  match memReadData(pAddr, 8)
+                  { case Some(v) => { writeRD(rd, v)
                                     ; ReserveLoad <- Some(vAddr)
                                     }
-                case None        => signalAddressException(E_Load_Page_Fault, vAddr)
+                    case None    => signalAddressException(E_Load_Access_Fault, vAddr)
+                  }
+
+                case TR_Failure(e) => signalAddressException(e, vAddr)
               }
        }
 }
@@ -3711,18 +3853,18 @@ define AMO > SC_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
        ; if   vAddr<1:0> != 0
          then signalAddressException(E_SAMO_Addr_Align, vAddr)
          else if not matchLoadReservation(vAddr)
-              then writeRD(rd, 1)
-              else match translateAddr(vAddr, Write, Data)
-                   { case Some(pAddr) => { data = GPR(rs2)
-                                         ; if   memWriteData(pAddr, data, 4)
-                                           then { recordStore(vAddr, data, WORD)
-                                                ; writeRD(rd, 0)
-                                                ; ReserveLoad  <- None
-                                                }
-                                           else signalAddressException(E_SAMO_Access_Fault, vAddr)
-                                         }
-                     case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
-                   }
+         then writeRD(rd, 1)
+         else match translateAddr(vAddr, Write, Data)
+              { case TR_Address(pAddr) => { data = GPR(rs2)
+                                          ; if   memWriteData(pAddr, data, 4)
+                                            then { recordStore(vAddr, data, WORD)
+                                                 ; writeRD(rd, 0)
+                                                 ; ReserveLoad  <- None
+                                                 }
+                                            else signalAddressException(E_SAMO_Access_Fault, vAddr)
+                                          }
+                case TR_Failure(e)     => signalAddressException(e, vAddr)
+              }
        }
 }
 
@@ -3736,18 +3878,18 @@ define AMO > SC_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
        ; if   vAddr<2:0> != 0
          then signalAddressException(E_SAMO_Addr_Align, vAddr)
          else if   not matchLoadReservation(vAddr)
-              then writeRD(rd, 1)
-              else match translateAddr(vAddr, Write, Data)
-                   { case Some(pAddr) => { data = GPR(rs2)
-                                         ; if   memWriteData(pAddr, data, 4)
-                                           then { recordStore(vAddr, data, WORD)
-                                                ; writeRD(rd, 0)
-                                                ; ReserveLoad  <- None
-                                                }
-                                           else signalAddressException(E_SAMO_Access_Fault, vAddr)
-                                         }
-                     case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
-                   }
+         then writeRD(rd, 1)
+         else match translateAddr(vAddr, Write, Data)
+              { case TR_Address(pAddr) => { data = GPR(rs2)
+                                          ; if   memWriteData(pAddr, data, 4)
+                                            then { recordStore(vAddr, data, WORD)
+                                                 ; writeRD(rd, 0)
+                                                 ; ReserveLoad  <- None
+                                                 }
+                                            else signalAddressException(E_SAMO_Access_Fault, vAddr)
+                                          }
+                case TR_Failure(e)     => signalAddressException(e, vAddr)
+              }
        }
 }
 
@@ -3761,7 +3903,9 @@ define AMO > AMOSWAP_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
        ; if   vAddr<1:0> != 0
          then signalAddressException(E_SAMO_Addr_Align, vAddr)
          else match translateAddr(vAddr, ReadWrite, Data)
-              { case Some(pAddr) => { memv = SignExtend(memReadData(pAddr, 4)<31:0>)
+              { case TR_Address(pAddr) =>
+                  match memReadData(pAddr, 4)
+                  { case Some(v) => { memv = SignExtend(v<31:0>)
                                     ; data = GPR(rs2)
                                     ; if   memWriteData(pAddr, data, 4)
                                       then { writeRD(rd, memv)
@@ -3770,7 +3914,10 @@ define AMO > AMOSWAP_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                                            }
                                       else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                     }
-                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+                    case None    => signalAddressException(E_SAMO_Access_Fault, vAddr)
+                  }
+
+                case TR_Failure(e) => signalAddressException(e, vAddr)
               }
        }
 }
@@ -3785,16 +3932,19 @@ define AMO > AMOSWAP_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
        ; if   vAddr<2:0> != 0
          then signalAddressException(E_SAMO_Addr_Align, vAddr)
          else match translateAddr(vAddr, ReadWrite, Data)
-              { case Some(pAddr) => { memv = memReadData(pAddr, 8)
-                                    ; data = GPR(rs2)
-                                    ; if   memWriteData(pAddr, data, 8)
-                                      then { writeRD(rd, memv)
-                                           ; recordLoad(vAddr, memv, DOUBLEWORD)
-                                           ; recordAMOStore(vAddr, data, DOUBLEWORD)
-                                           }
-                                      else signalAddressException(E_SAMO_Access_Fault, vAddr)
-                                    }
-                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+              { case TR_Address(pAddr) =>
+                  match memReadData(pAddr, 8)
+                  { case Some(memv) => { data = GPR(rs2)
+                                       ; if   memWriteData(pAddr, data, 8)
+                                         then { writeRD(rd, memv)
+                                              ; recordLoad(vAddr, memv, DOUBLEWORD)
+                                              ; recordAMOStore(vAddr, data, DOUBLEWORD)
+                                              }
+                                         else signalAddressException(E_SAMO_Access_Fault, vAddr)
+                                       }
+                    case None       => signalAddressException(E_SAMO_Access_Fault, vAddr)
+                  }
+                case TR_Failure(e)  => signalAddressException(e, vAddr)
               }
        }
 }
@@ -3809,7 +3959,9 @@ define AMO > AMOADD_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
        ; if   vAddr<1:0> != 0
          then signalAddressException(E_SAMO_Addr_Align, vAddr)
          else match translateAddr(vAddr, ReadWrite, Data)
-              { case Some(pAddr) => { memv = SignExtend(memReadData(pAddr, 4)<31:0>)
+              { case TR_Address(pAddr) =>
+                  match memReadData(pAddr, 4)
+                  { case Some(v) => { memv = SignExtend(v<31:0>)
                                     ; data = GPR(rs2)
                                     ; val  = data + memv
                                     ; if   memWriteData(pAddr, val, 4)
@@ -3819,7 +3971,10 @@ define AMO > AMOADD_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                                            }
                                       else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                     }
-                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+                    case None    => signalAddressException(E_SAMO_Access_Fault, vAddr)
+                  }
+
+                case TR_Failure(e) => signalAddressException(e, vAddr)
               }
        }
 }
@@ -3834,17 +3989,21 @@ define AMO > AMOADD_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
        ; if   vAddr<2:0> != 0
          then signalAddressException(E_SAMO_Addr_Align, vAddr)
          else match translateAddr(vAddr, ReadWrite, Data)
-              { case Some(pAddr) => { memv = memReadData(pAddr, 8)
-                                    ; data = GPR(rs2)
-                                    ; val  = data + memv
-                                    ; if   memWriteData(pAddr, val, 8)
-                                      then { writeRD(rd, memv)
-                                           ; recordLoad(vAddr, memv, DOUBLEWORD)
-                                           ; recordAMOStore(vAddr, val, DOUBLEWORD)
-                                           }
-                                      else signalAddressException(E_SAMO_Access_Fault, vAddr)
-                                    }
-                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+              { case TR_Address(pAddr) =>
+                  match memReadData(pAddr, 8)
+                  { case Some(memv) => { data = GPR(rs2)
+                                       ; val  = data + memv
+                                       ; if   memWriteData(pAddr, val, 8)
+                                         then { writeRD(rd, memv)
+                                              ; recordLoad(vAddr, memv, DOUBLEWORD)
+                                              ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                              }
+                                         else signalAddressException(E_SAMO_Access_Fault, vAddr)
+                                       }
+                    case None       => signalAddressException(E_SAMO_Access_Fault, vAddr)
+                  }
+
+                case TR_Failure(e)  => signalAddressException(e, vAddr)
               }
        }
 }
@@ -3859,7 +4018,9 @@ define AMO > AMOXOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
        ; if   vAddr<1:0> != 0
          then signalAddressException(E_SAMO_Addr_Align, vAddr)
          else match translateAddr(vAddr, ReadWrite, Data)
-              { case Some(pAddr) => { memv = SignExtend(memReadData(pAddr, 4)<31:0>)
+              { case TR_Address(pAddr) =>
+                  match memReadData(pAddr, 4)
+                  { case Some(v) => { memv = SignExtend(v<31:0>)
                                     ; data = GPR(rs2)
                                     ; val  = data ?? memv
                                     ; if   memWriteData(pAddr, val, 4)
@@ -3869,7 +4030,10 @@ define AMO > AMOXOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                                            }
                                       else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                     }
-                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+                    case None    => signalAddressException(E_SAMO_Access_Fault, vAddr)
+                  }
+
+                case TR_Failure(e) => signalAddressException(e, vAddr)
               }
        }
 }
@@ -3884,17 +4048,21 @@ define AMO > AMOXOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
        ; if   vAddr<2:0> != 0
          then signalAddressException(E_SAMO_Addr_Align, vAddr)
          else match translateAddr(vAddr, ReadWrite, Data)
-              { case Some(pAddr) => { memv = memReadData(pAddr, 8)
-                                    ; data = GPR(rs2)
-                                    ; val  = data ?? memv
-                                    ; if   memWriteData(pAddr, val, 8)
-                                      then { writeRD(rd, memv)
-                                           ; recordLoad(vAddr, memv, DOUBLEWORD)
-                                           ; recordAMOStore(vAddr, val, DOUBLEWORD)
-                                           }
-                                      else signalAddressException(E_SAMO_Access_Fault, vAddr)
-                                    }
-                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+              { case TR_Address(pAddr) =>
+                  match memReadData(pAddr, 8)
+                  { case Some(memv) => { data = GPR(rs2)
+                                       ; val  = data ?? memv
+                                       ; if   memWriteData(pAddr, val, 8)
+                                         then { writeRD(rd, memv)
+                                              ; recordLoad(vAddr, memv, DOUBLEWORD)
+                                              ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                              }
+                                         else signalAddressException(E_SAMO_Access_Fault, vAddr)
+                                       }
+                    case None       => signalAddressException(E_SAMO_Access_Fault, vAddr)
+                  }
+
+                case TR_Failure(e)  => signalAddressException(e, vAddr)
               }
        }
 }
@@ -3909,7 +4077,9 @@ define AMO > AMOAND_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
        ; if   vAddr<1:0> != 0
          then signalAddressException(E_SAMO_Addr_Align, vAddr)
          else match translateAddr(vAddr, ReadWrite, Data)
-              { case Some(pAddr) => { memv = SignExtend(memReadData(pAddr, 4)<31:0>)
+              { case TR_Address(pAddr) =>
+                  match memReadData(pAddr, 4)
+                  { case Some(v) => { memv = SignExtend(v<31:0>)
                                     ; data = GPR(rs2)
                                     ; val  = data && memv
                                     ; if   memWriteData(pAddr, val, 4)
@@ -3919,7 +4089,10 @@ define AMO > AMOAND_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                                            }
                                       else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                     }
-                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+                    case None    => signalAddressException(E_SAMO_Access_Fault, vAddr)
+                  }
+
+                case TR_Failure(e) => signalAddressException(e, vAddr)
               }
        }
 }
@@ -3934,17 +4107,21 @@ define AMO > AMOAND_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
        ; if   vAddr<2:0> != 0
          then signalAddressException(E_SAMO_Addr_Align, vAddr)
          else match translateAddr(vAddr, ReadWrite, Data)
-              { case Some(pAddr) => { memv = memReadData(pAddr, 8)
-                                    ; data = GPR(rs2)
-                                    ; val  = data && memv
-                                    ; if   memWriteData(pAddr, val, 8)
-                                      then { writeRD(rd, memv)
-                                           ; recordLoad(vAddr, memv, DOUBLEWORD)
-                                           ; recordAMOStore(vAddr, val, DOUBLEWORD)
-                                           }
-                                      else signalAddressException(E_SAMO_Access_Fault, vAddr)
-                                    }
-                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+              { case TR_Address(pAddr) =>
+                  match memReadData(pAddr, 8)
+                  { case Some(memv) => { data = GPR(rs2)
+                                       ; val  = data && memv
+                                       ; if   memWriteData(pAddr, val, 8)
+                                         then { writeRD(rd, memv)
+                                              ; recordLoad(vAddr, memv, DOUBLEWORD)
+                                              ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                              }
+                                         else signalAddressException(E_SAMO_Access_Fault, vAddr)
+                                       }
+                    case None       => signalAddressException(E_SAMO_Access_Fault, vAddr)
+                  }
+
+                case TR_Failure(e)  => signalAddressException(e, vAddr)
               }
        }
 }
@@ -3959,7 +4136,9 @@ define AMO > AMOOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
        ; if   vAddr<1:0> != 0
          then signalAddressException(E_SAMO_Addr_Align, vAddr)
          else match translateAddr(vAddr, ReadWrite, Data)
-              { case Some(pAddr) => { memv = SignExtend(memReadData(pAddr, 4)<31:0>)
+              { case TR_Address(pAddr) =>
+                  match memReadData(pAddr, 4)
+                  { case Some(v) => { memv = SignExtend(v<31:0>)
                                     ; data = GPR(rs2)
                                     ; val  = data || memv
                                     ; if   memWriteData(pAddr, val, 4)
@@ -3969,7 +4148,10 @@ define AMO > AMOOR_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                                            }
                                       else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                     }
-                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+                    case None    => signalAddressException(E_SAMO_Access_Fault, vAddr)
+                  }
+
+                case TR_Failure(e) => signalAddressException(e, vAddr)
               }
        }
 }
@@ -3984,17 +4166,21 @@ define AMO > AMOOR_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
        ; if   vAddr<2:0> != 0
          then signalAddressException(E_SAMO_Addr_Align, vAddr)
          else match translateAddr(vAddr, ReadWrite, Data)
-              { case Some(pAddr) => { memv = memReadData(pAddr, 8)
-                                    ; data = GPR(rs2)
-                                    ; val  = data || memv
-                                    ; if   memWriteData(pAddr, val, 8)
-                                      then { writeRD(rd, memv)
-                                           ; recordLoad(vAddr, memv, DOUBLEWORD)
-                                           ; recordAMOStore(vAddr, val, DOUBLEWORD)
-                                           }
-                                      else signalAddressException(E_SAMO_Access_Fault, vAddr)
-                                    }
-                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+              { case TR_Address(pAddr) =>
+                  match memReadData(pAddr, 8)
+                  { case Some(memv) => { data = GPR(rs2)
+                                       ; val  = data || memv
+                                       ; if   memWriteData(pAddr, val, 8)
+                                         then { writeRD(rd, memv)
+                                              ; recordLoad(vAddr, memv, DOUBLEWORD)
+                                              ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                              }
+                                         else signalAddressException(E_SAMO_Access_Fault, vAddr)
+                                       }
+                    case None       => signalAddressException(E_SAMO_Access_Fault, vAddr)
+                  }
+
+                case TR_Failure(e)  => signalAddressException(e, vAddr)
               }
        }
 }
@@ -4009,7 +4195,9 @@ define AMO > AMOMIN_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
        ; if   vAddr<1:0> != 0
          then signalAddressException(E_SAMO_Addr_Align, vAddr)
          else match translateAddr(vAddr, ReadWrite, Data)
-              { case Some(pAddr) => { memv = SignExtend(memReadData(pAddr, 4)<31:0>)
+              { case TR_Address(pAddr) =>
+                  match memReadData(pAddr, 4)
+                  { case Some(v) => { memv = SignExtend(v<31:0>)
                                     ; data = GPR(rs2)
                                     ; val  = SignedMin(data, memv)
                                     ; if   memWriteData(pAddr, val, 4)
@@ -4019,7 +4207,10 @@ define AMO > AMOMIN_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                                            }
                                       else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                     }
-                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+                    case None    => signalAddressException(E_SAMO_Access_Fault, vAddr)
+                  }
+
+                case TR_Failure(e) => signalAddressException(e, vAddr)
               }
        }
 }
@@ -4034,17 +4225,21 @@ define AMO > AMOMIN_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
        ; if   vAddr<2:0> != 0
          then signalAddressException(E_SAMO_Addr_Align, vAddr)
          else match translateAddr(vAddr, ReadWrite, Data)
-              { case Some(pAddr) => { memv = memReadData(pAddr, 8)
-                                    ; data = GPR(rs2)
-                                    ; val  = SignedMin(data, memv)
-                                    ; if   memWriteData(pAddr, val, 8)
-                                      then { writeRD(rd, memv)
-                                           ; recordLoad(vAddr, memv, DOUBLEWORD)
-                                           ; recordAMOStore(vAddr, val, DOUBLEWORD)
-                                           }
-                                      else signalAddressException(E_SAMO_Access_Fault, vAddr)
-                                    }
-                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+              { case TR_Address(pAddr) =>
+                  match memReadData(pAddr, 8)
+                  { case Some(memv) => { data = GPR(rs2)
+                                       ; val  = SignedMin(data, memv)
+                                       ; if   memWriteData(pAddr, val, 8)
+                                         then { writeRD(rd, memv)
+                                              ; recordLoad(vAddr, memv, DOUBLEWORD)
+                                              ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                              }
+                                         else signalAddressException(E_SAMO_Access_Fault, vAddr)
+                                       }
+                    case None       => signalAddressException(E_SAMO_Access_Fault, vAddr)
+                  }
+
+                case TR_Failure(e)  => signalAddressException(e, vAddr)
               }
        }
 }
@@ -4059,7 +4254,9 @@ define AMO > AMOMAX_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
        ; if   vAddr<1:0> != 0
          then signalAddressException(E_SAMO_Addr_Align, vAddr)
          else match translateAddr(vAddr, ReadWrite, Data)
-              { case Some(pAddr) => { memv = SignExtend(memReadData(pAddr, 4)<31:0>)
+              { case TR_Address(pAddr) =>
+                  match memReadData(pAddr, 4)
+                  { case Some(v) => { memv = SignExtend(v<31:0>)
                                     ; data = GPR(rs2)
                                     ; val  = SignedMax(data, memv)
                                     ; if   memWriteData(pAddr, val, 4)
@@ -4069,7 +4266,10 @@ define AMO > AMOMAX_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                                            }
                                       else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                     }
-                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+                    case None    => signalAddressException(E_SAMO_Access_Fault, vAddr)
+                  }
+
+                case TR_Failure(e) => signalAddressException(e, vAddr)
               }
        }
 }
@@ -4084,17 +4284,21 @@ define AMO > AMOMAX_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
        ; if   vAddr<2:0> != 0
          then signalAddressException(E_SAMO_Addr_Align, vAddr)
          else match translateAddr(vAddr, ReadWrite, Data)
-              { case Some(pAddr) => { memv = memReadData(pAddr, 8)
-                                    ; data = GPR(rs2)
-                                    ; val  = SignedMax(data, memv)
-                                    ; if   memWriteData(pAddr, val, 8)
-                                      then { writeRD(rd, memv)
-                                           ; recordLoad(vAddr, memv, DOUBLEWORD)
-                                           ; recordAMOStore(vAddr, val, DOUBLEWORD)
-                                           }
-                                      else signalAddressException(E_SAMO_Access_Fault, vAddr)
-                                    }
-                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+              { case TR_Address(pAddr) =>
+                  match memReadData(pAddr, 8)
+                  { case Some(memv) => { data = GPR(rs2)
+                                       ; val  = SignedMax(data, memv)
+                                       ; if   memWriteData(pAddr, val, 8)
+                                         then { writeRD(rd, memv)
+                                              ; recordLoad(vAddr, memv, DOUBLEWORD)
+                                              ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                              }
+                                         else signalAddressException(E_SAMO_Access_Fault, vAddr)
+                                       }
+                    case None       => signalAddressException(E_SAMO_Access_Fault, vAddr)
+                  }
+
+                case TR_Failure(e)  => signalAddressException(e, vAddr)
               }
        }
 }
@@ -4109,7 +4313,9 @@ define AMO > AMOMINU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
        ; if   vAddr<1:0> != 0
          then signalAddressException(E_SAMO_Addr_Align, vAddr)
          else match translateAddr(vAddr, ReadWrite, Data)
-              { case Some(pAddr) => { memv = SignExtend(memReadData(pAddr, 4)<31:0>)
+              { case TR_Address(pAddr) =>
+                  match memReadData(pAddr, 4)
+                  { case Some(v) => { memv = SignExtend(v<31:0>)
                                     ; data = GPR(rs2)
                                     ; val  = Min(data, memv)
                                     ; if   memWriteData(pAddr, val, 4)
@@ -4119,7 +4325,10 @@ define AMO > AMOMINU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                                            }
                                       else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                     }
-                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+                    case None    => signalAddressException(E_SAMO_Access_Fault, vAddr)
+                  }
+
+                case TR_Failure(e) => signalAddressException(e, vAddr)
               }
        }
 }
@@ -4134,17 +4343,21 @@ define AMO > AMOMINU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
        ; if   vAddr<2:0> != 0
          then signalAddressException(E_SAMO_Addr_Align, vAddr)
          else match translateAddr(vAddr, ReadWrite, Data)
-              { case Some(pAddr) => { memv = memReadData(pAddr, 8)
-                                    ; data = GPR(rs2)
-                                    ; val  = Min(data, memv)
-                                    ; if   memWriteData(pAddr, val, 8)
-                                      then { writeRD(rd, memv)
-                                           ; recordLoad(vAddr, memv, DOUBLEWORD)
-                                           ; recordAMOStore(vAddr, val, DOUBLEWORD)
-                                           }
-                                      else signalAddressException(E_SAMO_Access_Fault, vAddr)
-                                    }
-                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+              { case TR_Address(pAddr) =>
+                  match memReadData(pAddr, 8)
+                  { case Some(memv) => { data = GPR(rs2)
+                                       ; val  = Min(data, memv)
+                                       ; if   memWriteData(pAddr, val, 8)
+                                         then { writeRD(rd, memv)
+                                              ; recordLoad(vAddr, memv, DOUBLEWORD)
+                                              ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                              }
+                                         else signalAddressException(E_SAMO_Access_Fault, vAddr)
+                                       }
+                    case None       => signalAddressException(E_SAMO_Access_Fault, vAddr)
+                  }
+
+                case TR_Failure(e)  => signalAddressException(e, vAddr)
               }
        }
 }
@@ -4159,7 +4372,9 @@ define AMO > AMOMAXU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
        ; if   vAddr<1:0> != 0
          then signalAddressException(E_SAMO_Addr_Align, vAddr)
          else match translateAddr(vAddr, ReadWrite, Data)
-              { case Some(pAddr) => { memv = SignExtend(memReadData(pAddr, 4)<31:0>)
+              { case TR_Address(pAddr) =>
+                  match memReadData(pAddr, 4)
+                  { case Some(v) => { memv = SignExtend(v<31:0>)
                                     ; data = GPR(rs2)
                                     ; val  = Max(data, memv)
                                     ; if   memWriteData(pAddr, val, 4)
@@ -4169,7 +4384,10 @@ define AMO > AMOMAXU_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
                                            }
                                       else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                     }
-                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+                    case None    => signalAddressException(E_SAMO_Access_Fault, vAddr)
+                  }
+
+                case TR_Failure(e) => signalAddressException(e, vAddr)
               }
        }
 }
@@ -4184,17 +4402,21 @@ define AMO > AMOMAXU_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
        ; if   vAddr<2:0> != 0
          then signalAddressException(E_SAMO_Addr_Align, vAddr)
          else match translateAddr(vAddr, ReadWrite, Data)
-              { case Some(pAddr) => { memv = memReadData(pAddr, 8)
-                                    ; data = GPR(rs2)
-                                    ; val  = Max(data, memv)
-                                    ; if   memWriteData(pAddr, val, 8)
-                                      then { writeRD(rd, memv)
-                                           ; recordLoad(vAddr, memv, DOUBLEWORD)
-                                           ; recordAMOStore(vAddr, val, DOUBLEWORD)
-                                           }
-                                      else signalAddressException(E_SAMO_Access_Fault, vAddr)
-                                    }
-                case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
+              { case TR_Address(pAddr) =>
+                  match memReadData(pAddr, 8)
+                  { case Some(memv) => { data = GPR(rs2)
+                                       ; val  = Max(data, memv)
+                                       ; if   memWriteData(pAddr, val, 8)
+                                         then { writeRD(rd, memv)
+                                              ; recordLoad(vAddr, memv, DOUBLEWORD)
+                                              ; recordAMOStore(vAddr, val, DOUBLEWORD)
+                                              }
+                                         else signalAddressException(E_SAMO_Access_Fault, vAddr)
+                                       }
+                    case None       => signalAddressException(E_SAMO_Access_Fault, vAddr)
+                  }
+
+                case TR_Failure(e)  => signalAddressException(e, vAddr)
               }
        }
 }
@@ -4214,11 +4436,16 @@ unit run_fpload_flw(rd::reg, rs1::reg, offs::imm12) =
   then signalException(E_Illegal_Instr)
   else { vAddr = GPR(rs1) + SignExtend(offs)
        ; match translateAddr(vAddr, Read, Data)
-         { case Some(pAddr) => { val = memReadData(pAddr, 4)<31:0>
+         { case TR_Address(pAddr) =>
+             match memReadData(pAddr, 4)
+             { case Some(v) => { val = v<31:0>
                                ; writeFPRS(rd, val)
                                ; recordLoad(vAddr, ZeroExtend(val), WORD)
                                }
-           case None        => signalAddressException(E_Load_Page_Fault, vAddr)
+               case None    => signalAddressException(E_Load_Access_Fault, vAddr)
+             }
+
+           case TR_Failure(e) => signalAddressException(e, vAddr)
          }
        }
 }
@@ -4234,13 +4461,13 @@ unit run_fpstore_fsw(rs1::reg, rs2::reg, offs::imm12) =
   then signalException(E_Illegal_Instr)
   else { vAddr = GPR(rs1) + SignExtend(offs)
        ; match translateAddr(vAddr, Write, Data)
-                   { case Some(pAddr) => { data = FPRS(rs2)
-                                         ; if   memWriteData(pAddr, ZeroExtend(data), 4)
-                                           then recordStore(vAddr, ZeroExtend(data), WORD)
-                                           else signalAddressException(E_SAMO_Access_Fault, vAddr)
-                                         }
-                     case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
-                   }
+         { case TR_Address(pAddr) => { data = FPRS(rs2)
+                                     ; if   memWriteData(pAddr, ZeroExtend(data), 4)
+                                       then recordStore(vAddr, ZeroExtend(data), WORD)
+                                       else signalAddressException(E_SAMO_Access_Fault, vAddr)
+                                     }
+           case TR_Failure(e)     => signalAddressException(e, vAddr)
+         }
        }
 }
 
@@ -4707,12 +4934,15 @@ unit run_fpload_fld(rd::reg, rs1::reg, offs::imm12) =
   then signalException(E_Illegal_Instr)
   else { vAddr = GPR(rs1) + SignExtend(offs)
        ; match translateAddr(vAddr, Read, Data)
-                   { case Some(pAddr) => { val = memReadData(pAddr, 8)
-                                         ; writeFPRD(rd, val)
-                                         ; recordLoad(vAddr, val, DOUBLEWORD)
-                                         }
-                     case None        => signalAddressException(E_Load_Page_Fault, vAddr)
-                   }
+         { case TR_Address(pAddr) =>
+             match memReadData(pAddr, 8)
+             { case Some(val) => { writeFPRD(rd, val)
+                                 ; recordLoad(vAddr, val, DOUBLEWORD)
+                                 }
+               case None      => signalAddressException(E_Load_Access_Fault, vAddr)
+             }
+           case TR_Failure(e) => signalAddressException(e, vAddr)
+         }
        }
 }
 
@@ -4728,13 +4958,13 @@ unit run_fpstore_fsd(rs1::reg, rs2::reg, offs::imm12) =
   then signalException(E_Illegal_Instr)
   else { vAddr = GPR(rs1) + SignExtend(offs)
        ; match translateAddr(vAddr, Write, Data)
-                   { case Some(pAddr) => { data = FPRD(rs2)
-                                         ; if   memWriteData(pAddr, data, 8)
-                                           then recordStore(vAddr, data, DOUBLEWORD)
-                                           else signalAddressException(E_SAMO_Access_Fault, vAddr)
-                                         }
-                     case None        => signalAddressException(E_SAMO_Page_Fault, vAddr)
-                   }
+         { case TR_Address(pAddr) => { data = FPRD(rs2)
+                                     ; if   memWriteData(pAddr, data, 8)
+                                       then recordStore(vAddr, data, DOUBLEWORD)
+                                       else signalAddressException(E_SAMO_Access_Fault, vAddr)
+                                     }
+           case TR_Failure(e)     => signalAddressException(e, vAddr)
+         }
        }
 }
 
@@ -5667,18 +5897,8 @@ define UnknownInstruction =
 
 -- The argument is the value from the PC.
 
-define Internal > FETCH_MISALIGNED(addr::regType) =
-{ signalAddressException(E_Fetch_Addr_Align, [addr])
-; recordFetchException()
-}
-
-define Internal > FETCH_FAULT(addr::regType) =
-{ signalAddressException(E_Fetch_Page_Fault, [addr])
-; recordFetchException()
-}
-
-define Internal > FETCH_ACCESS(addr::regType) =
-{ signalAddressException(E_Fetch_Access_Fault, [addr])
+define Internal > FETCH_EXCEPTION(e::ExceptionType, addr::regType) =
+{ signalAddressException(e, [addr])
 ; recordFetchException()
 }
 
@@ -5699,9 +5919,9 @@ bool isRVC(h::half) = not (h<1> and h<0>)
 FetchResult Fetch() =
 { vPC  = PC
 ; if   (not haveRVC() and vPC<1:0> != 0) or (haveRVC() and vPC<0>)
-  then F_Error(Internal(FETCH_MISALIGNED(vPC)))
+  then F_Error(Internal(FETCH_EXCEPTION(E_Fetch_Addr_Align, vPC)))
   else match translateAddr(vPC, Execute, Instruction)
-       { case Some(pPClo) =>
+       { case TR_Address(pPClo) =>
            match memReadInstGranule(pPClo)
            { case Some(ilo) =>
                  if   isRVC(ilo)
@@ -5709,24 +5929,22 @@ FetchResult Fetch() =
                       ; F_RVC(ilo)
                       }
                  else match translateAddr(vPC + 2, Execute, Instruction)
-                      { case Some(pPChi) =>
+                      { case TR_Address(pPChi) =>
                           match memReadInstGranule(pPChi)
                           { case Some(ihi) =>
                             { inst = [ ihi : ilo ]
                             ; recordFetch(inst)
                             ; F_Base(inst)
                             }
-                            case None =>
-                                 F_Error(Internal(FETCH_ACCESS(vPC)))
+                            case None => F_Error(Internal(FETCH_EXCEPTION(E_Fetch_Access_Fault, vPC)))
                           }
-                        case None =>
-                             F_Error(Internal(FETCH_FAULT(vPC)))
+
+                        case TR_Failure(e) => F_Error(Internal(FETCH_EXCEPTION(e, vPC)))
                       }
-             case None =>
-                  F_Error(Internal(FETCH_ACCESS(vPC)))
+             case None => F_Error(Internal(FETCH_EXCEPTION(E_Fetch_Access_Fault, vPC)))
            }
-         case None =>
-              F_Error(Internal(FETCH_FAULT(vPC)))
+
+         case TR_Failure(e) => F_Error(Internal(FETCH_EXCEPTION(e, vPC)))
        }
 }
 
@@ -6461,9 +6679,7 @@ string instructionToString(i::instruction) =
      case IllegalInstruction                => pN0type("ILLEGAL")
      case UnknownInstruction                => pN0type("UNKNOWN")
 
-     case Internal(FETCH_MISALIGNED(_))     => pN0type("FETCH_MISALIGNED")
-     case Internal(FETCH_FAULT(_))          => pN0type("FETCH_FAULT")
-     case Internal(FETCH_ACCESS(_))          => pN0type("FETCH_ACCESS")
+     case Internal(FETCH_EXCEPTION(e, _))   => pN0type("FETCH_EXCEPTION " : [e])
    }
 
 
@@ -6698,9 +6914,7 @@ word Encode(i::instruction) =
      case IllegalInstruction                => 0
      case UnknownInstruction                => 0
 
-     case Internal(FETCH_MISALIGNED(_))     => 0
-     case Internal(FETCH_FAULT(_))          => 0
-     case Internal(FETCH_ACCESS(_))         => 0
+     case Internal(FETCH_EXCEPTION(_))      => 0
    }
 
 ---------------------------------------------------------------------------
