@@ -79,6 +79,8 @@ public:
   // MMIO operations:
   bool mmio_load(reg_t addr, size_t len, uint8_t* bytes);
   bool mmio_store(reg_t addr, size_t len, const uint8_t* bytes);
+  // callbacks
+  void proc_reset(unsigned id) { }
 
   // misc
   bool exited(int& exit_code);
