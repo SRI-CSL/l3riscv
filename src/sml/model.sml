@@ -394,7 +394,7 @@ fun initPlatform cores =
                          ((if !check then 0xaaaaaaaaAAAAAAAA else 0x0)
                          , 64))
     ; riscv.validMemAddrPred    := physAddrIsMemory
-    ; riscv.enable_dirty_update := true
+    ; riscv.enable_dirty_update := false
     ; if   !check
       then setChecker (Oracle.init ("RV64IMAFDC"))
       else ()
