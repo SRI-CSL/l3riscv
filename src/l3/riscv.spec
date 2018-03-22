@@ -5923,23 +5923,24 @@ FetchResult Fetch() =
        { case TR_Address(pPClo) =>
            match memReadInstGranule(pPClo)
            { case Some(ilo) =>
-                 if   isRVC(ilo)
-                 then { recordFetch(ZeroExtend(ilo))
-                      ; F_RVC(ilo)
-                      }
-                 else match translateAddr(vPC + 2, Execute, Instruction)
+               if   isRVC(ilo)
+               then { recordFetch(ZeroExtend(ilo))
+                    ; F_RVC(ilo)
+                    }
+               else { vPChi = vPC + 2
+                    ; match translateAddr(vPChi, Execute, Instruction)
                       { case TR_Address(pPChi) =>
                           match memReadInstGranule(pPChi)
-                          { case Some(ihi) =>
-                            { inst = [ ihi : ilo ]
-                            ; recordFetch(inst)
-                            ; F_Base(inst)
-                            }
-                            case None => F_Error(Internal(FETCH_EXCEPTION(E_Fetch_Access_Fault, vPC)))
+                          { case Some(ihi) => { inst = [ ihi : ilo ]
+                                              ; recordFetch(inst)
+                                              ; F_Base(inst)
+                                              }
+                            case None => F_Error(Internal(FETCH_EXCEPTION(E_Fetch_Access_Fault, vPChi)))
                           }
 
-                        case TR_Failure(e) => F_Error(Internal(FETCH_EXCEPTION(e, vPC)))
+                        case TR_Failure(e) => F_Error(Internal(FETCH_EXCEPTION(e, vPChi)))
                       }
+                    }
              case None => F_Error(Internal(FETCH_EXCEPTION(E_Fetch_Access_Fault, vPC)))
            }
 
