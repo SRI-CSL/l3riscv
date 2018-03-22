@@ -6951,9 +6951,10 @@ unit Next =
 
 ; tickClock()
 
+; var nextPC = PC
+
 -- Interrupts are prioritized above synchronous traps, so first check
 -- if we have a pending interrupt before fetch/execute.
-
 ; match curInterrupt()
   { -- interrupt-handling
     case Some(i, delegateePriv) =>
@@ -6963,15 +6964,16 @@ unit Next =
     case None =>
     { match Fetch()
       { case F_Base(w) =>
-                 { inst = Decode(w)
+                 { nextPC <- PC + 4
+                 ; inst = Decode(w)
                  ; mark_log(LOG_INSN, log_instruction(w, inst))
                  ; Run(inst)
                  }
         case F_RVC(h) =>
-                 { -- FIXME: which XLEN to use here?  Depending on
-                   -- privilege, MXL, SXL and UXL could apply. There
-                   -- is a virtualization hole here for RVC.
-                   inst = DecodeRVC(curArch(), h)
+                 { nextPC <- PC + 2
+                   -- FIXME: which XLEN to use here?  Depending on
+                   -- privilege, MXL, SXL and UXL could apply.
+                 ; inst = DecodeRVC(curArch(), h)
                  ; mark_log(LOG_INSN, log_instruction(ZeroExtend(h), inst))
                  ; Run(inst)
                  }
@@ -7025,7 +7027,7 @@ unit Next =
                  }
         case None =>
                  { incrInstret()
-                 ; PC           <- PC + 4
+                 ; PC           <- nextPC
                  -- mstatus could have changed due to a csr write
                  ; recordMStatus(MCSR.mstatus)
                  }
