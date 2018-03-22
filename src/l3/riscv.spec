@@ -7048,7 +7048,7 @@ unit initIdent(arch::Architecture) =
 ; MCSR.misa.G       <- false
 ; MCSR.misa.F       <- true
 ; MCSR.misa.D       <- true
-; MCSR.misa.C       <- false
+; MCSR.misa.C       <- true
 ; MCSR.misa.A       <- true
 
 ; MCSR.mvendorid    <- MVENDORID
