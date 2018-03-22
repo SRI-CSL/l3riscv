@@ -37,32 +37,32 @@
 tv_spike_t* tv_init(const char *isa)
 {
   tv_spike_t *tvs = new tv_spike_t(isa);
-  fprintf(stderr, "%s(%s) -> %p\n", __func__, isa, tvs);
+  fprintf(stderr, "%s(%s)\n", __func__, isa);
   return tvs;
 }
 
 void tv_set_verbose(tv_spike_t* tvs, int enable)
 {
-  fprintf(stderr, "%s(%p, %d)\n", __func__, tvs, enable);
+  fprintf(stderr, "%s(%d)\n", __func__, enable);
   tvs->set_verbose(enable);
 }
 
 void tv_load_elf(tv_spike_t* tvs, const char *filename)
 {
   reg_t entry = tvs->init_elf(filename);
-  fprintf(stderr, "%s(%p, %s): %0" PRIx64 "\n",
-          __func__, tvs, filename, entry);
+  fprintf(stderr, "%s(%s): %0" PRIx64 "\n",
+          __func__, filename, entry);
 }
 
 void tv_reset(tv_spike_t* tvs)
 {
-  fprintf(stderr, "%s(%p)\n", __func__, tvs);
+  fprintf(stderr, "%s()\n", __func__);
   tvs->reset();
 }
 
 void tv_step(tv_spike_t* tvs)
 {
-  fprintf(stderr, "%s(%p)\n", __func__, tvs);
+  fprintf(stderr, "%s()\n", __func__);
   tvs->step();
 }
 
