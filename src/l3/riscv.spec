@@ -5928,11 +5928,6 @@ FetchResult Fetch() =
                     ; F_RVC(ilo)
                     }
                else { vPChi = vPC + 2
-                    -- FIXME: It's not clear from the spec what
-                    -- address should be used as the faulting address
-                    -- if this second fetch fails.  Both PC and PC+2
-                    -- could be considered valid values; Spike chooses
-                    -- PC+2.
                     ; match translateAddr(vPChi, Execute, Instruction)
                       { case TR_Address(pPChi) =>
                           match memReadInstGranule(pPChi)
@@ -5940,7 +5935,7 @@ FetchResult Fetch() =
                                               ; recordFetch(inst)
                                               ; F_Base(inst)
                                               }
-                            case None => F_Error(Internal(FETCH_EXCEPTION(E_Fetch_Access_Fault, vPChi)))
+                            case None      => F_Error(Internal(FETCH_EXCEPTION(E_Fetch_Access_Fault, vPChi)))
                           }
 
                         case TR_Failure(e) => F_Error(Internal(FETCH_EXCEPTION(e, vPChi)))
