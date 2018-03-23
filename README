@@ -64,20 +64,14 @@ The specification generated will be in src/il/riscv.l3.
 Known Issues
 ------------
 
-- The interpreter does not currently implement RVC or vector instructions.
-
 - It passes most 64-bit M-, S-, and U-mode tests, and the 32-bit M- and U-mode
   tests, in Spike-checked mode.
 
   It does not implement the debug-module registers, and fails the
   rv{32,64}mi-p-breakpoint tests.
 
-  It does not model invalid physical memory, and hence fails the
-  rv{32,64}mi-p-access tests and all rv32ui-v-* tests.
-
   It has not been tested with the default Spike configuration, which traps on
-  misaligned accesses and traps instead of performing accessed/dirty updates
-  during page-table walks.
+  misaligned accesses.
 
 Credits
 -------

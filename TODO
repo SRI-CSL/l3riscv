@@ -1,11 +1,12 @@
-- test disable-dirty-bit-update mode with suitable spike build
-
-- use a similar approach for hardware misaligned access support
+- support traps on misaligned addresses (default Spike configuration)
 
 - hpm counter and event csrs
 
-- Extend Spike/TV for memory traffic cross-checks.
+- hypervisor mode
 
-- RVC
+- MMIO
 
-- SBI (once spec is released)
+- PMA/PMP
+
+- PLIC
+
