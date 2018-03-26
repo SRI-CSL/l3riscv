@@ -2129,6 +2129,11 @@ unit writeFPRD(rd::reg, val::regType) =
 declare MEM :: pAddrIdx -> regType -- raw memory, laid out in blocks
                                    -- of (|pAddr|-|pAddrIdx|) bits
 
+-- implementation options
+
+declare enable_misaligned_access :: bool
+-- if false, misaligned loads/stores are trapped to Machine mode.
+
 -- Some physical addresses are not memory addresses.  This is a
 -- platform-specific issue, and is externally supplied to the spec in
 -- the form of a predicate on physical addresses.  This could be
@@ -3574,18 +3579,20 @@ define Branch > BGEU(rs1::reg, rs2::reg, offs::imm12) =
 -----------------------------------
 unit run_load_lw(rd::reg, rs1::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
-; match translateAddr(vAddr, Read, Data)
-  { case TR_Address(pAddr) =>
-      match memReadData(pAddr, 4)
-      { case Some(v) => { val = SignExtend(v<31:0>)
-                        ; writeRD(rd, val)
-                        ; recordLoad(vAddr, val, WORD)
-                        }
-        case None    => signalAddressException(E_Load_Access_Fault, vAddr)
-      }
+; if   not enable_misaligned_access and (vAddr<1> or vAddr<0>)
+  then signalAddressException(E_Load_Addr_Align, vAddr)
+  else match translateAddr(vAddr, Read, Data)
+       { case TR_Address(pAddr) =>
+           match memReadData(pAddr, 4)
+           { case Some(v) => { val = SignExtend(v<31:0>)
+                             ; writeRD(rd, val)
+                             ; recordLoad(vAddr, val, WORD)
+                             }
+             case None    => signalAddressException(E_Load_Access_Fault, vAddr)
+           }
 
-    case TR_Failure(e) => signalAddressException(e, vAddr)
-  }
+         case TR_Failure(e) => signalAddressException(e, vAddr)
+       }
 }
 
 define Load > LW(rd::reg, rs1::reg, offs::imm12) =
@@ -3598,18 +3605,20 @@ define Load > LWU(rd::reg, rs1::reg, offs::imm12) =
 { if   in32BitMode()
   then signalException(E_Illegal_Instr)
   else { vAddr = GPR(rs1) + SignExtend(offs)
-       ; match translateAddr(vAddr, Read, Data)
-         { case TR_Address(pAddr) =>
-             match memReadData(pAddr, 4)
-             { case Some(v) => { val = ZeroExtend(v<31:0>)
-                               ; writeRD(rd, val)
-                               ; recordLoad(vAddr, val, WORD)
-                               }
-               case None    => signalAddressException(E_Load_Access_Fault, vAddr)
-             }
+       ; if   not enable_misaligned_access and (vAddr<1> or vAddr<0>)
+         then signalAddressException(E_Load_Addr_Align, vAddr)
+         else match translateAddr(vAddr, Read, Data)
+              { case TR_Address(pAddr) =>
+                  match memReadData(pAddr, 4)
+                  { case Some(v) => { val = ZeroExtend(v<31:0>)
+                                    ; writeRD(rd, val)
+                                    ; recordLoad(vAddr, val, WORD)
+                                    }
+                    case None    => signalAddressException(E_Load_Access_Fault, vAddr)
+                  }
 
-           case TR_Failure(e) => signalAddressException(e, vAddr)
-         }
+                case TR_Failure(e) => signalAddressException(e, vAddr)
+              }
        }
 }
 
@@ -3618,18 +3627,20 @@ define Load > LWU(rd::reg, rs1::reg, offs::imm12) =
 -----------------------------------
 define Load > LH(rd::reg, rs1::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
-; match translateAddr(vAddr, Read, Data)
-  { case TR_Address(pAddr) =>
-      match memReadData(pAddr, 2)
-      { case Some(v) => { val = SignExtend(v<15:0>)
-                        ; writeRD(rd, val)
-                        ; recordLoad(vAddr, val, HALFWORD)
-                        }
-        case None    => signalAddressException(E_Load_Access_Fault, vAddr)
-      }
+; if   not enable_misaligned_access and vAddr<0>
+  then signalAddressException(E_Load_Addr_Align, vAddr)
+  else match translateAddr(vAddr, Read, Data)
+       { case TR_Address(pAddr) =>
+           match memReadData(pAddr, 2)
+           { case Some(v) => { val = SignExtend(v<15:0>)
+                             ; writeRD(rd, val)
+                             ; recordLoad(vAddr, val, HALFWORD)
+                             }
+             case None    => signalAddressException(E_Load_Access_Fault, vAddr)
+           }
 
-    case TR_Failure(e) => signalAddressException(e, vAddr)
-  }
+         case TR_Failure(e) => signalAddressException(e, vAddr)
+       }
 }
 
 -----------------------------------
@@ -3637,18 +3648,20 @@ define Load > LH(rd::reg, rs1::reg, offs::imm12) =
 -----------------------------------
 define Load > LHU(rd::reg, rs1::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
-; match translateAddr(vAddr, Read, Data)
-  { case TR_Address(pAddr) =>
-      match memReadData(pAddr, 2)
-      { case Some(v) => { val = ZeroExtend(v<15:0>)
-                        ; writeRD(rd, val)
-                        ; recordLoad(vAddr, val, HALFWORD)
-                        }
-        case None    => signalAddressException(E_Load_Access_Fault, vAddr)
-      }
+; if   not enable_misaligned_access and vAddr<0>
+  then signalAddressException(E_Load_Addr_Align, vAddr)
+  else match translateAddr(vAddr, Read, Data)
+       { case TR_Address(pAddr) =>
+           match memReadData(pAddr, 2)
+           { case Some(v) => { val = ZeroExtend(v<15:0>)
+                             ; writeRD(rd, val)
+                             ; recordLoad(vAddr, val, HALFWORD)
+                             }
+             case None    => signalAddressException(E_Load_Access_Fault, vAddr)
+           }
 
-    case TR_Failure(e) => signalAddressException(e, vAddr)
-  }
+         case TR_Failure(e) => signalAddressException(e, vAddr)
+       }
 }
 
 -----------------------------------
@@ -3693,21 +3706,25 @@ define Load > LBU(rd::reg, rs1::reg, offs::imm12) =
 -- LD    rd, rs1, offs  (RV64I)
 -----------------------------------
 unit run_load_ld(rd::reg, rs1::reg, offs::imm12) =
-    if   in32BitMode()
-    then signalException(E_Illegal_Instr)
-    else { vAddr = GPR(rs1) + SignExtend(offs)
-         ; match translateAddr(vAddr, Read, Data)
-           { case TR_Address(pAddr) =>
-               match memReadData(pAddr, 8)
-               { case Some(val) => { writeRD(rd, val)
-                                   ; recordLoad(vAddr, val, DOUBLEWORD)
-                                   }
-                 case None      => signalAddressException(E_Load_Access_Fault, vAddr)
-               }
+{ if   in32BitMode()
+  then signalException(E_Illegal_Instr)
+  else { vAddr = GPR(rs1) + SignExtend(offs)
+       ; if   not enable_misaligned_access and (vAddr<2> or vAddr<1> or vAddr<0>)
+         then signalAddressException(E_Load_Addr_Align, vAddr)
+         else { match translateAddr(vAddr, Read, Data)
+                { case TR_Address(pAddr) =>
+                    match memReadData(pAddr, 8)
+                    { case Some(val) => { writeRD(rd, val)
+                                        ; recordLoad(vAddr, val, DOUBLEWORD)
+                                        }
+                      case None      => signalAddressException(E_Load_Access_Fault, vAddr)
+                    }
 
-             case TR_Failure(e) => signalAddressException(e, vAddr)
-           }
-         }
+                  case TR_Failure(e) => signalAddressException(e, vAddr)
+                }
+              }
+       }
+}
 
 define Load > LD(rd::reg, rs1::reg, offs::imm12) =
     run_load_ld(rd, rs1, offs)
@@ -3717,14 +3734,16 @@ define Load > LD(rd::reg, rs1::reg, offs::imm12) =
 -----------------------------------
 unit run_store_sw(rs1::reg, rs2::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
-; match translateAddr(vAddr, Write, Data)
-  { case TR_Address(pAddr) => { data = GPR(rs2)
-                              ; if   memWriteData(pAddr, data, 4)
-                                then recordStore(vAddr, data, WORD)
-                                else signalAddressException(E_SAMO_Access_Fault, vAddr)
-                              }
-    case TR_Failure(e)     => signalAddressException(e, vAddr)
-  }
+; if   not enable_misaligned_access and (vAddr<1> or vAddr<0>)
+  then signalAddressException(E_SAMO_Addr_Align, vAddr)
+  else match translateAddr(vAddr, Write, Data)
+       { case TR_Address(pAddr) => { data = GPR(rs2)
+                                   ; if   memWriteData(pAddr, data, 4)
+                                     then recordStore(vAddr, data, WORD)
+                                     else signalAddressException(E_SAMO_Access_Fault, vAddr)
+                                   }
+         case TR_Failure(e)     => signalAddressException(e, vAddr)
+       }
 }
 
 define Store > SW(rs1::reg, rs2::reg, offs::imm12) =
@@ -3735,14 +3754,16 @@ define Store > SW(rs1::reg, rs2::reg, offs::imm12) =
 -----------------------------------
 define Store > SH(rs1::reg, rs2::reg, offs::imm12) =
 { vAddr = GPR(rs1) + SignExtend(offs)
-; match translateAddr(vAddr, Write, Data)
-  { case TR_Address(pAddr) => { data = GPR(rs2)
-                              ; if   memWriteData(pAddr, data, 2)
-                                then recordStore(vAddr, data, HALFWORD)
-                                else signalAddressException(E_SAMO_Access_Fault, vAddr)
-                              }
-    case TR_Failure(e)     => signalAddressException(e, vAddr)
-  }
+; if   not enable_misaligned_access and vAddr<0>
+  then signalAddressException(E_SAMO_Addr_Align, vAddr)
+  else match translateAddr(vAddr, Write, Data)
+       { case TR_Address(pAddr) => { data = GPR(rs2)
+                                   ; if   memWriteData(pAddr, data, 2)
+                                     then recordStore(vAddr, data, HALFWORD)
+                                     else signalAddressException(E_SAMO_Access_Fault, vAddr)
+                                   }
+         case TR_Failure(e)     => signalAddressException(e, vAddr)
+       }
 }
 
 -----------------------------------
@@ -3764,18 +3785,21 @@ define Store > SB(rs1::reg, rs2::reg, offs::imm12) =
 -- SD    rs1, rs2, offs (RV64I)
 -----------------------------------
 unit run_store_sd(rs1::reg, rs2::reg, offs::imm12) =
-    if   in32BitMode()
-    then signalException(E_Illegal_Instr)
-    else { vAddr = GPR(rs1) + SignExtend(offs)
-         ; match translateAddr(vAddr, Write, Data)
-           { case TR_Address(pAddr) => { data = GPR(rs2)
-                                       ; if   memWriteData(pAddr, data, 8)
-                                         then recordStore(vAddr, data, DOUBLEWORD)
-                                         else signalAddressException(E_SAMO_Access_Fault, vAddr)
-                                       }
-             case TR_Failure(e)     => signalAddressException(e, vAddr)
-           }
-         }
+{ if   in32BitMode()
+  then signalException(E_Illegal_Instr)
+  else { vAddr = GPR(rs1) + SignExtend(offs)
+       ; if   not enable_misaligned_access and (vAddr<2> or vAddr<1> or vAddr<0>)
+         then signalAddressException(E_SAMO_Addr_Align, vAddr)
+         else match translateAddr(vAddr, Write, Data)
+              { case TR_Address(pAddr) => { data = GPR(rs2)
+                                          ; if   memWriteData(pAddr, data, 8)
+                                            then recordStore(vAddr, data, DOUBLEWORD)
+                                            else signalAddressException(E_SAMO_Access_Fault, vAddr)
+                                          }
+                case TR_Failure(e)     => signalAddressException(e, vAddr)
+              }
+       }
+}
 
 define Store > SD(rs1::reg, rs2::reg, offs::imm12) =
     run_store_sd(rs1, rs2, offs)

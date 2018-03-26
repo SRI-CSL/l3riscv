@@ -1,5 +1,3 @@
-- support traps on misaligned addresses (default Spike configuration)
-
 - hpm counter and event csrs
 
 - hypervisor mode
