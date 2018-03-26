@@ -21,6 +21,10 @@
 val mem_base_addr   = ref (IntInf.fromInt 0x80000000) (* default used in spike *)
 val mem_size        = ref (IntInf.fromInt 0)
 
+(* Platform settings; defaults match Spike's default config. *)
+val enable_misaligned_access = ref false
+val enable_dirty_update      = ref false
+
 (* Execution parameters *)
 
 (* true  -> init starting PC to reset vector
@@ -395,9 +399,9 @@ fun initPlatform cores =
                          , 64))
     ; riscv.validMemAddrPred    := physAddrIsMemory
 
-    (* Select optional implementation choices. *)
-    ; riscv.enable_dirty_update      := false
-    ; riscv.enable_misaligned_access := false
+    (* Select platform implementation choices. *)
+    ; riscv.enable_dirty_update      := !enable_dirty_update
+    ; riscv.enable_misaligned_access := !enable_misaligned_access
 
     ; if   !check
       then setChecker (Oracle.init ("RV64IMAFDC"))
@@ -584,6 +588,8 @@ fun printUsage () =
           \  --multi  <#cores>    number of cores (1 default)\n\
           \  --check  <bool>      check execution against external verifier\n\
           \  --boot   <bool>      set starting pc to reset address x1000 (false default)\n\
+          \  --pte-update <bool>  update PTE on page-table walks (false default)\n\
+          \  --misaligned <bool>  enable non-trapping misaligned accesses (false default)\n\
           \  -h or --help         print this message\n\n")
 
 fun getNumber s =
@@ -606,6 +612,8 @@ fun getArguments () =
         | "-m"   => "--multi"
         | "-v"   => "--verifier"
         | "-b"   => "--boot"
+        | "-pu"  => "--pte-update"
+        | "-ma"  => "--misaligned"
         | s      => s
         ) (CommandLine.arguments ())
 
@@ -623,28 +631,37 @@ fun main_wrapped () =
     case getArguments () of
         ["--help"] => printUsage ()
       | l =>
-        let val (c, l) = processOption "--cycles"   l
-            val (t, l) = processOption "--trace"    l
-            val (d, l) = processOption "--dis"      l
-            val (k, l) = processOption "--check"    l
-            val (m, l) = processOption "--multi"    l
-            val (v, l) = processOption "--verifier" l
-            val (b, l) = processOption "--boot"     l
+        let val (c, l) = processOption "--cycles"     l
+            val (t, l) = processOption "--trace"      l
+            val (d, l) = processOption "--dis"        l
+            val (k, l) = processOption "--check"      l
+            val (m, l) = processOption "--multi"      l
+            val (v, l) = processOption "--verifier"   l
+            val (b, l) = processOption "--boot"       l
+            val (p, l) = processOption "--pte-update" l
+            val (a, l) = processOption "--misaligned" l
 
             val c = Option.getOpt (Option.map getNumber c, ~1)
             val d = Option.getOpt (Option.map getBool d, !trace_elf)
             val t = Option.getOpt (Option.map getNumber t,
                                    (IntInf.fromInt (!trace_lvl)))
+
             val m = Option.getOpt (Option.map getNumber m, 1)
             val k = Option.getOpt (Option.map getBool k, !check)
             val v = Option.getOpt (Option.map getBool v, !verifier_mode)
             val b = Option.getOpt (Option.map getBool b, !boot)
+
+            val p = Option.getOpt (Option.map getBool p, !enable_dirty_update)
+            val a = Option.getOpt (Option.map getBool a, !enable_misaligned_access)
 
             val () = trace_lvl      := Int.max (0, IntInf.toInt t)
             val () = check          := k
             val () = trace_elf      := d
             val () = verifier_mode  := v
             val () = boot           := b
+
+            val () = enable_dirty_update      := p
+            val () = enable_misaligned_access := a
 
         in  if   List.null l andalso not (!verifier_mode)
             then printUsage ()
