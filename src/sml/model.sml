@@ -403,8 +403,15 @@ fun initPlatform cores =
     ; riscv.enable_dirty_update      := !enable_dirty_update
     ; riscv.enable_misaligned_access := !enable_misaligned_access
 
+    (* Set up external oracle if needed. *)
     ; if   !check
-      then setChecker (Oracle.init ("RV64IMAFDC"))
+      then ( let val t = Oracle.init ("RV64IMAFDC")
+             in  setChecker t
+               (* override platform choices with those of oracle. *)
+               ; riscv.enable_dirty_update      := Oracle.isDirtyEnabled t
+               ; riscv.enable_misaligned_access := Oracle.isMisalignedEnabled t
+             end
+           )
       else ()
     )
 
@@ -588,8 +595,8 @@ fun printUsage () =
           \  --multi  <#cores>    number of cores (1 default)\n\
           \  --check  <bool>      check execution against external verifier\n\
           \  --boot   <bool>      set starting pc to reset address x1000 (false default)\n\
-          \  --pte-update <bool>  update PTE on page-table walks (false default)\n\
-          \  --misaligned <bool>  enable non-trapping misaligned accesses (false default)\n\
+          \  --pte-update <bool>  update PTE on page-table walks (false default, not used with --check)\n\
+          \  --misaligned <bool>  enable non-trapping misaligned accesses (false default, not used with --check)\n\
           \  -h or --help         print this message\n\n")
 
 fun getNumber s =

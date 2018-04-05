@@ -24,6 +24,9 @@ sig
     val step       : t          -> unit
     val isDone     : t          -> bool
 
+    (* query the oracle's mmu configuration *)
+    val isDirtyEnabled      : t -> bool
+    val isMisalignedEnabled : t -> bool
 
     (* checks *)
     val checkPC    : t * IntInf.int       -> bool

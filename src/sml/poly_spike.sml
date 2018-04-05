@@ -39,6 +39,15 @@ val setVerbose : (t * bool) -> unit =
     buildCall2 (getSym "tv_set_verbose", (cPointer, cInt), cVoid)
     o (fn (t, b) => (t, fromBool b))
 
+val isDirtyEnabled : t -> bool =
+    toBool o buildCall1 (getSym "tv_is_dirty_enabled", cPointer, cInt)
+
+val isMisalignedEnabled : t -> bool =
+    toBool o buildCall1 (getSym "tv_is_misaligned_enabled", cPointer, cInt)
+
+val isDone : t -> bool =
+    toBool o buildCall1 (getSym "tv_is_done", cPointer, cInt)
+
 val loadElf : (t * string) -> unit =
     buildCall2 (getSym "tv_load_elf", (cPointer, cString), cVoid)
 
