@@ -59,6 +59,10 @@ public:
   void reset(void);
   reg_t get_entry_point(void) { return entry; }
 
+  /* config queries */
+  int is_dirty_enabled();
+  int is_misaligned_enabled();
+
   /* execution */
   void step(void);
 

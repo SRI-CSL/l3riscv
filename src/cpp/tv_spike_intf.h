@@ -44,6 +44,10 @@ extern "C" {
 
 tv_spike_t* tv_init(const char *isa);
 
+int tv_is_dirty_enabled(tv_spike_t* tvs);
+
+int tv_is_misaligned_enabled(tv_spike_t* tvs);
+
 void tv_set_verbose(tv_spike_t* tvs, int enable);
 
 void tv_load_elf(tv_spike_t* tvs, const char *filename);

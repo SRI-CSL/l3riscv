@@ -59,6 +59,16 @@ tv_spike_t::~tv_spike_t()
   delete debug_mmu;
 }
 
+int tv_spike_t::is_dirty_enabled()
+{
+  return cpu->get_mmu()->is_dirty_enabled();
+}
+
+int tv_spike_t::is_misaligned_enabled()
+{
+  return cpu->get_mmu()->is_misaligned_enabled();
+}
+
 reg_t tv_spike_t::init_elf(const char *elf_file)
 {
   std::map<std::string, uint64_t> symbols = load_elf(elf_file, &memif, &entry);

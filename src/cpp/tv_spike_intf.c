@@ -47,6 +47,16 @@ void tv_set_verbose(tv_spike_t* tvs, int enable)
   tvs->set_verbose(enable);
 }
 
+int tv_is_dirty_enabled(tv_spike_t* tvs)
+{
+  return tvs->is_dirty_enabled();
+}
+
+int tv_is_misaligned_enabled(tv_spike_t* tvs)
+{
+  return tvs->is_misaligned_enabled();
+}
+
 void tv_load_elf(tv_spike_t* tvs, const char *filename)
 {
   reg_t entry = tvs->init_elf(filename);
