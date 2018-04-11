@@ -669,8 +669,7 @@ mstatus legalize_sstatus_32(m::mstatus, v::word) =
 
 
 register sedeleg :: regType     -- Exception Trap Delegation
-{     9 : S_SEnvCall
-,     8 : S_UEnvCall
+{     8 : S_UEnvCall
 ,     7 : S_SAMO_Access
 ,     6 : S_SAMO_Addr
 ,     5 : S_Load_Access
@@ -682,8 +681,7 @@ register sedeleg :: regType     -- Exception Trap Delegation
 }
 
 sedeleg legalize_sedeleg_64(s::sedeleg, v::regType) =
-{ var sd = sedeleg(v)
-; sd.S_SEnvCall <- false    -- cannot delegate S-mode EnvCalls
+{ var sd = sedeleg(ZeroExtend(v<8:0>))
 ; sd
 }
 
