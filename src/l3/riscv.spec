@@ -1941,13 +1941,17 @@ regType tvec_addr(m::mtvec, c::mcause) =
 
 -- Delegation logic.
 
-Privilege excHandlerDelegate(e::ExceptionType) =
+Privilege excHandlerDelegate(e::ExceptionType, curp::Privilege) =
 { eidx  = [e]::nat
 ; super = MCSR.&medeleg<eidx>
 ; user  = super and SCSR.&sedeleg<eidx>
-; if      MCSR.misa.N and user  then User
-  else if MCSR.misa.S and super then Supervisor
-  else                               Machine
+; deleg = if      MCSR.misa.N and user  then User
+          else if MCSR.misa.S and super then Supervisor
+          else                               Machine
+  -- Ensure we don't transition to a less-privileged mode.
+; if   [privLevel(deleg)]::nat < [privLevel(curp)]::nat
+  then curp
+  else deleg
 }
 
 -- Handling logic.
@@ -7008,7 +7012,7 @@ unit Next =
     ; match NextFetch
       { case Some(Trap(e)) =>
                  { NextFetch <- None
-                 ; delegate = excHandlerDelegate(e.trap)
+                 ; delegate = excHandlerDelegate(e.trap, curPrivilege)
                  ; excHandler(false, [e.trap]::exc_code, curPrivilege, delegate, PC, e.badaddr)
                  }
         case Some(Uret) =>
