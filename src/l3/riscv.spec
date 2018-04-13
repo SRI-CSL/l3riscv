@@ -585,7 +585,6 @@ mcause legalize_mcause_64(m::mcause, v::regType) =
 mcause legalize_mcause_32(m::mcause, v::word) =
     legalize_mcause_64(m, cause_of_32(v))
 
-
 record MachineCSR
 { mvendorid     :: regType      -- information registers
   marchid       :: regType
@@ -1357,6 +1356,8 @@ mie mie_of_uie_32(i::id, v::word) =
 ; lift_sie(m, s, md)
 }
 
+dword legalize_xepc(value::dword) =
+{ value && SignExtend(if haveRVC() then 0b110`3 else 0b100`3) }
 
 component CSRMap(csr::csreg) :: regType
 { value =
@@ -1464,7 +1465,7 @@ component CSRMap(csr::csreg) :: regType
 
         -- user trap handling
         case 0x040, _       => c_UCSR(procID).uscratch  <- value
-        case 0x041, _       => c_UCSR(procID).uepc      <- (value && SignExtend(if haveRVC() then 0b110`3 else 0b100`3))
+        case 0x041, _       => c_UCSR(procID).uepc      <- legalize_xepc(value)
         case 0x042, false   => c_UCSR(procID).&ucause   <- value
         case 0x042, true    => c_UCSR(procID).&ucause   <- cause_of_32(value<31:0>)
         case 0x043, _       => c_UCSR(procID).utval     <- value
@@ -1501,7 +1502,7 @@ component CSRMap(csr::csreg) :: regType
 
         -- supervisor trap handling
         case 0x140, _       => c_SCSR(procID).sscratch  <- value
-        case 0x141, _       => c_SCSR(procID).sepc      <- (value && SignExtend(if haveRVC() then 0b110`3 else 0b100`3))
+        case 0x141, _       => c_SCSR(procID).sepc      <- legalize_xepc(value)
         case 0x142, false   => c_SCSR(procID).&scause   <- value
         case 0x142, true    => c_SCSR(procID).&scause   <- cause_of_32(value<31:0>)
         case 0x143, _       => c_SCSR(procID).stval     <- value
@@ -1531,7 +1532,7 @@ component CSRMap(csr::csreg) :: regType
 
         -- machine trap handling
         case 0x340, _       => c_MCSR(procID).mscratch  <- value
-        case 0x341, _       => c_MCSR(procID).mepc      <- (value && SignExtend(if haveRVC() then 0b110`3 else 0b100`3))
+        case 0x341, _       => c_MCSR(procID).mepc      <- legalize_xepc(value)
         case 0x342, false   => c_MCSR(procID).&mcause   <- value
         case 0x342, true    => c_MCSR(procID).&mcause   <- cause_of_32(value<31:0>)
         case 0x343, _       => c_MCSR(procID).mtval     <- value
