@@ -1247,37 +1247,50 @@ priv_level csrPR(csr::csreg)  = csr<9:8>
 bool check_CSR_access(rw::csrRW, pr::priv_level, p::Privilege, a::accessType) =
     (a == Read or rw != 0b11) and (privLevel(p) >=+ pr)
 
--- TODO
-bool check_hpmcounter_access(ncounter::csreg, p::Privilege)
-     = false
-
 bool is_CSR_defined(csr::csreg, p::Privilege) =
-    -- user-mode
-    csr == 0x000  or  csr == 0x004 or csr == 0x005    -- trap setup
- or (csr >= 0x001 and csr <= 0x003 and haveFP())      -- FP
- or (csr >= 0x040 and csr <= 0x044)                   -- trap handling
+  match csr
+  { -- machine mode : informational
+    case 0xf11 => p == Machine  -- mvendorid
+    case 0xf12 => p == Machine  -- marchdid
+    case 0xf13 => p == Machine  -- mimpid
+    case 0xf14 => p == Machine  -- mhartid
+    -- machine mode: trap setup
+    case 0x300 => p == Machine  -- mstatus
+    case 0x301 => p == Machine  -- misa
+    case 0x302 => p == Machine  -- medeleg
+    case 0x303 => p == Machine  -- mideleg
+    case 0x304 => p == Machine  -- mie
+    case 0x305 => p == Machine  -- mtvec
+    case 0x306 => p == Machine  -- mcounteren
+    -- machine mode: trap handling
+    case 0x340 => p == Machine  -- mscratch
+    case 0x341 => p == Machine  -- mepc
+    case 0x342 => p == Machine  -- mcause
+    case 0x343 => p == Machine  -- mtval
+    case 0x344 => p == Machine  -- mip
+    -- TODO: memory protection and configuration
+    -- TODO: counters and events
 
- -- basic and hpm counters, for all privileges
- or (csr >= 0xC00 and csr <= 0xC1F and check_hpmcounter_access(csr - 0xC00, p))
- -- RV32I, upper counter bits
- or (csr >= 0xC80 and csr <= 0xC9F and check_hpmcounter_access(csr - 0xC80, p)
-     and in32BitMode())
+    -- supervisor mode: trap setup
+    case 0x100 => p == Machine or p == Supervisor  -- sstatus
+    case 0x102 => p == Machine or p == Supervisor  -- sedeleg
+    case 0x103 => p == Machine or p == Supervisor  -- sideleg
+    case 0x104 => p == Machine or p == Supervisor  -- sie
+    case 0x105 => p == Machine or p == Supervisor  -- stvec
+    case 0x106 => p == Machine or p == Supervisor  -- scounteren
 
-    -- supervisor-mode
- or (csr >= 0x100 and csr <= 0x105 and csr != 0x101)  -- trap setup
- or (csr >= 0x140 and csr <= 0x144)                   -- trap handling
- or (csr == 0x180)                                    -- address translation
+    -- supervisor mode: trap handling
+    case 0x140 => p == Machine or p == Supervisor  -- sscratch
+    case 0x141 => p == Machine or p == Supervisor  -- sepc
+    case 0x142 => p == Machine or p == Supervisor  -- scause
+    case 0x143 => p == Machine or p == Supervisor  -- stval
+    case 0x144 => p == Machine or p == Supervisor  -- sip
 
-    -- machine-mode
- or (csr >= 0xF11 and csr <= 0xF14)                   -- info
- or (csr >= 0x300 and csr <= 0x306)                   -- trap setup
- or (csr >= 0x340 and csr <= 0x344)                   -- trap handling
- -- or (csr >= 0x3A0 and csr <= 0x3A3 and in32BitMode()) -- memory protection configuration
- -- or (csr == 0x3A0 or  csr == 0x3A2)
- -- or (csr >= 0x3B0 and csr <= 0x3BF)                   -- memory protection addresses
- -- or (csr >= 0xB00 and csr <= 0xB1F)                   -- counters
- -- or (csr >= 0xB80 and csr <= 0xB9F and in32BitMode())
- -- or (csr >= 0x323 and csr <= 0x33F)                   -- counter setup
+    -- supervisor mode: address translation
+    case 0x180 => p == Machine or p == Supervisor  -- satp
+
+    case _     => false
+  }
 
 bool check_TVM_SATP(csr::imm12, p::Privilege, a::accessType) =
     not (MCSR.mstatus.M_TVM and p == Supervisor and csr == 0x180)
