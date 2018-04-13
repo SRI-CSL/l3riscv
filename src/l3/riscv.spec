@@ -63,7 +63,7 @@ construct fpType { FP_single, FP_double }
 -- memory and caches
 
 construct accessType { Read, Write, ReadWrite, Execute }
-construct fetchType  { Instruction, Data }
+construct readType   { Instruction, Data }
 
 type asid32   = bits(9)
 type asid64   = bits(16)
@@ -2924,8 +2924,8 @@ construct TR_Result
 
 -- vAddr here is assumed to be appropriately formatted for the
 -- current M_UXL.
-TR_Result translateAddr(vAddr::regType, ac::accessType, ft::fetchType) =
-{ priv = match ft
+TR_Result translateAddr(vAddr::regType, ac::accessType, rt::readType) =
+{ priv = match rt
          { case Instruction => curPrivilege
            case Data        => if   MCSR.mstatus.M_MPRV
                                then privilege(MCSR.mstatus.M_MPP)
