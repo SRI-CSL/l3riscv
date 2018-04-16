@@ -1127,7 +1127,12 @@ component curPrivilege :: Privilege
 
 -- machine state utilities
 
-Architecture curArch() = architecture(MCSR.misa.MXL)
+Architecture curArch() =
+    match (curPrivilege)
+    { case Machine    => architecture(MCSR.misa.MXL)
+      case Supervisor => architecture(MCSR.mstatus.M_SXL)
+      case User       => architecture(MCSR.mstatus.M_UXL)
+    }
 
 bool in32BitMode()  = curArch() == RV32
 
