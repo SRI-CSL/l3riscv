@@ -5507,19 +5507,23 @@ define System > EBREAK =
 -- URET
 -----------------------------------
 define System > URET   =
-    NextFetch <- Some(Uret)
+    if   MCSR.misa.N
+    then NextFetch <- Some(Uret)
+    else signalException(E_Illegal_Instr)
 
 -----------------------------------
 -- SRET
 -----------------------------------
 define System > SRET   =
-{ match curPrivilege
-  { case Machine    => NextFetch <- Some(Sret)
-    case Supervisor => if   MCSR.mstatus.M_TSR
-                       then signalException(E_Illegal_Instr)
-                       else NextFetch <- Some(Sret)
-    case User       => signalException(E_Illegal_Instr)
-  }
+{ if   not MCSR.misa.S
+  then signalException(E_Illegal_Instr)
+  else match curPrivilege
+    { case Machine    => NextFetch <- Some(Sret)
+      case Supervisor => if   MCSR.mstatus.M_TSR
+                         then signalException(E_Illegal_Instr)
+                         else NextFetch <- Some(Sret)
+      case User       => signalException(E_Illegal_Instr)
+    }
 }
 
 -----------------------------------
