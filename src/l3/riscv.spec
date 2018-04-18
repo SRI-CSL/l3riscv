@@ -459,7 +459,14 @@ register mideleg :: regType     -- Interrupt Trap Delegation
 
 -- just a stub hook for now
 mideleg legalize_mideleg_64(m::mideleg, v::regType) =
-    mideleg(v)
+{ var mi = mideleg(v)
+-- M-mode interrupt delegation bits "should" be hardwired to 0.
+-- FIXME: needs verification against eventual spec language.
+; mi.M_MEIP <- false
+; mi.M_MTIP <- false
+; mi.M_MSIP <- false
+; mi
+}
 
 mideleg legalize_mideleg_32(m::mideleg, v::word) =
     legalize_mideleg_64(m, deleg_of_32(v))
