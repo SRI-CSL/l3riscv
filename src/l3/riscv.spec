@@ -2032,7 +2032,7 @@ unit excHandler(intr::bool, ec::exc_code, fromPriv::Privilege, toPriv::Privilege
 -- Interrupts are prioritized in privilege order, and for each
 -- privilege, in the order: external, software, timers.
 
-InterruptType option searchDispatchableIntr(ip::mip) =
+InterruptType option findPendingInterrupt(ip::mip) =
 { intr = I_M_External
 ; idx  = [interruptIndex(intr)]::nat
 ; if (&ip)<idx> then Some(intr)
@@ -2071,12 +2071,12 @@ InterruptType option searchDispatchableIntr(ip::mip) =
 
   -- dispatch in order of decreasing privilege
   ; if      m_ip != 0 and MCSR.mstatus.M_MIE
-    then    match searchDispatchableIntr(mip(m_ip))
+    then    match findPendingInterrupt(mip(m_ip))
          { case Some(i) => Some(i, Machine)
            case None    => None
          }
     else if s_ip != 0 and MCSR.mstatus.M_SIE
-    then    match searchDispatchableIntr(mip(s_ip))
+    then    match findPendingInterrupt(mip(s_ip))
          { case Some(i) => Some(i, Supervisor)
            case None    => None
          }
