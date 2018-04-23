@@ -21,9 +21,9 @@ Ensure that you are using a recent version (L3-2018-02-09 or later).
 The tandem-verification to Spike needs a recent version of Spike installed, and
 the RISCV environment variable set to its installation directory.
 
-Currently, Spike will need to be configured with the
-  --enable-dirty --enable-misaligned
-flags.
+The model supports the following combinations of Spike configuration flags:
+  --[en|dis]able-dirty --[en|dis]able-misaligned
+
 
 Building
 --------
@@ -47,6 +47,9 @@ Using the interpreter
 
   $ ./l3riscv --trace 1 --check true <riscv-binary>
 
+  The execution will stop with a failure at the first discrepancy between the
+  execution of the model and that of Spike.
+
 - Disassemble a RISC-V ELF binary:
 
   $ ./l3riscv --dis true  <riscv-binary>
@@ -67,11 +70,10 @@ Known Issues
 - It passes most 64-bit M-, S-, and U-mode tests, and the 32-bit M- and U-mode
   tests, in Spike-checked mode.
 
-  It does not implement the debug-module registers, and fails the
+  It does not implement the debug-module registers, and hence fails the
   rv{32,64}mi-p-breakpoint tests.
 
-  It has not been tested with the default Spike configuration, which traps on
-  misaligned accesses.
+- It does not yet boot a full OS since it has no device models.
 
 Credits
 -------
