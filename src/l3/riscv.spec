@@ -2069,13 +2069,17 @@ InterruptType option findPendingInterrupt(ip::mip) =
     m_ip = e_mip && ~MCSR.&mideleg
   ; s_ip = e_mip &&  MCSR.&mideleg
 
-  -- dispatch in order of decreasing privilege
+  -- dispatch in order of decreasing privilege, while ensuring that
+  -- the resulting privilege level is not reduced; i.e. delegated
+  -- interrupts to lower privileges are effectively masked until
+  -- control returns to them.
   ; if      m_ip != 0 and MCSR.mstatus.M_MIE
     then    match findPendingInterrupt(mip(m_ip))
          { case Some(i) => Some(i, Machine)
            case None    => None
          }
-    else if s_ip != 0 and MCSR.mstatus.M_SIE
+    else if     (s_ip != 0 and MCSR.mstatus.M_SIE)
+            and (curPrivilege == Supervisor or curPrivilege == User)
     then    match findPendingInterrupt(mip(s_ip))
          { case Some(i) => Some(i, Supervisor)
            case None    => None
