@@ -2,7 +2,8 @@
  *
  * This software was developed by SRI International and the University of
  * Cambridge Computer Laboratory under DARPA/AFRL contract FA8650-18-C-7809
- * ("CIFV").
+ * ("CIFV"), and under DARPA contract HR0011-18-C-0016 ("ECATS"), as part of
+ * the DARPA SSITH research programme.
  *
  * See the LICENSE file for details.
  *)
