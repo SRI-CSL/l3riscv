@@ -41,6 +41,7 @@
 #include <spike/mmu.h>
 #include <spike/sim.h>
 #include <fesvr/memif.h>
+#include <spike/dts.h>
 
 /*
  * This class implements a single-CPU in-order RISC-V system, using the Spike
@@ -98,10 +99,17 @@ public:
   bool check_priv(uint8_t prv);
   //bool check_fpr(size_t regno, uint64_t val);
 
+  /* platform info */
+  static const size_t INSNS_PER_RTC_TICK = 100; // 10 MHz clock for 1 BIPS core
+  static const size_t CPU_HZ = 1000000000; // 1GHz CPU
+  std::string get_dts(void);
+  std::string get_dtb(void);
+
 private:
   std::vector<std::pair<reg_t, mem_t*>> mem_regions;
   mmu_t* debug_mmu; // used for initialization of memory regions
   processor_t *cpu;
+  std::vector<processor_t*> procs; // contains the above singleton cpu
   memif_t memif;    // used by ELF loader
   std::unique_ptr<rom_device_t> boot_rom; // holds reset vector
   std::unique_ptr<clint_t> clint; // clock interface

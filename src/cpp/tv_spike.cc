@@ -41,6 +41,8 @@ tv_spike_t::tv_spike_t(const char *isa)
     verbose_verify(true), debug_log(true)
 {
   cpu = new processor_t(isa, this, /*hartid*/ 0, /*halted*/ false);
+  procs = std::vector<processor_t*>(1, cpu);
+
   debug_mmu = new mmu_t(this, /*processor_t**/NULL);
   /* use the default memory size for Spike: 2GB at DRAM_BASE */
   size_t size = reg_t(2048) << 20;
@@ -93,6 +95,17 @@ void tv_spike_t::set_pc_reg(uint64_t pc)
   cpu->get_state()->pc = pc;
 }
 
+std::string tv_spike_t::get_dts()
+{
+  return make_dts(INSNS_PER_RTC_TICK, CPU_HZ, procs, mem_regions);
+}
+
+std::string tv_spike_t::get_dtb()
+{
+  std::string dts = get_dts();
+  return dts_compile(dts);
+}
+
 void tv_spike_t::reset()
 {
   reg_t start_pc = get_entry_point();
@@ -112,6 +125,13 @@ void tv_spike_t::reset()
   };
 
   std::vector<char> rom((char*)reset_vec, (char*)reset_vec + sizeof(reset_vec));
+
+  /* Imitate spike. */
+  std::string dtb = get_dtb();
+  rom.insert(rom.end(), dtb.begin(), dtb.end());
+  const int align = 0x1000;
+  rom.resize((rom.size() + align - 1) / align * align);
+
   boot_rom.reset(new rom_device_t(rom));
   std::cout << "Adding rom device @0x" << std::hex << DEFAULT_RSTVEC
             << " size:0x" << boot_rom.get()->contents().size() << std::endl;
