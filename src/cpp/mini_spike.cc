@@ -36,8 +36,11 @@ int run(tv_spike_t *tv)
 {
   int code;
   tv->reset();
-  while(!tv->exited(code))
+  while(!tv->exited(code)) {
+    tv->step_io();
     tv->step();
+    tv->tick();
+  }
   fprintf(stderr, "Exited with code %d.\n", code);
   return code;
 }

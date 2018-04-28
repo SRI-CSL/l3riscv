@@ -53,8 +53,12 @@ tv_spike_t::tv_spike_t(const char *isa)
               << " size:0x" << x.second->size() << std::endl;
     bus.add_device(x.first, x.second);
   }
+  /* MMIO */
   clint.reset(new clint_t(procs));
   bus.add_device(CLINT_BASE, clint.get());
+
+  /* HTIF */
+  device_list.register_device(&bcd);
 }
 
 tv_spike_t::~tv_spike_t()
@@ -189,6 +193,26 @@ void tv_spike_t::write_chunk(addr_t taddr, size_t len, const void* src)
   uint64_t data;
   memcpy(&data, src, sizeof data);
   debug_mmu->store_uint64(taddr, data);
+}
+
+void tv_spike_t::step_io(void)
+{
+  uint64_t tohost = memif.read_uint64(tohost_addr);
+  if (tohost) {
+    auto enq_func = [](std::queue<reg_t>* q, uint64_t x) { q->push(x); };
+    std::function<void(reg_t)> fromhost_callback =
+      std::bind(enq_func, &fromhost_queue, std::placeholders::_1);
+
+    command_t cmd(memif, tohost, fromhost_callback);
+    memif.write_uint64(tohost_addr, 0);
+    device_list.handle_command(cmd);
+  }
+}
+
+void tv_spike_t::tick(void)
+{
+  clint->increment(1);
+  device_list.tick();
 }
 
 bool tv_spike_t::exited(int& exit_code)

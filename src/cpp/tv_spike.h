@@ -42,6 +42,7 @@
 #include <spike/sim.h>
 #include <fesvr/memif.h>
 #include <spike/dts.h>
+#include <fesvr/device.h>
 
 /*
  * This class implements a single-CPU in-order RISC-V system, using the Spike
@@ -66,6 +67,8 @@ public:
 
   /* execution */
   void step(void);
+  void step_io(void);
+  void tick(void);
 
   /* riscv-fesvr chunked_memif_t interface */
   size_t chunk_align() { return 8; }
@@ -110,15 +113,20 @@ private:
   mmu_t* debug_mmu; // used for initialization of memory regions
   processor_t *cpu;
   std::vector<processor_t*> procs; // contains the above singleton cpu
+
+  // memory access and MMIO
   memif_t memif;    // used by ELF loader
   std::unique_ptr<rom_device_t> boot_rom; // holds reset vector
   std::unique_ptr<clint_t> clint; // clock interface
   bus_t bus;
 
-  // used for riscv-tests
+  // htif access and devices
   addr_t tohost_addr;
+  bcd_t bcd;
+  device_list_t device_list;
   addr_t fromhost_addr;
-  reg_t  entry;
+  std::queue<reg_t> fromhost_queue;
+  reg_t entry;
 
   // verification API
   bool verbose_verify;
