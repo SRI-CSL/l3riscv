@@ -51,6 +51,8 @@ tv_spike_t::tv_spike_t(const char *isa)
               << " size:0x" << x.second->size() << std::endl;
     bus.add_device(x.first, x.second);
   }
+  clint.reset(new clint_t(procs));
+  bus.add_device(CLINT_BASE, clint.get());
 }
 
 tv_spike_t::~tv_spike_t()

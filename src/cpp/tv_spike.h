@@ -104,6 +104,7 @@ private:
   processor_t *cpu;
   memif_t memif;    // used by ELF loader
   std::unique_ptr<rom_device_t> boot_rom; // holds reset vector
+  std::unique_ptr<clint_t> clint; // clock interface
   bus_t bus;
 
   // used for riscv-tests
