@@ -75,7 +75,7 @@ public:
   size_t chunk_max_size() { return 8; }
   void read_chunk(addr_t taddr, size_t len, void* dst);
   void write_chunk(addr_t taddr, size_t len, const void* src);
-  void clear_chunk(addr_t taddr, size_t len) {}
+  void clear_chunk(addr_t taddr, size_t len);
 
   /* riscv-isa-sim simif_t interface */
 

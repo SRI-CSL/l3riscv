@@ -199,6 +199,15 @@ void tv_spike_t::write_chunk(addr_t taddr, size_t len, const void* src)
   debug_mmu->store_uint64(taddr, data);
 }
 
+void tv_spike_t::clear_chunk(addr_t taddr, size_t len)
+{
+  char zeros[chunk_max_size()];
+  memset(zeros, 0, chunk_max_size());
+
+  for (size_t pos = 0; pos < len; pos += chunk_max_size())
+    write_chunk(taddr + pos, std::min(len - pos, chunk_max_size()), zeros);
+}
+
 void tv_spike_t::step_io(void)
 {
   uint64_t tohost = memif.read_uint64(tohost_addr);
