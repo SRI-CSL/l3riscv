@@ -123,6 +123,7 @@ private:
   // htif access and devices
   addr_t tohost_addr;
   bcd_t bcd;
+  null_device_t nulld;
   device_list_t device_list;
   addr_t fromhost_addr;
   std::queue<reg_t> fromhost_queue;

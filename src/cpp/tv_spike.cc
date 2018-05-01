@@ -57,7 +57,11 @@ tv_spike_t::tv_spike_t(const char *isa)
   clint.reset(new clint_t(procs));
   bus.add_device(CLINT_BASE, clint.get());
 
-  /* HTIF */
+  /* HTIF: devices need to be registered in the same order as Spike, since htif
+   * device identifiers in commands are based on the registration index.  Use a
+   * null-device for now instead of the syscall-proxy.
+   */
+  device_list.register_device(&nulld);
   device_list.register_device(&bcd);
 }
 
