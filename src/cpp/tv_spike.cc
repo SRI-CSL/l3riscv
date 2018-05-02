@@ -49,7 +49,7 @@ tv_spike_t::tv_spike_t(const char *isa)
   mem_regions = std::vector<std::pair<reg_t, mem_t*>>(1, std::make_pair(reg_t(DRAM_BASE), new mem_t(size)));
 
   for (auto& x : mem_regions) {
-    std::cout << "Adding mem device @0x" << std::hex << x.first
+    std::cerr << "Adding mem device @0x" << std::hex << x.first
               << " size:0x" << x.second->size() << std::endl;
     bus.add_device(x.first, x.second);
   }
@@ -88,8 +88,8 @@ reg_t tv_spike_t::init_elf(const char *elf_file)
   if (symbols.count("tohost") && symbols.count("fromhost")) {
     tohost_addr = symbols["tohost"];
     fromhost_addr = symbols["fromhost"];
-    std::cout << "tohost   <- 0x" << std::hex << tohost_addr   << std::endl;
-    std::cout << "fromhost <- 0x" << std::hex << fromhost_addr << std::endl;
+    std::cerr << "tohost   <- 0x" << std::hex << tohost_addr   << std::endl;
+    std::cerr << "fromhost <- 0x" << std::hex << fromhost_addr << std::endl;
   } else {
     std::cerr << "warning: tohost and fromhost symbols not in ELF;"
               << "can't communicate with target" << std::endl;
@@ -141,7 +141,7 @@ void tv_spike_t::reset()
   rom.resize((rom.size() + align - 1) / align * align);
 
   boot_rom.reset(new rom_device_t(rom));
-  std::cout << "Adding rom device @0x" << std::hex << DEFAULT_RSTVEC
+  std::cerr << "Adding rom device @0x" << std::hex << DEFAULT_RSTVEC
             << " size:0x" << boot_rom.get()->contents().size() << std::endl;
   bus.add_device(DEFAULT_RSTVEC, boot_rom.get());
 
