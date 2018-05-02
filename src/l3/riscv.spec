@@ -2505,15 +2505,16 @@ record TLB32_Entry
 
 TLB32_Entry mkTLB32_Entry(asid::asid32, global::bool, vAddr::vaddr32, pAddr::paddr32,
                           pte::SV32_PTE, i::nat, pteAddr::paddr32) =
-{ var ent :: TLB32_Entry
+{ shift             = (SV32_LEVEL_BITS*i) + PAGESIZE_BITS
+; var ent :: TLB32_Entry
 ; ent.asid          <- asid
 ; ent.global        <- global
 ; ent.pte           <- pte
 ; ent.pteAddr       <- pteAddr
-; ent.vAddrMask     <- ((1::vaddr32) << ((SV32_LEVEL_BITS*i) + PAGESIZE_BITS)) - 1
+; ent.vAddrMask     <- ((1::vaddr32) << shift) - 1
 ; ent.vMatchMask    <- (SignExtend('1')::vaddr32) ?? ent.vAddrMask
 ; ent.vAddr         <- vAddr && ent.vMatchMask
-; ent.pAddr         <- (pAddr >> (PAGESIZE_BITS + (SV32_LEVEL_BITS*i))) << (PAGESIZE_BITS + (SV32_LEVEL_BITS*i))
+; ent.pAddr         <- (pAddr >> shift) << shift
 ; ent.age           <- c_cycles(procID)
 ; ent
 }
@@ -2556,6 +2557,12 @@ TLB32_Map addToTLB32(asid::asid32, vAddr::vaddr32, pAddr::paddr32, pte::SV32_PTE
 ; tlb
 }
 
+TLB32_Map writeTLB32(tlb::TLB32_Map, idx::tlbIdx, ent::TLB32_Entry) =
+{ var n_tlb = tlb
+; n_tlb([idx]) <- Some(ent)
+; n_tlb
+}
+
 TLB32_Map flushTLB32(asid::asid32 option, addr::vaddr32 option, curTLB::TLB32_Map) =
 { var tlb = curTLB
 ; for i in 0 .. TLBEntries - 1 do
@@ -2593,20 +2600,19 @@ TR32_Result translate32(vAddr::vaddr32, ac::accessType, priv::Privilege, mxr::bo
 { asid = curAsid32()
 ; match lookupTLB32(asid, vAddr, TLB32)
   { case Some(ent, idx) =>
-    { if   checkPTEPermission(ac, priv, mxr, sum, pteBits(ent.pte.PTE_BITS))
+    { pteBits = pteBits(ent.pte.PTE_BITS)
+    ; if   checkPTEPermission(ac, priv, mxr, sum, pteBits)
       then { mark_log(LOG_ADDRTR, "TLB32 hit!")
-           ; match updatePTEBits(pteBits(ent.pte.PTE_BITS), ac)
+           ; match updatePTEBits(pteBits, ac)
              { case None =>
                   TR32_Address(ent.pAddr || ZeroExtend(vAddr && ent.vAddrMask))
                case Some(pbits) =>
                { if   enable_dirty_update
-                 then { var n_ent = ent
-                      ; var tlb   = TLB32
-                      -- update entry and TLB
+                 then { -- update entry and TLB
+                        var n_ent = ent
                       ; n_ent.pte.PTE_BITS  <- &pbits
-                      ; tlb([idx])          <- Some(n_ent)
-                      ; TLB32               <- tlb
-                      -- update memory
+                      ; TLB32 <- writeTLB32(TLB32, idx, n_ent)
+                      -- update page table
                       ; if   memWriteData(ZeroExtend(n_ent.pteAddr), ZeroExtend(n_ent.&pte), 4)
                         then TR32_Address(n_ent.pAddr || ZeroExtend(vAddr && n_ent.vAddrMask))
                         else { mark_log(LOG_ADDRTR, "Invalid physical address in TLB: " : [n_ent.pteAddr])
@@ -2773,15 +2779,16 @@ record TLB39_Entry
 
 TLB39_Entry mkTLB39_Entry(asid::asid64, global::bool, vAddr::vaddr39, pAddr::paddr39,
                           pte::SV39_PTE, i::nat, pteAddr::paddr39) =
-{ var ent :: TLB39_Entry
+{ shift             = (SV39_LEVEL_BITS*i) + PAGESIZE_BITS
+; var ent :: TLB39_Entry
 ; ent.asid          <- asid
 ; ent.global        <- global
 ; ent.pte           <- pte
 ; ent.pteAddr       <- pteAddr
-; ent.vAddrMask     <- ((1::vaddr39) << ((SV39_LEVEL_BITS*i) + PAGESIZE_BITS)) - 1
+; ent.vAddrMask     <- ((1::vaddr39) << shift) - 1
 ; ent.vMatchMask    <- (SignExtend('1')::vaddr39) ?? ent.vAddrMask
 ; ent.vAddr         <- vAddr && ent.vMatchMask
-; ent.pAddr         <- (pAddr >> (PAGESIZE_BITS + (SV39_LEVEL_BITS*i))) << (PAGESIZE_BITS + (SV39_LEVEL_BITS*i))
+; ent.pAddr         <- (pAddr >> shift) << shift
 ; ent.age           <- c_cycles(procID)
 ; ent
 }
@@ -2824,6 +2831,12 @@ TLB39_Map addToTLB39(asid::asid64, vAddr::vaddr39, pAddr::paddr39, pte::SV39_PTE
 ; tlb
 }
 
+TLB39_Map writeTLB39(tlb::TLB39_Map, idx::tlbIdx, ent::TLB39_Entry) =
+{ var n_tlb = tlb
+; n_tlb([idx]) <- Some(ent)
+; n_tlb
+}
+
 TLB39_Map flushTLB39(asid::asid64 option, addr::vaddr39 option, curTLB::TLB39_Map) =
 { var tlb = curTLB
 ; for i in 0 .. TLBEntries - 1 do
@@ -2861,20 +2874,19 @@ TR39_Result translate39(vAddr::vaddr39, ac::accessType, priv::Privilege, mxr::bo
 { asid = curAsid64()
 ; match lookupTLB39(asid, vAddr, TLB39)
   { case Some(ent, idx) =>
-    { if   checkPTEPermission(ac, priv, mxr, sum, pteBits(ent.pte.PTE_BITS))
+    { pteBits = pteBits(ent.pte.PTE_BITS)
+    ; if   checkPTEPermission(ac, priv, mxr, sum, pteBits)
       then { mark_log(LOG_ADDRTR, "TLB39 hit!")
-           ; match updatePTEBits(pteBits(ent.pte.PTE_BITS), ac)
+           ; match updatePTEBits(pteBits, ac)
              { case None =>
                   TR39_Address(ent.pAddr || ZeroExtend(vAddr && ent.vAddrMask))
                case Some(pbits) =>
                { if   enable_dirty_update
-                 then { var n_ent = ent
-                      ; var tlb   = TLB39
-                      -- update entry and TLB
+                 then { -- update entry and TLB
+                        var n_ent = ent
                       ; n_ent.pte.PTE_BITS  <- &pbits
-                      ; tlb([idx])          <- Some(n_ent)
-                      ; TLB39               <- tlb
-                      -- update memory
+                      ; TLB39 <- writeTLB39(TLB39, idx, n_ent)
+                      -- update page table
                       ; if   memWriteData(ZeroExtend(n_ent.pteAddr), n_ent.&pte, 8)
                         then ()
                         else #INTERNAL_ERROR("Invalid physical address in TLB:" : [n_ent.pteAddr])
