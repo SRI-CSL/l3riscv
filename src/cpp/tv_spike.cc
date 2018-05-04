@@ -37,7 +37,8 @@
 #include <iostream>
 
 tv_spike_t::tv_spike_t(const char *isa)
-  : memif(this), tohost_addr(0), fromhost_addr(0),
+  : memif(this), tohost_addr(0), fromhost_addr(0), entry(-1),
+    has_exited(false), exit_code(0),
     verbose_verify(true), debug_log(true)
 {
   cpu = new processor_t(isa, this, /*hartid*/ 0, /*halted*/ false);
@@ -219,6 +220,15 @@ void tv_spike_t::step_io(void)
     command_t cmd(memif, tohost, fromhost_callback);
     memif.write_uint64(tohost_addr, 0);
     device_list.handle_command(cmd);
+    { /* Special handling of the exit code for riscv-tests, since this is
+       * normally handled by the syscall-proxy device, and we have a
+       * null-device instead.
+       */
+      if (cmd.device() == 0 && cmd.payload() & 1) {
+        has_exited = true;
+        exit_code = cmd.payload() >> 1;
+      }
+    }
   }
 }
 
@@ -228,20 +238,10 @@ void tv_spike_t::tick(void)
   device_list.tick();
 }
 
-bool tv_spike_t::exited(int& exit_code)
+bool tv_spike_t::exited(int& code)
 {
-  // primitive htif to-host/from-host protocol
-  uint64_t cmd = memif.read_uint64(tohost_addr);
-  // using encodings found in:
-  // . fesvr/device.h
-  // . fesvr/syscall.cc:syscall_t::handle_syscall()
-  // . isa-sim/htif.cc:htif_t::exit_code()
-  uint64_t payload = cmd << 16 >> 16;
-  if (payload & 1) { // test pass/fail
-    exit_code = payload >> 1;
-    return true;
-  }
-  return false;
+  if (has_exited) code = exit_code;
+  return has_exited;
 }
 
 bool tv_spike_t::check_pc(uint64_t val)

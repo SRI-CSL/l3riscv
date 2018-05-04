@@ -128,6 +128,8 @@ private:
   addr_t fromhost_addr;
   std::queue<reg_t> fromhost_queue;
   reg_t entry;
+  bool has_exited;
+  int exit_code;
 
   // verification API
   bool verbose_verify;
