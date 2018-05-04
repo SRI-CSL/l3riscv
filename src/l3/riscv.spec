@@ -5658,27 +5658,31 @@ define System > CSRRCI(rd::reg, zimm::reg, csr::imm12) =
 -- SFENCE.VMA
 -----------------------------------
 define System > SFENCE_VMA(rs1::reg, rs2::reg) =
-{ addr = if rs1 == 0 then None else Some(GPR(rs1))
-; asid = if rs2 == 0 then None else Some(GPR(rs2))
-; arch = architecture(MCSR.mstatus.M_SXL)
-; match arch, MCSR.mstatus.M_TVM
-  { case _,     true  => signalException(E_Illegal_Instr)
-    case RV32,  false =>
-    { addr = if IsSome(addr) then Some(ValOf(addr)<31:0>) else None
-    ; asid = if IsSome(asid) then Some(ValOf(asid)<8:0>)  else None
-    ; TLB32 <- flushTLB32(asid, addr, TLB32)
-    }
-    -- Note: given the way this is written, it would be very
-    -- convenient if Sv39, Sv48, Sv57 shared the same TLB, viz. TLB64.
-    case RV64,  false =>
-    { addr = if IsSome(addr) then Some(ValOf(addr)<38:0>) else None
-    ; asid = if IsSome(asid) then Some(ValOf(asid)<15:0>) else None
-    ; TLB39 <- flushTLB39(asid, addr, TLB39)
-    }
-    case RV128, false =>
-    #INTERNAL_ERROR(["sfence.vma: unimplemented architecture " : [arch]::string])
-  }
-}
+-- FIXME: The semantics are unspecified when in M-mode.
+-- For now, treat it the same as S-mode, but this is almost surely incorrect.
+if   curPrivilege == User
+then signalException(E_Illegal_Instr)
+else { addr = if rs1 == 0 then None else Some(GPR(rs1))
+     ; asid = if rs2 == 0 then None else Some(GPR(rs2))
+     ; arch = architecture(MCSR.mstatus.M_SXL)
+     ; match arch, MCSR.mstatus.M_TVM
+       { case _,     true  => signalException(E_Illegal_Instr)
+         case RV32,  false =>
+         { addr = if IsSome(addr) then Some(ValOf(addr)<31:0>) else None
+         ; asid = if IsSome(asid) then Some(ValOf(asid)<8:0>)  else None
+         ; TLB32 <- flushTLB32(asid, addr, TLB32)
+         }
+         -- Note: given the way this is written, it would be very
+         -- convenient if Sv39, Sv48, Sv57 shared the same TLB, viz. TLB64.
+         case RV64,  false =>
+         { addr = if IsSome(addr) then Some(ValOf(addr)<38:0>) else None
+         ; asid = if IsSome(asid) then Some(ValOf(asid)<15:0>) else None
+         ; TLB39 <- flushTLB39(asid, addr, TLB39)
+         }
+         case RV128, false =>
+         #INTERNAL_ERROR(["sfence.vma: unimplemented architecture " : [arch]::string])
+       }
+     }
 
 ---------------------------------------------------------------------------
 -- Compressed Extension Instructions
