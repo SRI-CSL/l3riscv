@@ -56,6 +56,7 @@ int main(int argc, char **argv)
   if (argc < 2) print_usage(argv[0]);
 
   tv_spike_t s("RV64IMAFDC");
+  s.dtb_in_rom(true);
   s.init_elf(argv[1]);
   exit(run(&s));
 }

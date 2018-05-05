@@ -39,7 +39,7 @@
 tv_spike_t::tv_spike_t(const char *isa)
   : memif(this), tohost_addr(0), fromhost_addr(0), entry(-1),
     has_exited(false), exit_code(0),
-    verbose_verify(true), debug_log(true)
+    verbose_verify(true), insert_dts(false), debug_log(true)
 {
   cpu = new processor_t(isa, this, /*hartid*/ 0, /*halted*/ false);
   procs = std::vector<processor_t*>(1, cpu);
@@ -80,6 +80,11 @@ int tv_spike_t::is_dirty_enabled()
 int tv_spike_t::is_misaligned_enabled()
 {
   return cpu->get_mmu()->is_misaligned_enabled();
+}
+
+void tv_spike_t::dtb_in_rom(bool enable)
+{
+  insert_dts = enable;
 }
 
 reg_t tv_spike_t::init_elf(const char *elf_file)
@@ -135,9 +140,12 @@ void tv_spike_t::reset()
 
   std::vector<char> rom((char*)reset_vec, (char*)reset_vec + sizeof(reset_vec));
 
-  /* Imitate spike. */
-  std::string dtb = get_dtb();
-  rom.insert(rom.end(), dtb.begin(), dtb.end());
+  if (insert_dts) {
+    /* Imitate the spike platform. */
+    std::string dtb = get_dtb();
+    rom.insert(rom.end(), dtb.begin(), dtb.end());
+    std::cerr << "Inserted platform dtb into rom." << std::endl;
+  }
   const int align = 0x1000;
   rom.resize((rom.size() + align - 1) / align * align);
 

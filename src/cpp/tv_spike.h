@@ -107,6 +107,7 @@ public:
   static const size_t CPU_HZ = 1000000000; // 1GHz CPU
   std::string get_dts(void);
   std::string get_dtb(void);
+  void dtb_in_rom(bool enable);
 
 private:
   std::vector<std::pair<reg_t, mem_t*>> mem_regions;
@@ -133,6 +134,7 @@ private:
 
   // verification API
   bool verbose_verify;
+  bool insert_dts;
 
   // miscellaneous
   bool debug_log;
