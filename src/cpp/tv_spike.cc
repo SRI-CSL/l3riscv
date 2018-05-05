@@ -238,12 +238,12 @@ void tv_spike_t::step_io(void)
       }
     }
   }
+  device_list.tick();
 }
 
-void tv_spike_t::tick(void)
+void tv_spike_t::tick(reg_t inc)
 {
-  clint->increment(1);
-  device_list.tick();
+  clint->increment(inc);
 }
 
 bool tv_spike_t::exited(int& code)

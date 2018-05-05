@@ -34,12 +34,17 @@
 
 int run(tv_spike_t *tv)
 {
+  int insns = 0;
   int code;
   tv->reset();
   while(!tv->exited(code)) {
-    tv->step_io();
     tv->step();
-    tv->tick();
+    tv->step_io();
+
+    if (++insns == tv->INSNS_PER_RTC_TICK) {
+      tv->tick(1);
+      insns = 0;
+    }
   }
   fprintf(stderr, "Exited with code %d.\n", code);
   return code;

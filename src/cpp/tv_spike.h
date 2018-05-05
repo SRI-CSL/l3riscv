@@ -68,7 +68,7 @@ public:
   /* execution */
   void step(void);
   void step_io(void);
-  void tick(void);
+  void tick(reg_t inc);
 
   /* riscv-fesvr chunked_memif_t interface */
   size_t chunk_align() { return 8; }
