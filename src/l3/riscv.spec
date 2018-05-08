@@ -5977,17 +5977,6 @@ define IllegalInstruction =
 define UnknownInstruction =
     signalException(E_Illegal_Instr)
 
------------------------------------
--- Internal pseudo-instructions
------------------------------------
-
--- The argument is the value from the PC.
-
-define Internal > FETCH_EXCEPTION(e::ExceptionType, addr::regType) =
-{ signalAddressException(e, [addr])
-; recordFetchException()
-}
-
 define Run
 
 --------------------------------------------------
@@ -5995,7 +5984,7 @@ define Run
 --------------------------------------------------
 
 construct FetchResult
-{ F_Error   :: instruction
+{ F_Error   :: ExceptionType * regType
 , F_RVC     :: half
 , F_Base    :: word
 }
@@ -6005,7 +5994,7 @@ bool isRVC(h::half) = not (h<1> and h<0>)
 FetchResult Fetch() =
 { vPC  = PC
 ; if   (not haveRVC() and vPC<1:0> != 0) or (haveRVC() and vPC<0>)
-  then F_Error(Internal(FETCH_EXCEPTION(E_Fetch_Addr_Align, vPC)))
+  then F_Error(E_Fetch_Addr_Align, vPC)
   else match translateAddr(vPC, Execute, Instruction)
        { case TR_Address(pPClo) =>
            match memReadInstGranule(pPClo)
@@ -6022,16 +6011,16 @@ FetchResult Fetch() =
                                               ; recordFetch(inst)
                                               ; F_Base(inst)
                                               }
-                            case None      => F_Error(Internal(FETCH_EXCEPTION(E_Fetch_Access_Fault, vPChi)))
+                            case None      => F_Error(E_Fetch_Access_Fault, vPChi)
                           }
 
-                        case TR_Failure(e) => F_Error(Internal(FETCH_EXCEPTION(e, vPChi)))
+                        case TR_Failure(e) => F_Error(e, vPChi)
                       }
                     }
-             case None => F_Error(Internal(FETCH_EXCEPTION(E_Fetch_Access_Fault, vPC)))
+             case None => F_Error(E_Fetch_Access_Fault, vPC)
            }
 
-         case TR_Failure(e) => F_Error(Internal(FETCH_EXCEPTION(e, vPC)))
+         case TR_Failure(e) => F_Error(e, vPC)
        }
 }
 
@@ -6765,8 +6754,6 @@ string instructionToString(i::instruction) =
 
      case IllegalInstruction                => pN0type("illegal")
      case UnknownInstruction                => pN0type("unknown")
-
-     case Internal(FETCH_EXCEPTION(e, _))   => pN0type("FETCH_EXCEPTION " : [e])
    }
 
 
@@ -7000,8 +6987,6 @@ word Encode(i::instruction) =
 
      case IllegalInstruction                => 0
      case UnknownInstruction                => 0
-
-     case Internal(FETCH_EXCEPTION(_))      => 0
    }
 
 ---------------------------------------------------------------------------
@@ -7064,9 +7049,9 @@ unit Next =
                  ; mark_log(LOG_INSN, log_instruction(ZeroExtend(h), inst))
                  ; Run(inst)
                  }
-        case F_Error(inst) =>
-                 { mark_log(LOG_INSN, log_instruction([0::word], inst))
-                 ; Run(inst)
+        case F_Error(e, addr) =>
+                 { signalAddressException(e, [addr])
+                 ; recordFetchException()
                  }
       }
 
