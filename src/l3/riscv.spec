@@ -618,6 +618,8 @@ record MachineCSR
 
   mtime         :: regType         -- this is memory-mapped and not a
                                    -- CSR, but put here for now
+
+  tselect       :: regType      -- trigger/debug module
 }
 
 -- Supervisor-Level CSRs
@@ -1301,6 +1303,9 @@ bool is_CSR_defined(csr::csreg, p::Privilege) =
     -- supervisor mode: address translation
     case 0x180 => p == Machine or p == Supervisor  -- satp
 
+    -- disabled debug/trigger module
+    case 0x7a0 => p == Machine
+
     case _     => false
   }
 
@@ -1463,6 +1468,9 @@ component CSRMap(csr::csreg) :: regType
         -- machine protection and translation
         -- TODO
 
+        -- disabled debug/trigger module
+        case 0x7a0, _       => ~c_MCSR(procID).tselect
+
         case _              => #UNDEFINED("unexpected CSR read at " : [csr])
       }
 
@@ -1559,6 +1567,9 @@ component CSRMap(csr::csreg) :: regType
 
         -- machine counter-enables
         -- TODO
+
+        -- disabled debug/trigger module
+        case 0x7a0, _       => c_MCSR(procID).tselect   <- value
 
         case _, _           => #INTERNAL_ERROR("unexpected CSR write to " : [csr])
       }
