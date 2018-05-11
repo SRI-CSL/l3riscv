@@ -30,9 +30,10 @@
  * SUCH DAMAGE.
  */
 
+#include <fesvr/option_parser.h>
 #include "tv_spike.h"
 
-int run(tv_spike_t *tv)
+static int run(tv_spike_t *tv)
 {
   int insns = 0;
   int code;
@@ -50,18 +51,39 @@ int run(tv_spike_t *tv)
   return code;
 }
 
-void print_usage(char *prog)
+static void run_elf(const char *isa, const char *file)
 {
-  fprintf(stderr, "Usage: %s elf_file\n", prog);
-  exit(1);
+  tv_spike_t s(isa);
+  s.dtb_in_rom(true);
+  s.init_elf(file);
+  exit(run(&s));
+}
+
+static void help()
+{
+  fprintf(stderr, "Usage: mini_spike [--isa=<isa>] [--dump-dts] <elf_file>\n");
+  exit(0);
+}
+
+static void print_dts(const char *isa)
+{
+  tv_spike_t s(isa);
+  fprintf(stdout, "%s", s.get_dts().c_str());
 }
 
 int main(int argc, char **argv)
 {
-  if (argc < 2) print_usage(argv[0]);
+  bool dump_dts = false;
+  const char *isa = "RV64IMAFDC";
+  option_parser_t parser;
+  parser.help(&help);
 
-  tv_spike_t s("RV64IMAFDC");
-  s.dtb_in_rom(true);
-  s.init_elf(argv[1]);
-  exit(run(&s));
+  parser.option('h', 0, 0, [&](const char* s){help();});
+  parser.option(0, "dump-dts", 0, [&](const char *s){dump_dts = true;});
+  parser.option(0, "isa", 1, [&](const char* s){isa = s;});
+  const char* const* file = parser.parse(argv);
+
+  if (dump_dts) print_dts(isa);
+  else if (file && file[0] && file[0][0]) run_elf(isa, file[0]);
+  else help();
 }
