@@ -44,6 +44,7 @@ POLYC = polyc
 
 # Spike-based Tandem Verification library
 #######################################
+ENABLE_TVSPIKE  = 0
 CSRCDIR=src/cpp
 TVSPIKE_SRCBASE = tv_spike_intf.h tv_spike_intf.c tv_spike.cc tv_spike.h
 TVSPIKE_SRC     = $(patsubst %, $(CSRCDIR)/%, $(TVSPIKE_SRCBASE))
@@ -54,12 +55,19 @@ TVSPIKE_LIBS    = -L $(RISCV)/lib -lfesvr -lriscv -Wl,-rpath=$(RISCV)/lib
 # make targets
 #######################################
 
-all: l3riscv.poly tv_spike.so ilspec holspec
+all: l3riscv.poly ilspec holspec
+
+ifeq ($(ENABLE_TVSPIKE),1)
+all: tv_spike.so
+endif
 
 ${SMLSRCDIR}/riscv.sig ${SMLSRCDIR}/riscv.sml: ${L3SRC}
 	echo 'SMLExport.spec ("${L3SRC}", "${SMLSRCDIR}/riscv intinf")' | l3
 
-l3riscv.poly: ${SMLLIB} ${SMLSRC} Makefile tv_spike.so
+ifeq ($(ENABLE_TVSPIKE),1)
+l3riscv.poly: tv_spike.so
+endif
+l3riscv.poly: ${SMLLIB} ${SMLSRC} Makefile
 	$(POLYC) -o $@ ${SMLSRCDIR}/poly_run.sml
 
 # l3riscv.mlton: ${SMLLIB} ${SMLSRC} Makefile
