@@ -635,7 +635,7 @@ fun processOption (s: string) =
     in  loop []
     end
 
-fun main_wrapped () =
+fun model_main () =
     case getArguments () of
         ["--help"] => printUsage ()
       | l =>
@@ -679,7 +679,3 @@ fun main_wrapped () =
                    else doElf (IntInf.toInt c) (List.hd l) d
                  )
         end
-
-fun main () =
-    main_wrapped ()
-    handle e => print ("Exception error:" ^ (exnMessage e) ^ "\n")

@@ -18,7 +18,7 @@ SMLLIB=$(patsubst %, $(SMLLIBDIR)/%, $(SMLLIBSRC))
 # generating the sml source list
 #######################################
 SMLSRCBASE+=riscv.sig riscv.sml
-SMLSRCBASE+=model.sml mlton_run.sml poly_run.sml oracle.sig poly_spike.sml
+SMLSRCBASE+=model.sml mlton_run.sml poly_run.sml oracle.sig poly_spike.sml poly_model.sml
 SMLSRCBASE+=l3riscv.mlb
 MLBFILE=l3riscv.mlb
 SMLSRC=$(patsubst %, $(SMLSRCDIR)/%, $(SMLSRCBASE))
@@ -44,6 +44,9 @@ POLYC = polyc
 
 # Spike-based Tandem Verification library
 #######################################
+# Set ENABLE_TVSPIKE to 1 to enable verification against Spike.
+# Ensure that you have the RISCV environment variable correctly
+# set as when working with riscv-tools.
 ENABLE_TVSPIKE  = 0
 CSRCDIR=src/cpp
 TVSPIKE_SRCBASE = tv_spike_intf.h tv_spike_intf.c tv_spike.cc tv_spike.h
