@@ -17,9 +17,9 @@
 --
 -- See the LICENSE file for details.
 --
--- For syntax highlighting, treat this file as Haskell source.
 ---------------------------------------------------------------------------
 
+-- For syntax highlighting, treat this file as Haskell source.
 
 ---------------------------------------------------------------------------
 -- Basic types
@@ -578,6 +578,14 @@ register mcounteren :: word  -- Machine Counter-Enable
 ,     0 : M_CY      -- cycles
 }
 
+mcounteren legalize_mcounteren(mc::mcounteren, v::word) =
+{ var m  = mc
+; v      = mcounteren(v)
+; m.M_IR <- v.M_IR
+; m.M_TM <- v.M_TM
+; m.M_CY <- v.M_CY
+; m
+}
 
 register mcause :: regType      -- Trap Cause
 {    63 : M_Intr
@@ -823,6 +831,14 @@ regType legalize_satp_32(ctx::regType, v::word, a::arch_xlen) =
   }
 }
 
+mcounteren legalize_scounteren(sc::mcounteren, v::word) =
+{ var s  = sc
+; v      = mcounteren(v)
+; s.M_IR <- v.M_IR
+; s.M_TM <- v.M_TM
+; s.M_CY <- v.M_CY
+; s
+}
 
 record SupervisorCSR
 {                               -- trap setup
@@ -1309,7 +1325,31 @@ bool is_CSR_defined(csr::csreg, p::Privilege) =
     case _     => false
   }
 
-bool check_TVM_SATP(csr::imm12, p::Privilege, a::accessType) =
+bool check_Counteren(csr::csreg, p::Privilege) =
+  match csr, p
+  { case 0xC00, Supervisor => MCSR.mcounteren.M_CY
+    case 0xC01, Supervisor => MCSR.mcounteren.M_TM
+    case 0xC02, Supervisor => MCSR.mcounteren.M_IR
+    case 0xC80, Supervisor => MCSR.mcounteren.M_CY and in32BitMode()
+    case 0xC81, Supervisor => MCSR.mcounteren.M_TM and in32BitMode()
+    case 0xC82, Supervisor => MCSR.mcounteren.M_IR and in32BitMode()
+
+    case 0xC00, User       => SCSR.scounteren.M_CY
+    case 0xC01, User       => SCSR.scounteren.M_TM
+    case 0xC02, User       => SCSR.scounteren.M_IR
+    case 0xC80, User       => SCSR.scounteren.M_CY and in32BitMode()
+    case 0xC81, User       => SCSR.scounteren.M_TM and in32BitMode()
+    case 0xC82, User       => SCSR.scounteren.M_IR and in32BitMode()
+
+    -- no HPM registers for now
+    case _, _              => { if ((0xC03 <= csr) and (csr <= 0xC1F))
+                                or ((0xC83 <= csr) and (csr <= 0xC9F))
+                                then false
+                                else true
+                              }
+  }
+
+bool check_TVM_SATP(csr::csreg, p::Privilege, a::accessType) =
     not (MCSR.mstatus.M_TVM and p == Supervisor and csr == 0x180)
 
 -- CSR conversion helpers
@@ -1520,6 +1560,7 @@ component CSRMap(csr::csreg) :: regType
         case 0x104, true    => c_MCSR(procID).mie       <- legalize_sie_32(c_MCSR(procID).mie, c_MCSR(procID).mideleg, value<31:0>)
         case 0x105, false   => c_SCSR(procID).stvec     <- legalize_tvec_64(c_SCSR(procID).stvec, value)
         case 0x105, true    => c_SCSR(procID).stvec     <- legalize_tvec_32(c_SCSR(procID).stvec, value<31:0>)
+        case 0x106, _       => c_SCSR(procID).scounteren <- legalize_scounteren(c_SCSR(procID).scounteren, value<31:0>)
 
         -- supervisor trap handling
         case 0x140, _       => c_SCSR(procID).sscratch  <- value
@@ -1550,6 +1591,7 @@ component CSRMap(csr::csreg) :: regType
         case 0x304, true    => c_MCSR(procID).mie       <- legalize_mie_32(c_MCSR(procID).mie, value<31:0>)
         case 0x305, false   => c_MCSR(procID).mtvec     <- legalize_tvec_64(c_MCSR(procID).mtvec, value)
         case 0x305, true    => c_MCSR(procID).mtvec     <- legalize_tvec_32(c_MCSR(procID).mtvec, value<31:0>)
+        case 0x306, _       => c_MCSR(procID).mcounteren <- legalize_mcounteren(c_MCSR(procID).mcounteren, value<31:0>)
 
         -- machine trap handling
         case 0x340, _       => c_MCSR(procID).mscratch  <- value
@@ -5592,6 +5634,7 @@ bool checkCSR(csr::imm12, a::accessType) =
     is_CSR_defined(csr, curPrivilege)
     and check_CSR_access(csrRW(csr), csrPR(csr), curPrivilege, a)
     and check_TVM_SATP(csr, curPrivilege, a)
+    and check_Counteren(csr, curPrivilege)
 
 -----------------------------------
 -- CSRRW  rd, rs1, imm
@@ -7151,6 +7194,8 @@ unit initMachine(hartid::id) =
 ; MCSR.mhartid      <- ZeroExtend(hartid)
   -- Initialize mtvec to lower address (other option is 0xF...FFE00)
 ; MCSR.&mtvec       <- ZeroExtend(0x100`16)
+
+; MCSR.mcounteren   <- mcounteren(0)
 
   -- TODO: other CSRs
 }
