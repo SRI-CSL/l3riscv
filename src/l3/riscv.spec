@@ -624,6 +624,16 @@ record MachineCSR
   mcycle        :: regType      -- counters
   minstret      :: regType
 
+  -- minstret is an architectural register, and can be written to.
+  -- The spec says that minstret increments on instruction retires
+  -- need to occur before any explicit writes to instret.  However, in
+  -- our simulation loop, we need to execute an instruction to find
+  -- out whether it retired, and hence can only increment instret
+  -- after execution.  To avoid doing this in the case minstret was
+  -- explicitly written to, we track writes to it in a separate
+  -- model-internal register.
+  minstret_written :: bool
+
   mtime         :: regType         -- this is memory-mapped and not a
                                    -- CSR, but put here for now
 
@@ -1053,8 +1063,7 @@ type RegFile    = reg  -> regType
 declare
 { clock         :: regType                      -- global clock and counters
 
-  c_instret     :: id -> regType                -- per-core counters
-  c_cycles      :: id -> regType
+  c_cycles      :: id -> regType                -- per-core counters, used in TLB
 
   c_gpr         :: id -> RegFile                -- general purpose registers
   c_fpr         :: id -> RegFile                -- floating-point registers
@@ -1463,7 +1472,7 @@ component CSRMap(csr::csreg) :: regType
         case 0x104, true    => ZeroExtend(ipe_to_32(&lower_mie(c_MCSR(procID).mie, c_MCSR(procID).mideleg)))
         case 0x105, false   => c_SCSR(procID).&stvec
         case 0x105, true    => ZeroExtend(tvec_to_32(c_SCSR(procID).&stvec))
-        case 0x106, _       => ZeroExtend(c_SCSR(procID).&scounteren) -- TODO: check extension
+        case 0x106, _       => ZeroExtend(c_SCSR(procID).&scounteren)
 
         -- supervisor trap handling
         case 0x140, _       => c_SCSR(procID).sscratch
@@ -1602,10 +1611,19 @@ component CSRMap(csr::csreg) :: regType
         case 0x344, false   => c_MCSR(procID).mip       <- legalize_mip_64(c_MCSR(procID).mip, value)
         case 0x344, true    => c_MCSR(procID).mip       <- legalize_mip_32(c_MCSR(procID).mip, value<31:0>)
 
+        -- machine counters/timers
+        case 0xC00, false   => c_MCSR(procID).mcycle    <- value
+        case 0xC00, true    => c_MCSR(procID).mcycle    <- ZeroExtend(value<31:0>) -- FIXME: check extension
+        -- FIXME: check if mtime is writable
+        case 0xC02, false   => { c_MCSR(procID).minstret         <- value
+                               ; c_MCSR(procID).minstret_written <- true
+                               }
+        case 0xC02, true    => { c_MCSR(procID).minstret         <- ZeroExtend(value<31:0>) -- FIXME: check extension
+                               ; c_MCSR(procID).minstret_written <- true
+                               }
+
         -- machine protection and translation
         -- TODO
-
-        -- machine counters/timers are MRO
 
         -- machine counter-enables
         -- TODO
@@ -7037,7 +7055,7 @@ word Encode(i::instruction) =
 ---------------------------------------------------------------------------
 
 string log_instruction(w::word, inst::instruction) =
-    "instr " : [procID] : " " : [[c_instret(procID)]::nat] :
+    "instr " : [procID] : " " : [[c_MCSR(procID).minstret]::nat] :
     " 0x" : hex64(PC) : " : " : hex32(w) : "   " : instructionToString(inst)
 
 nat exitCode() =
@@ -7055,7 +7073,10 @@ unit tickClock() =
 }
 
 unit incrInstret() =
-    c_instret(procID) <- c_instret(procID) + 1
+{ if   MCSR.minstret_written
+  then MCSR.minstret_written <- false             -- just reset the tracker state
+  else MCSR.minstret         <- MCSR.minstret + 1
+}
 
 unit checkTimers() =
 { ()
@@ -7196,6 +7217,9 @@ unit initMachine(hartid::id) =
 ; MCSR.&mtvec       <- ZeroExtend(0x100`16)
 
 ; MCSR.mcounteren   <- mcounteren(0)
+
+; MCSR.minstret         <- 0
+; MCSR.minstret_written <- false
 
   -- TODO: other CSRs
 }
