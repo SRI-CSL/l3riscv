@@ -1708,6 +1708,9 @@ string csrName(csr::csreg) =
       case 0xB82  => "minstreth"
       -- TODO: other hpm counters and events
 
+      -- trigger/debug
+      case 0x7a0  => "tselect"
+
       case _      => "UNKNOWN"
     }
 
