@@ -1592,6 +1592,8 @@ component CSRMap(csr::csreg) :: regType
         --  these assignments are done with machine-level privilege.
         case 0x300, false   => c_MCSR(procID).mstatus   <- legalize_mstatus_64(c_MCSR(procID).mstatus, value)
         case 0x300, true    => c_MCSR(procID).mstatus   <- legalize_mstatus_32(c_MCSR(procID).mstatus, value<31:0>)
+        case 0x301, false   => c_MCSR(procID).misa      <- legalize_misa_64(c_MCSR(procID).misa, value)
+        case 0x301, true    => c_MCSR(procID).misa      <- legalize_misa_32(c_MCSR(procID).misa, value<31:0>)
         case 0x302, false   => c_MCSR(procID).medeleg   <- legalize_medeleg_64(c_MCSR(procID).medeleg, value)
         case 0x302, true    => c_MCSR(procID).medeleg   <- legalize_medeleg_32(c_MCSR(procID).medeleg, value<31:0>)
         case 0x303, false   => c_MCSR(procID).mideleg   <- legalize_mideleg_64(c_MCSR(procID).mideleg, value)
