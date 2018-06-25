@@ -2132,31 +2132,34 @@ InterruptType option findPendingInterrupt(ip::mip) =
   }}}}}
 }
 
+-- This assumes 'S' mode and no 'N' extension.  It will need
+-- revision for other configurations (e.g. M/U).
 (InterruptType * Privilege) option curInterrupt() =
-{ e_mip = MCSR.&mip && MCSR.&mie
-; if   e_mip == 0 or not MCSR.mstatus.M_MIE then None -- fast path
+{ en_mip = MCSR.&mip && MCSR.&mie  -- pending interrupts that are enabled
+; if   en_mip == 0 then None -- fast path
   else {
-  -- This assumes 'S' mode and no 'N' extension.  It will need
-  -- revision for other configurations (e.g. M/U).
-    m_ip = e_mip && ~MCSR.&mideleg
-  ; s_ip = e_mip &&  MCSR.&mideleg
+    -- check implicit enabling when in lower privileges
+    eff_mie = curPrivilege != Machine or (curPrivilege == Machine and MCSR.mstatus.M_MIE)
+  ; eff_sie = curPrivilege == User or (curPrivilege == Supervisor and MCSR.mstatus.M_SIE)
+  ; -- handle delegation
+    eff_mip = en_mip && ~MCSR.&mideleg  -- retained at M-mode
+  ; eff_sip = en_mip &&  MCSR.&mideleg  -- delegated to S-mode
 
   -- dispatch in order of decreasing privilege, while ensuring that
   -- the resulting privilege level is not reduced; i.e. delegated
   -- interrupts to lower privileges are effectively masked until
   -- control returns to them.
-  ; if      m_ip != 0 and MCSR.mstatus.M_MIE
-    then    match findPendingInterrupt(mip(m_ip))
+  ; if   eff_mie and eff_mip != 0
+    then match findPendingInterrupt(mip(eff_mip))
          { case Some(i) => Some(i, Machine)
            case None    => None
          }
-    else if     (s_ip != 0 and MCSR.mstatus.M_SIE)
-            and (curPrivilege == Supervisor or curPrivilege == User)
-    then    match findPendingInterrupt(mip(s_ip))
+    else if eff_sie and eff_sip != 0
+    then match findPendingInterrupt(mip(eff_sip))
          { case Some(i) => Some(i, Supervisor)
            case None    => None
          }
-    else    None
+    else None
   }
 }
 
