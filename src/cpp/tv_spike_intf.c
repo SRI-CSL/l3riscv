@@ -73,7 +73,7 @@ void tv_reset(tv_spike_t* tvs)
 void tv_step(tv_spike_t* tvs)
 {
   fprintf(stderr, "%s()\n", __func__);
-  tvs->step();
+  tvs->step(1);
 }
 
 int tv_is_done(tv_spike_t* tvs)

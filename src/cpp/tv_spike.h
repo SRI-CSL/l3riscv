@@ -66,7 +66,7 @@ public:
   int is_misaligned_enabled();
 
   /* execution */
-  void step(void);
+  void step(size_t steps);
   void step_io(void);
   void tick(reg_t inc);
 

@@ -157,9 +157,10 @@ void tv_spike_t::reset()
   cpu->set_debug(debug_log);
 }
 
-void tv_spike_t::step(void)
+void tv_spike_t::step(size_t steps)
 {
-  cpu->step(1);
+  for (size_t i = 0; i < steps; i++)
+    cpu->step(1);
 }
 
 char* tv_spike_t::addr_to_mem(reg_t addr)
@@ -219,6 +220,7 @@ void tv_spike_t::clear_chunk(addr_t taddr, size_t len)
 
 void tv_spike_t::step_io(void)
 {
+  cpu->yield_load_reservation();
   uint64_t tohost = memif.read_uint64(tohost_addr);
   if (tohost) {
     auto enq_func = [](std::queue<reg_t>* q, uint64_t x) { q->push(x); };

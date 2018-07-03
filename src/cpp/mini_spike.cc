@@ -36,17 +36,12 @@
 
 static int run(tv_spike_t *tv)
 {
-  int insns = 0;
   int code;
   tv->reset();
-  while(!tv->exited(code)) {
-    tv->step();
+  while (!tv->exited(code)) {
+    tv->step(tv->INSNS_PER_RTC_TICK);
+    tv->tick(1);
     tv->step_io();
-
-    if (++insns == tv->INSNS_PER_RTC_TICK) {
-      tv->tick(1);
-      insns = 0;
-    }
   }
   fprintf(stderr, "Exited with code %d.\n", code);
   return code;
@@ -62,7 +57,7 @@ static void run_elf(const char *isa, const char *file)
 
 static void help()
 {
-  fprintf(stderr, "Usage: mini_spike [--isa=<isa>] [--dump-dts] [--dump-dtb] [--show-isa] <elf_file>\n");
+  fprintf(stderr, "Usage: mini_spike [--isa=<isa>] [--dump-dts] [--dump-dtb] [--show-config] <elf_file>\n");
   exit(0);
 }
 
@@ -79,16 +74,19 @@ static void print_dtb(const char *isa)
   write(1, dtb.c_str(), dtb.length());
 }
 
-static void print_isa(const char *isa)
+static void print_cfg(const char *isa)
 {
-  fprintf(stdout, "%s\n", isa);
+  tv_spike_t s(isa);
+  fprintf(stdout, "isa: %s\n", isa);
+  fprintf(stdout, "\t--enable-dirty: %s\n", s.is_dirty_enabled() ? "on" : "off");
+  fprintf(stdout, "\t--enable-misaligned: %s\n", s.is_misaligned_enabled() ? "on" : "off");
 }
 
 int main(int argc, char **argv)
 {
   bool dump_dts = false;
   bool dump_dtb = false;
-  bool show_isa = false;
+  bool show_cfg = false;
 
   const char *isa = "RV64IMAFDC";
   option_parser_t parser;
@@ -97,13 +95,13 @@ int main(int argc, char **argv)
   parser.option('h', 0, 0, [&](const char* s){help();});
   parser.option(0, "dump-dts", 0, [&](const char *s){dump_dts = true;});
   parser.option(0, "dump-dtb", 0, [&](const char *s){dump_dtb = true;});
-  parser.option(0, "show-isa", 0, [&](const char *s){show_isa = true;});
+  parser.option(0, "show-config", 0, [&](const char *s){show_cfg = true;});
   parser.option(0, "isa", 1, [&](const char* s){isa = s;});
   const char* const* file = parser.parse(argv);
 
   if      (dump_dts) print_dts(isa);
   else if (dump_dtb) print_dtb(isa);
-  else if (show_isa) print_isa(isa);
+  else if (show_cfg) print_cfg(isa);
   else if (file && file[0] && file[0][0])
     run_elf(isa, file[0]);
   else help();
