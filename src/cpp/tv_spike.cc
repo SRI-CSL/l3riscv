@@ -254,6 +254,13 @@ bool tv_spike_t::exited(int& code)
   return has_exited;
 }
 
+bool tv_spike_t::set_verbose(bool enable)
+{
+  bool prev = verbose_verify;
+  verbose_verify = enable;
+  return prev;
+}
+
 bool tv_spike_t::check_pc(uint64_t val)
 {
   uint64_t model_val = cpu->get_state()->pc;

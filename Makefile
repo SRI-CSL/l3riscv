@@ -49,7 +49,7 @@ POLYC = polyc
 # set as when working with riscv-tools.
 ENABLE_TVSPIKE  = 0
 CSRCDIR=src/cpp
-TVSPIKE_SRCBASE = tv_spike_intf.h tv_spike_intf.c tv_spike.cc tv_spike.h
+TVSPIKE_SRCBASE = tv_spike_intf.h tv_spike_intf.c tv_spike.h tv_spike.cc
 TVSPIKE_SRC     = $(patsubst %, $(CSRCDIR)/%, $(TVSPIKE_SRCBASE))
 TVSPIKE_INC     = -I $(CSRCDIR)
 TVSPIKE_INC    += -I $(RISCV)/include
@@ -61,7 +61,7 @@ TVSPIKE_LIBS    = -L $(RISCV)/lib -lfesvr -lriscv -Wl,-rpath=$(RISCV)/lib
 all: l3riscv.poly ilspec holspec
 
 ifeq ($(ENABLE_TVSPIKE),1)
-all: tv_spike.so
+all: tv_spike.so mini_spike
 endif
 
 ${SMLSRCDIR}/riscv.sig ${SMLSRCDIR}/riscv.sml: ${L3SRC}
@@ -80,6 +80,9 @@ l3riscv.poly: ${SMLLIB} ${SMLSRC} Makefile
 
 tv_spike.so: ${TVSPIKE_SRC} Makefile
 	g++ -Wall -o $@ -shared -fPIC ${TVSPIKE_INC} ${TVSPIKE_LIBS} ${TVSPIKE_SRC}
+
+mini_spike: ${CSRCDIR}/mini_spike.cc ${TVSPIKE_SRC} Makefile
+	g++ -Wall ${TVSPIKE_INC} -o $@ $< ${TVSPIKE_SRC} ${TVSPIKE_LIBS}
 
 #libl3riscv.so: ${SMLLIB} ${SMLSRC} Makefile
 #	$(MLTON) $(MLTON_OPTS) \
