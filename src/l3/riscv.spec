@@ -3079,8 +3079,25 @@ TR_Result translateAddr(vAddr::regType, ac::accessType, rt::readType) =
 -- Load Reservation
 ---------------------------------------------------------------------------
 
-bool matchLoadReservation(vAddr::vAddr) =
-    IsSome(ReserveLoad) and ValOf(ReserveLoad) == vAddr
+unit makeReservation(vAddr::vAddr) =
+{ mark_log(LOG_REG, "reservation <- " : [vAddr])
+; ReserveLoad <- Some(vAddr)
+}
+
+bool matchReservation(vAddr::vAddr) =
+  match ReserveLoad
+  { case None    => { mark_log(LOG_REG, "reservation: none, key=" : [vAddr])
+                    ; false
+                    }
+    case Some(r) => { mark_log(LOG_REG, "reservation: " : [r] : ", key=" : [vAddr])
+                    ; r == vAddr
+                    }
+  }
+
+unit cancelReservation() =
+{ mark_log(LOG_REG, "reservation <- cancelled")
+; ReserveLoad <- None
+}
 
 ---------------------------------------------------------------------------
 -- Control Flow
@@ -3956,7 +3973,7 @@ define AMO > LR_W(aq::amo, rl::amo, rd::reg, rs1::reg) =
               { case TR_Address(pAddr) =>
                   match memReadData(pAddr, 4)
                   { case Some(v) => { writeRD(rd, SignExtend(v<31:0>))
-                                    ; ReserveLoad  <- Some(vAddr)
+                                    ; makeReservation(vAddr)
                                     }
                     case None    => signalAddressException(E_Load_Access_Fault, vAddr)
                   }
@@ -3979,7 +3996,7 @@ define AMO > LR_D(aq::amo, rl::amo, rd::reg, rs1::reg) =
               { case TR_Address(pAddr) =>
                   match memReadData(pAddr, 8)
                   { case Some(v) => { writeRD(rd, v)
-                                    ; ReserveLoad <- Some(vAddr)
+                                    ; makeReservation(vAddr)
                                     }
                     case None    => signalAddressException(E_Load_Access_Fault, vAddr)
                   }
@@ -3998,14 +4015,14 @@ define AMO > SC_W(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
   else { vAddr = GPR(rs1)
        ; if   vAddr<1:0> != 0
          then signalAddressException(E_SAMO_Addr_Align, vAddr)
-         else if not matchLoadReservation(vAddr)
+         else if not matchReservation(vAddr)
          then writeRD(rd, 1)
          else match translateAddr(vAddr, Write, Data)
               { case TR_Address(pAddr) => { data = GPR(rs2)
                                           ; if   memWriteData(pAddr, data, 4)
                                             then { recordStore(vAddr, data, WORD)
                                                  ; writeRD(rd, 0)
-                                                 ; ReserveLoad  <- None
+                                                 ; cancelReservation()
                                                  }
                                             else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                           }
@@ -4023,14 +4040,14 @@ define AMO > SC_D(aq::amo, rl::amo, rd::reg, rs1::reg, rs2::reg) =
   else { vAddr = GPR(rs1)
        ; if   vAddr<2:0> != 0
          then signalAddressException(E_SAMO_Addr_Align, vAddr)
-         else if   not matchLoadReservation(vAddr)
+         else if   not matchReservation(vAddr)
          then writeRD(rd, 1)
          else match translateAddr(vAddr, Write, Data)
               { case TR_Address(pAddr) => { data = GPR(rs2)
                                           ; if   memWriteData(pAddr, data, 4)
                                             then { recordStore(vAddr, data, WORD)
                                                  ; writeRD(rd, 0)
-                                                 ; ReserveLoad  <- None
+                                                 ; cancelReservation()
                                                  }
                                             else signalAddressException(E_SAMO_Access_Fault, vAddr)
                                           }
