@@ -638,6 +638,7 @@ fun processOption (s: string) =
 fun model_main () =
     case getArguments () of
         ["--help"] => printUsage ()
+      | ["-h"]     => printUsage ()
       | l =>
         let val (c, l) = processOption "--cycles"     l
             val (t, l) = processOption "--trace"      l

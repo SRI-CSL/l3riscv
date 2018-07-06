@@ -7080,7 +7080,7 @@ word Encode(i::instruction) =
 ---------------------------------------------------------------------------
 
 string log_instruction(w::word, inst::instruction) =
-    "instr " : [procID] : " " : [[c_MCSR(procID).minstret]::nat] :
+    "[" : [[c_cycles(procID)]::nat] : "] " : "[" : privName(curPrivilege) : "]: " :
     " 0x" : hex64(PC) : " : " : hex32(w) : "   " : instructionToString(inst)
 
 nat exitCode() =
@@ -7109,8 +7109,6 @@ unit checkTimers() =
 
 unit Next =
 { initDelta ()
-
-; tickClock()
 
 ; var nextPC = PC
 
@@ -7196,6 +7194,8 @@ unit Next =
     }
   }
 ; recordPC(PC, curPrivilege)
+
+; tickClock()
 }
 
 -- TODO: This needs to be parameterized by an isa string, or

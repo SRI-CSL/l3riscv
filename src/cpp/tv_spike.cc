@@ -147,13 +147,16 @@ void tv_spike_t::reset()
     std::cerr << "Inserted platform dtb into rom." << std::endl;
   }
   const int align = 0x1000;
+  int old_rom_size = rom.size();
   rom.resize((rom.size() + align - 1) / align * align);
 
   boot_rom.reset(new rom_device_t(rom));
   std::cerr << "Adding rom device @0x" << std::hex << DEFAULT_RSTVEC
-            << " size:0x" << boot_rom.get()->contents().size() << std::endl;
-  bus.add_device(DEFAULT_RSTVEC, boot_rom.get());
+            << " size:0x" << boot_rom.get()->contents().size()
+            << " (resized from 0x" << old_rom_size << ")"
+            << std::endl;
 
+  bus.add_device(DEFAULT_RSTVEC, boot_rom.get());
   cpu->set_debug(debug_log);
 }
 
@@ -170,7 +173,6 @@ char* tv_spike_t::addr_to_mem(reg_t addr)
     if (addr - desc.first < mem->size())
       return mem->contents() + (addr - desc.first);
   }
-  fprintf(stderr, "MS-MEM: nothing backing addr 0x%0" PRIx64 "\n", addr);
   return NULL;
 }
 
@@ -179,8 +181,6 @@ bool tv_spike_t::mmio_load(reg_t addr, size_t len, uint8_t* bytes)
   if (addr + len < addr)
     return false;
   bool mmio = bus.load(addr, len, bytes);
-  if (mmio) fprintf(stderr, "MMIO read: @0x%0" PRIx64 " %lu bytes\n",
-                    addr, len);
   return mmio;
 }
 
@@ -189,8 +189,6 @@ bool tv_spike_t::mmio_store(reg_t addr, size_t len, const uint8_t* bytes)
   if (addr + len < addr)
     return false;
   bool mmio = bus.store(addr, len, bytes);
-  if (mmio) fprintf(stderr, "MMIO write: @0x%0" PRIx64 " %lu bytes\n",
-                    addr, len);
   return mmio;
 }
 
@@ -222,6 +220,7 @@ void tv_spike_t::step_io(void)
 {
   cpu->yield_load_reservation();
   uint64_t tohost = memif.read_uint64(tohost_addr);
+  std::cerr << "htif::tick 0x" << std::hex << tohost << std::endl;
   if (tohost) {
     auto enq_func = [](std::queue<reg_t>* q, uint64_t x) { q->push(x); };
     std::function<void(reg_t)> fromhost_callback =
