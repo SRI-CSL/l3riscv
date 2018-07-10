@@ -40,8 +40,10 @@ static int run(tv_spike_t *tv)
   tv->reset();
   while (!tv->exited(code)) {
     tv->step(tv->INSNS_PER_RTC_TICK);
-    tv->tick(1);
-    tv->step_io();
+    if (!tv->exited(code)) {
+      tv->tick(1);
+      tv->step_io();
+    }
   }
   fprintf(stderr, "Exited with code %d.\n", code);
   return code;
