@@ -54,6 +54,10 @@ TVSPIKE_SRC     = $(patsubst %, $(CSRCDIR)/%, $(TVSPIKE_SRCBASE))
 TVSPIKE_INC     = -I $(CSRCDIR)
 TVSPIKE_INC    += -I $(RISCV)/include
 TVSPIKE_LIBS    = -L $(RISCV)/lib -lfesvr -lriscv -Wl,-rpath=$(RISCV)/lib
+# One of the below options may be needed on some platforms
+#CCOPTS         =
+CCOPTS          = -std=c++11
+#CCOPTS         = -std=gnu++11
 
 # make targets
 #######################################
@@ -79,10 +83,10 @@ l3riscv.poly: ${SMLLIB} ${SMLSRC} Makefile
 #               -output $@ ${SMLSRCDIR}/$(MLBFILE) $(L3LIBDIR)/sse_float.c $(L3LIBDIR)/mlton_sse_float.c
 
 tv_spike.so: ${TVSPIKE_SRC} Makefile
-	g++ -Wall -o $@ -shared -fPIC ${TVSPIKE_INC} ${TVSPIKE_LIBS} ${TVSPIKE_SRC}
+	g++ -Wall ${CCOPTS} -o $@ -shared -fPIC ${TVSPIKE_INC} ${TVSPIKE_LIBS} ${TVSPIKE_SRC}
 
 mini_spike: ${CSRCDIR}/mini_spike.cc ${TVSPIKE_SRC} Makefile
-	g++ -Wall ${TVSPIKE_INC} -o $@ $< ${TVSPIKE_SRC} ${TVSPIKE_LIBS}
+	g++ -Wall ${CCOPTS} ${TVSPIKE_INC} -o $@ $< ${TVSPIKE_SRC} ${TVSPIKE_LIBS}
 
 #libl3riscv.so: ${SMLLIB} ${SMLSRC} Makefile
 #	$(MLTON) $(MLTON_OPTS) \
