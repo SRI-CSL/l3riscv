@@ -100,7 +100,7 @@ holspec: ${L3SRC}
 
 clean:
 	rm -f l3riscv.poly l3riscv.mlton libl3riscv.so
-	rm -f tv_spike.so
+	rm -f tv_spike.so mini_spike
 	rm -f ${SMLSRCDIR}/riscv.sig ${SMLSRCDIR}/riscv.sml
 	rm -f ${ILSRCDIR}/riscv.l3
 	rm -f ${HOLSRCDIR}/riscvLib.sig ${HOLSRCDIR}/riscvLib.sml ${HOLSRCDIR}/riscvScript.sml
