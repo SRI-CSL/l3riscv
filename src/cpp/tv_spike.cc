@@ -162,8 +162,10 @@ void tv_spike_t::reset()
 
 void tv_spike_t::step(size_t steps)
 {
-  for (size_t i = 0; i < steps; i++)
+  for (size_t i = 0; (i < steps) && !has_exited; i++) {
     cpu->step(1);
+    check_exited();
+  }
 }
 
 char* tv_spike_t::addr_to_mem(reg_t addr)
@@ -245,6 +247,17 @@ void tv_spike_t::step_io(void)
 void tv_spike_t::tick(reg_t inc)
 {
   clint->increment(inc);
+}
+
+void tv_spike_t::check_exited(void)
+{
+  uint64_t tohost = memif.read_uint64(tohost_addr);
+  uint8_t dev_cmd = tohost >> 48;
+  uint64_t payload = tohost << 16 >> 16;
+  if ((dev_cmd == 0) && (payload & 1)) {
+    has_exited = true;
+    exit_code = payload >> 1;
+  }
 }
 
 bool tv_spike_t::exited(int& code)

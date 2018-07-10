@@ -141,6 +141,7 @@ private:
 
   // internal
   reg_t read_csr(size_t which);
+  void check_exited(void);
 };
 
 #endif // __TV_SPIKE_H_
