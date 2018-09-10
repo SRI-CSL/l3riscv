@@ -34,75 +34,81 @@
 #include "tv_spike_intf.h"
 #include "tv_spike.h"
 
-tv_spike_t* tv_init(const char *isa)
+struct tv_spike_t* tv_init(const char *isa)
 {
   tv_spike_t *tvs = new tv_spike_t(isa);
   fprintf(stderr, "%s(%s)\n", __func__, isa);
   return tvs;
 }
 
-void tv_set_verbose(tv_spike_t* tvs, int enable)
+void tv_set_verbose(struct tv_spike_t* tvs, int enable)
 {
   fprintf(stderr, "%s(%d)\n", __func__, enable);
   tvs->set_verbose(enable);
 }
 
-int tv_is_dirty_enabled(tv_spike_t* tvs)
+int tv_is_dirty_enabled(struct tv_spike_t* tvs)
 {
   return tvs->is_dirty_enabled();
 }
 
-int tv_is_misaligned_enabled(tv_spike_t* tvs)
+int tv_is_misaligned_enabled(struct tv_spike_t* tvs)
 {
   return tvs->is_misaligned_enabled();
 }
 
-void tv_load_elf(tv_spike_t* tvs, const char *filename)
+void tv_load_elf(struct tv_spike_t* tvs, const char *filename)
 {
   reg_t entry = tvs->init_elf(filename);
   fprintf(stderr, "%s(%s): %0" PRIx64 "\n",
           __func__, filename, entry);
 }
 
-void tv_reset(tv_spike_t* tvs)
+void tv_reset(struct tv_spike_t* tvs)
 {
   fprintf(stderr, "%s()\n", __func__);
   tvs->reset();
 }
 
-void tv_step(tv_spike_t* tvs)
+void tv_set_pc(struct tv_spike_t *tvs, uint64_t pc)
+{
+  fprintf(stderr, "%s()\n", __func__);
+  tvs->set_pc_reg(pc);
+}
+
+void tv_step(struct tv_spike_t* tvs)
 {
   fprintf(stderr, "%s()\n", __func__);
   tvs->step(1);
 }
 
-int tv_is_done(tv_spike_t* tvs)
+int tv_is_done(struct tv_spike_t* tvs)
 {
   int exit_code;
   return tvs->exited(exit_code);
 }
 
-int tv_check_priv(tv_spike_t* tvs, uint8_t priv)
+int tv_check_priv(struct tv_spike_t* tvs, uint8_t priv)
 {
   return tvs->check_priv(priv);
 }
 
-int tv_check_pc(tv_spike_t* tvs, uint64_t val)
+int tv_check_pc(struct tv_spike_t* tvs, uint64_t val)
 {
   return tvs->check_pc(val);
 }
 
-int tv_check_gpr(tv_spike_t* tvs, size_t regno, uint64_t val)
+int tv_check_gpr(struct tv_spike_t* tvs, size_t regno, uint64_t val)
 {
   return tvs->check_gpr(regno, val);
 }
 
-int tv_check_csr(tv_spike_t* tvs, size_t regno, uint64_t val)
+int tv_check_csr(struct tv_spike_t* tvs, size_t regno, uint64_t val)
 {
   return tvs->check_csr(regno, val);
 }
 
-void tv_free(tv_spike_t *tvs)
+void tv_free(struct tv_spike_t *tvs)
 {
   fprintf(stderr, "%s(%p)\n", __func__, tvs);
   delete tvs;

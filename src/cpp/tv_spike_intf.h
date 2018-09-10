@@ -31,45 +31,48 @@
  */
 
 
-#ifndef _TV_SPIKE_H_
-#define _TV_SPIKE_H_
+#ifndef _TV_SPIKE_INTF_H_
+#define _TV_SPIKE_INTF_H_
 
 #include <stdlib.h>
 #include <inttypes.h>
-#include "tv_spike.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-tv_spike_t* tv_init(const char *isa);
+struct tv_spike_t;
 
-int tv_is_dirty_enabled(tv_spike_t* tvs);
+struct tv_spike_t* tv_init(const char *isa);
 
-int tv_is_misaligned_enabled(tv_spike_t* tvs);
+int tv_is_dirty_enabled(struct tv_spike_t* tvs);
 
-void tv_set_verbose(tv_spike_t* tvs, int enable);
+int tv_is_misaligned_enabled(struct tv_spike_t* tvs);
 
-void tv_load_elf(tv_spike_t* tvs, const char *filename);
+void tv_set_verbose(struct tv_spike_t* tvs, int enable);
 
-void tv_reset(tv_spike_t *tvs);
+void tv_load_elf(struct tv_spike_t* tvs, const char *filename);
 
-void tv_step(tv_spike_t *tvs);
+void tv_reset(struct tv_spike_t *tvs);
 
-int  tv_is_done(tv_spike_t *tvs);
+void tv_set_pc(struct tv_spike_t *tvs, uint64_t pc);
 
-int  tv_check_priv(tv_spike_t *tvs, uint8_t prv);
+void tv_step(struct tv_spike_t *tvs);
 
-int  tv_check_pc(tv_spike_t *tvs, uint64_t val);
+int  tv_is_done(struct tv_spike_t *tvs);
 
-int  tv_check_gpr(tv_spike_t *tvs, size_t regno, uint64_t val);
+int  tv_check_priv(struct tv_spike_t *tvs, uint8_t prv);
 
-int  tv_check_csr(tv_spike_t *tvs, size_t regno, uint64_t val);
+int  tv_check_pc(struct tv_spike_t *tvs, uint64_t val);
 
-void tv_free(tv_spike_t *tvs);
+int  tv_check_gpr(struct tv_spike_t *tvs, size_t regno, uint64_t val);
+
+int  tv_check_csr(struct tv_spike_t *tvs, size_t regno, uint64_t val);
+
+void tv_free(struct tv_spike_t *tvs);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* _TV_SPIKE_H_ */
+#endif /* _TV_SPIKE_INTF_H_ */

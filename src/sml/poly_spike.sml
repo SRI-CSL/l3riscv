@@ -17,16 +17,16 @@ type t = Memory.voidStar
 
 (*
  * The code in this library is executed at compile-time, due to the
- * way Poly/ML compiler works.  So, loadLibrary of tv_spike.so is actually
+ * way Poly/ML compiler works.  So, loadLibrary of libtv_spike.so is actually
  * performed during compilation.  In l3riscv/Makefile, we ensure that
- * tv_spike.so has already been built and placed in the proper location,
+ * libtv_spike.so has already been built and placed in the proper location,
  * so that the loadLibrary succeeds when this file is compiled.
  * We are assuming that getDir() returns the location of the Makefile,
  * which works even when built using 'make -C ...'.
  *)
 fun getLib () =
     loadLibrary (OS.Path.joinDirFile {dir  = OS.FileSys.getDir (),
-                                      file = "tv_spike.so"})
+                                      file = "libtv_spike.so"})
 
 val getSym = getSymbol (getLib ())
 
