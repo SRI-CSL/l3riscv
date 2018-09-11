@@ -110,6 +110,7 @@ public:
   void dtb_in_rom(bool enable);
 
 private:
+  mem_t *dram;
   std::vector<std::pair<reg_t, mem_t*>> mem_regions;
   mmu_t* debug_mmu; // used for initialization of memory regions
   processor_t *cpu;

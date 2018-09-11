@@ -47,7 +47,8 @@ tv_spike_t::tv_spike_t(const char *isa)
   debug_mmu = new mmu_t(this, /*processor_t**/NULL);
   /* use the default memory size for Spike: 2GB at DRAM_BASE */
   size_t size = reg_t(2048) << 20;
-  mem_regions = std::vector<std::pair<reg_t, mem_t*>>(1, std::make_pair(reg_t(DRAM_BASE), new mem_t(size)));
+  dram = new mem_t(size);
+  mem_regions = std::vector<std::pair<reg_t, mem_t*>>(1, std::make_pair(reg_t(DRAM_BASE), dram));
 
   for (auto& x : mem_regions) {
     std::cerr << "Adding mem device @0x" << std::hex << x.first
@@ -68,8 +69,9 @@ tv_spike_t::tv_spike_t(const char *isa)
 
 tv_spike_t::~tv_spike_t()
 {
-  delete cpu;
+  delete dram;
   delete debug_mmu;
+  delete cpu;
 }
 
 int tv_spike_t::is_dirty_enabled()
@@ -158,6 +160,7 @@ void tv_spike_t::reset()
 
   bus.add_device(DEFAULT_RSTVEC, boot_rom.get());
   cpu->set_debug(debug_log);
+  debug_mmu->set_debug(debug_log);
 }
 
 void tv_spike_t::step(size_t steps)
