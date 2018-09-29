@@ -105,8 +105,8 @@ public:
   /* platform info */
   static const size_t INSNS_PER_RTC_TICK = 100; // 10 MHz clock for 1 BIPS core
   static const size_t CPU_HZ = 1000000000; // 1GHz CPU
-  std::string get_dts(void);
-  std::string get_dtb(void);
+  const std::string get_dts(void);
+  const std::string get_dtb(void);
   void dtb_in_rom(bool enable);
 
 private:
@@ -129,6 +129,12 @@ private:
   device_list_t device_list;
   addr_t fromhost_addr;
   std::queue<reg_t> fromhost_queue;
+
+  // device tree info
+  std::string dts;
+  std::string dtb;
+
+  // execution
   reg_t entry;
   bool has_exited;
   int exit_code;
@@ -141,6 +147,7 @@ private:
   bool debug_log;
 
   // internal
+  void setup_dtb(void);
   reg_t read_csr(size_t which);
   void check_exited(void);
 };

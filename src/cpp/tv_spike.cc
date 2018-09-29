@@ -65,6 +65,9 @@ tv_spike_t::tv_spike_t(const char *isa)
    */
   device_list.register_device(&nulld);
   device_list.register_device(&bcd);
+
+  /* DTS/DTB */
+  setup_dtb();
 }
 
 tv_spike_t::~tv_spike_t()
@@ -111,16 +114,17 @@ void tv_spike_t::set_pc_reg(uint64_t pc)
   cpu->get_state()->pc = pc;
 }
 
-std::string tv_spike_t::get_dts()
+void tv_spike_t::setup_dtb()
 {
-  return make_dts(INSNS_PER_RTC_TICK, CPU_HZ, procs, mem_regions);
+  dts = make_dts(INSNS_PER_RTC_TICK, CPU_HZ, procs, mem_regions);
+  dtb = dts_compile(dts);
 }
 
-std::string tv_spike_t::get_dtb()
-{
-  std::string dts = get_dts();
-  return dts_compile(dts);
-}
+const std::string tv_spike_t::get_dts()
+{ return dts; }
+
+const std::string tv_spike_t::get_dtb()
+{ return dtb; }
 
 void tv_spike_t::reset()
 {
@@ -144,7 +148,6 @@ void tv_spike_t::reset()
 
   if (insert_dts) {
     /* Imitate the spike platform. */
-    std::string dtb = get_dtb();
     rom.insert(rom.end(), dtb.begin(), dtb.end());
     std::cerr << "Inserted platform dtb into rom." << std::endl;
   }

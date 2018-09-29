@@ -45,11 +45,19 @@ struct tv_spike_t;
 
 struct tv_spike_t* tv_init(const char *isa);
 
+int tv_get_dts(struct tv_spike_t* tvs, unsigned char *dts_buf, size_t *len_p);
+
+int tv_get_dtb(struct tv_spike_t* tvs, unsigned char *dtb_buf, size_t *len_p);
+
+size_t tv_get_insns_per_tick(struct tv_spike_t* tvs);
+
 int tv_is_dirty_enabled(struct tv_spike_t* tvs);
 
 int tv_is_misaligned_enabled(struct tv_spike_t* tvs);
 
 void tv_set_verbose(struct tv_spike_t* tvs, int enable);
+
+void tv_set_dtb_in_rom(struct tv_spike_t* tvs, int enable);
 
 void tv_load_elf(struct tv_spike_t* tvs, const char *filename);
 
@@ -58,6 +66,10 @@ void tv_reset(struct tv_spike_t *tvs);
 void tv_set_pc(struct tv_spike_t *tvs, uint64_t pc);
 
 void tv_step(struct tv_spike_t *tvs);
+
+void tv_step_io(struct tv_spike_t *tvs);
+
+void tv_tick_clock(struct tv_spike_t *tvs);
 
 int  tv_is_done(struct tv_spike_t *tvs);
 

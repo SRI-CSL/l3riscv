@@ -41,10 +41,50 @@ struct tv_spike_t* tv_init(const char *isa)
   return tvs;
 }
 
+int tv_get_dts(struct tv_spike_t *tvs, unsigned char *dts_buf, size_t *len_p)
+{
+  if (!len_p) return -1;
+
+  const std::string dts = tvs->get_dts();
+  if (*len_p < dts.length() || dts_buf == NULL) {
+    *len_p = dts.length();
+    return -1;
+  }
+
+  *len_p = dts.length();
+  if (dts_buf) memcpy(dts_buf, (const unsigned char *)dts.c_str(), *len_p);
+  return 0;
+}
+
+int tv_get_dtb(struct tv_spike_t *tvs, unsigned char *dtb_buf, size_t *len_p)
+{
+  if (!len_p) return -1;
+
+  const std::string dtb = tvs->get_dtb();
+  if (*len_p < dtb.length() || dtb_buf == NULL) {
+    *len_p = dtb.length();
+    return -1;
+  }
+
+  *len_p = dtb.length();
+  if (dtb_buf) memcpy(dtb_buf, (const unsigned char *)dtb.c_str(), *len_p);
+  return 0;
+}
+
+size_t tv_get_insns_per_tick(struct tv_spike_t* tvs)
+{
+  return tvs->INSNS_PER_RTC_TICK;
+}
+
 void tv_set_verbose(struct tv_spike_t* tvs, int enable)
 {
   fprintf(stderr, "%s(%d)\n", __func__, enable);
   tvs->set_verbose(enable);
+}
+
+void tv_set_dtb_in_rom(struct tv_spike_t* tvs, int enable)
+{
+  tvs->dtb_in_rom(enable);
 }
 
 int tv_is_dirty_enabled(struct tv_spike_t* tvs)
@@ -80,6 +120,18 @@ void tv_step(struct tv_spike_t* tvs)
 {
   fprintf(stderr, "%s()\n", __func__);
   tvs->step(1);
+}
+
+void tv_step_io(struct tv_spike_t* tvs)
+{
+  fprintf(stderr, "%s()\n", __func__);
+  tvs->step_io();
+}
+
+void tv_tick_clock(struct tv_spike_t* tvs)
+{
+  fprintf(stderr, "%s()\n", __func__);
+  tvs->tick(1);
 }
 
 int tv_is_done(struct tv_spike_t* tvs)
