@@ -58,7 +58,7 @@ TVSPIKE_INC    += -I $(RISCV)/include
 TVSPIKE_LIBS    = -L $(RISCV)/lib -lfesvr -lriscv -Wl,-rpath=$(RISCV)/lib
 CSPIKE_INC      = -I $(CSRCDIR)
 CSPIKE_LIBS     = -L $(TOPDIR) -ltv_spike -Wl,-rpath=$(TOPDIR)
-C_FLAGS         = -g -Wall -Wextra -Wno-unused-parameter
+CFLAGS          = -g -Wall -Wextra -Wno-unused-parameter
 # One of the below options may be needed on some platforms
 #CCOPTS         =
 CCOPTS          = -std=c++11
