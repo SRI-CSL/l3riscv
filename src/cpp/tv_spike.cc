@@ -36,10 +36,10 @@
 #include <assert.h>
 #include <iostream>
 
-tv_spike_t::tv_spike_t(const char *isa)
-  : memif(this), tohost_addr(0), fromhost_addr(0), entry(-1),
-    has_exited(false), exit_code(0),
-    verbose_verify(true), insert_dts(false), debug_log(true)
+tv_spike_t::tv_spike_t(const char *isa, bool debug)
+  : memif(this), tohost_addr(0), fromhost_addr(0), dtb_inited(false),
+    entry(-1), has_exited(false), exit_code(0),
+    verbose_verify(true), insert_dts(false), debug_log(debug)
 {
   cpu = new processor_t(isa, this, /*hartid*/ 0, /*halted*/ false);
   procs = std::vector<processor_t*>(1, cpu);
@@ -51,8 +51,9 @@ tv_spike_t::tv_spike_t(const char *isa)
   mem_regions = std::vector<std::pair<reg_t, mem_t*>>(1, std::make_pair(reg_t(DRAM_BASE), dram));
 
   for (auto& x : mem_regions) {
-    std::cerr << "Adding mem device @0x" << std::hex << x.first
-              << " size:0x" << x.second->size() << std::endl;
+    if (debug_log)
+      std::cerr << "Adding mem device @0x" << std::hex << x.first
+                << " size:0x" << x.second->size() << std::endl;
     bus.add_device(x.first, x.second);
   }
   /* MMIO */
@@ -65,9 +66,6 @@ tv_spike_t::tv_spike_t(const char *isa)
    */
   device_list.register_device(&nulld);
   device_list.register_device(&bcd);
-
-  /* DTS/DTB */
-  setup_dtb();
 }
 
 tv_spike_t::~tv_spike_t()
@@ -95,12 +93,14 @@ void tv_spike_t::dtb_in_rom(bool enable)
 reg_t tv_spike_t::init_elf(const char *elf_file)
 {
   std::map<std::string, uint64_t> symbols = load_elf(elf_file, &memif, &entry);
-  std::cerr << " loading " << elf_file << std::endl;
+  if (debug_log) std::cerr << " loading " << elf_file << std::endl;
   if (symbols.count("tohost") && symbols.count("fromhost")) {
     tohost_addr = symbols["tohost"];
     fromhost_addr = symbols["fromhost"];
-    std::cerr << "tohost   <- 0x" << std::hex << tohost_addr   << std::endl;
-    std::cerr << "fromhost <- 0x" << std::hex << fromhost_addr << std::endl;
+    if (debug_log) {
+      std::cerr << "tohost   <- 0x" << std::hex << tohost_addr   << std::endl;
+      std::cerr << "fromhost <- 0x" << std::hex << fromhost_addr << std::endl;
+    }
   } else {
     std::cerr << "warning: tohost and fromhost symbols not in ELF;"
               << "can't communicate with target" << std::endl;
@@ -116,15 +116,22 @@ void tv_spike_t::set_pc_reg(uint64_t pc)
 
 void tv_spike_t::setup_dtb()
 {
+  dtb_inited = true;
   dts = make_dts(INSNS_PER_RTC_TICK, CPU_HZ, procs, mem_regions);
   dtb = dts_compile(dts);
 }
 
 const std::string tv_spike_t::get_dts()
-{ return dts; }
+{
+  if (!dtb_inited) setup_dtb();
+  return dts;
+}
 
 const std::string tv_spike_t::get_dtb()
-{ return dtb; }
+{
+  if (!dtb_inited) setup_dtb();
+  return dtb;
+}
 
 void tv_spike_t::reset()
 {
@@ -149,17 +156,20 @@ void tv_spike_t::reset()
   if (insert_dts) {
     /* Imitate the spike platform. */
     rom.insert(rom.end(), dtb.begin(), dtb.end());
-    std::cerr << "Inserted platform dtb into rom." << std::endl;
+    if (debug_log)
+      std::cerr << "Inserted platform dtb into rom." << std::endl;
   }
   const int align = 0x1000;
   int old_rom_size = rom.size();
   rom.resize((rom.size() + align - 1) / align * align);
 
   boot_rom.reset(new rom_device_t(rom));
-  std::cerr << "Adding rom device @0x" << std::hex << DEFAULT_RSTVEC
-            << " size:0x" << boot_rom.get()->contents().size()
-            << " (resized from 0x" << old_rom_size << ")"
-            << std::endl;
+  if (debug_log) {
+    std::cerr << "Adding rom device @0x" << std::hex << DEFAULT_RSTVEC
+              << " size:0x" << boot_rom.get()->contents().size()
+              << " (resized from 0x" << old_rom_size << ")"
+              << std::endl;
+  }
 
   bus.add_device(DEFAULT_RSTVEC, boot_rom.get());
   cpu->set_debug(debug_log);
@@ -228,7 +238,7 @@ void tv_spike_t::step_io(void)
 {
   cpu->yield_load_reservation();
   uint64_t tohost = memif.read_uint64(tohost_addr);
-  std::cerr << "htif::tick 0x" << std::hex << tohost << std::endl;
+  if (debug_log) std::cerr << "htif::tick 0x" << std::hex << tohost << std::endl;
   if (tohost) {
     auto enq_func = [](std::queue<reg_t>* q, uint64_t x) { q->push(x); };
     std::function<void(reg_t)> fromhost_callback =

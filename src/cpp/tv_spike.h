@@ -52,7 +52,7 @@
 class tv_spike_t : public simif_t, public chunked_memif_t
 {
 public:
-  tv_spike_t(const char *isa);
+  tv_spike_t(const char *isa, bool debug_log);
   virtual ~tv_spike_t();
 
   /* initialization */
@@ -131,6 +131,7 @@ private:
   std::queue<reg_t> fromhost_queue;
 
   // device tree info
+  bool dtb_inited;
   std::string dts;
   std::string dtb;
 

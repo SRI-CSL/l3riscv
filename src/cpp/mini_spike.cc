@@ -51,7 +51,7 @@ static int run(tv_spike_t *tv)
 
 static void run_elf(const char *isa, const char *file)
 {
-  tv_spike_t s(isa);
+  tv_spike_t s(isa, true);
   s.dtb_in_rom(true);
   s.init_elf(file);
   exit(run(&s));
@@ -65,20 +65,20 @@ static void help()
 
 static void print_dts(const char *isa)
 {
-  tv_spike_t s(isa);
+  tv_spike_t s(isa, false);
   fprintf(stdout, "%s", s.get_dts().c_str());
 }
 
 static void print_dtb(const char *isa)
 {
-  tv_spike_t s(isa);
+  tv_spike_t s(isa, false);
   std::string dtb = s.get_dtb();
   write(1, dtb.c_str(), dtb.length());
 }
 
 static void print_cfg(const char *isa)
 {
-  tv_spike_t s(isa);
+  tv_spike_t s(isa, false);
   fprintf(stdout, "isa: %s\n", isa);
   fprintf(stdout, "\t--enable-dirty: %s\n", s.is_dirty_enabled() ? "on" : "off");
   fprintf(stdout, "\t--enable-misaligned: %s\n", s.is_misaligned_enabled() ? "on" : "off");

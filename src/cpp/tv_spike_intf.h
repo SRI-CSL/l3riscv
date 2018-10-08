@@ -43,7 +43,7 @@ extern "C" {
 
 struct tv_spike_t;
 
-struct tv_spike_t* tv_init(const char *isa);
+struct tv_spike_t* tv_init(const char *isa, int debug);
 
 int tv_get_dts(struct tv_spike_t* tvs, unsigned char *dts_buf, size_t *len_p);
 

@@ -34,10 +34,12 @@
 #include "tv_spike_intf.h"
 #include "tv_spike.h"
 
-struct tv_spike_t* tv_init(const char *isa)
+static int debug = 1;
+struct tv_spike_t* tv_init(const char *isa, int _debug)
 {
-  tv_spike_t *tvs = new tv_spike_t(isa);
-  fprintf(stderr, "%s(%s)\n", __func__, isa);
+  if (_debug) fprintf(stderr, "%s(%s, %d)\n", __func__, isa, _debug);
+  debug = _debug;
+  tv_spike_t *tvs = new tv_spike_t(isa, bool(debug));
   return tvs;
 }
 
@@ -78,7 +80,7 @@ size_t tv_get_insns_per_tick(struct tv_spike_t* tvs)
 
 void tv_set_verbose(struct tv_spike_t* tvs, int enable)
 {
-  fprintf(stderr, "%s(%d)\n", __func__, enable);
+  if (debug) fprintf(stderr, "%s(%d)\n", __func__, enable);
   tvs->set_verbose(enable);
 }
 
@@ -100,37 +102,37 @@ int tv_is_misaligned_enabled(struct tv_spike_t* tvs)
 void tv_load_elf(struct tv_spike_t* tvs, const char *filename)
 {
   reg_t entry = tvs->init_elf(filename);
-  fprintf(stderr, "%s(%s): %0" PRIx64 "\n",
-          __func__, filename, entry);
+  if (debug) fprintf(stderr, "%s(%s): %0" PRIx64 "\n",
+                     __func__, filename, entry);
 }
 
 void tv_reset(struct tv_spike_t* tvs)
 {
-  fprintf(stderr, "%s()\n", __func__);
+  if (debug) fprintf(stderr, "%s()\n", __func__);
   tvs->reset();
 }
 
 void tv_set_pc(struct tv_spike_t *tvs, uint64_t pc)
 {
-  fprintf(stderr, "%s()\n", __func__);
+  if (debug) fprintf(stderr, "%s()\n", __func__);
   tvs->set_pc_reg(pc);
 }
 
 void tv_step(struct tv_spike_t* tvs)
 {
-  fprintf(stderr, "%s()\n", __func__);
+  if (debug) fprintf(stderr, "%s()\n", __func__);
   tvs->step(1);
 }
 
 void tv_step_io(struct tv_spike_t* tvs)
 {
-  fprintf(stderr, "%s()\n", __func__);
+  if (debug) fprintf(stderr, "%s()\n", __func__);
   tvs->step_io();
 }
 
 void tv_tick_clock(struct tv_spike_t* tvs)
 {
-  fprintf(stderr, "%s()\n", __func__);
+  if (debug) fprintf(stderr, "%s()\n", __func__);
   tvs->tick(1);
 }
 
@@ -162,6 +164,6 @@ int tv_check_csr(struct tv_spike_t* tvs, size_t regno, uint64_t val)
 
 void tv_free(struct tv_spike_t *tvs)
 {
-  fprintf(stderr, "%s(%p)\n", __func__, tvs);
+  if (debug) fprintf(stderr, "%s(%p)\n", __func__, tvs);
   delete tvs;
 }

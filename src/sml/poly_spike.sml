@@ -34,7 +34,7 @@ fun toBool i   = if i = 0 then false else true
 fun fromBool b = if b     then 1     else 0
 
 val init : string -> t =
-    buildCall1 (getSym "tv_init", cString, cPointer)
+    buildCall2 (getSym "tv_init", (cString, cInt), cPointer) o (fn s => (s, 0))
 
 val setVerbose : (t * bool) -> unit =
     buildCall2 (getSym "tv_set_verbose", (cPointer, cInt), cVoid)

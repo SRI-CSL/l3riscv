@@ -9,7 +9,7 @@
 
 void run_elf(const char *isa, const char *filename)
 {
-  struct tv_spike_t *s = tv_init(isa);
+  struct tv_spike_t *s = tv_init(isa, 1);
   tv_set_verbose(s, 1);
   tv_set_dtb_in_rom(s, 1);
   tv_load_elf(s, filename);
@@ -38,7 +38,7 @@ void print_usage(const char *argv0)
 void print_dts(void)
 {
   size_t dts_len = 0;
-  struct tv_spike_t *s = tv_init("RV64IMAC");
+  struct tv_spike_t *s = tv_init("RV64IMAC", 0);
   tv_get_dts(s, NULL, &dts_len);
   if (dts_len > 0) {
     unsigned char *dts = (unsigned char *)malloc(dts_len + 1);
