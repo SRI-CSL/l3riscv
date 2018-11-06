@@ -49,9 +49,9 @@ static int run(tv_spike_t *tv)
   return code;
 }
 
-static void run_elf(const char *isa, const char *file)
+static void run_elf(const char *isa, const char *file, bool debug)
 {
-  tv_spike_t s(isa, true);
+  tv_spike_t s(isa, debug);
   s.dtb_in_rom(true);
   s.init_elf(file);
   exit(run(&s));
@@ -59,7 +59,7 @@ static void run_elf(const char *isa, const char *file)
 
 static void help()
 {
-  fprintf(stderr, "Usage: mini_spike [--isa=<isa>] [--dump-dts] [--dump-dtb] [--show-config] <elf_file>\n");
+  fprintf(stderr, "Usage: mini_spike [--isa=<isa>] [--dump-dts] [--dump-dtb] [--show-config] [--debug-log] <elf_file>\n");
   exit(0);
 }
 
@@ -89,6 +89,7 @@ int main(int argc, char **argv)
   bool dump_dts = false;
   bool dump_dtb = false;
   bool show_cfg = false;
+  bool debug_log = false;
 
   const char *isa = "RV64IMAFDC";
   option_parser_t parser;
@@ -98,6 +99,7 @@ int main(int argc, char **argv)
   parser.option(0, "dump-dts", 0, [&](const char *s){dump_dts = true;});
   parser.option(0, "dump-dtb", 0, [&](const char *s){dump_dtb = true;});
   parser.option(0, "show-config", 0, [&](const char *s){show_cfg = true;});
+  parser.option(0, "debug-log", 0, [&](const char *s){debug_log = true;});
   parser.option(0, "isa", 1, [&](const char* s){isa = s;});
   const char* const* file = parser.parse(argv);
 
@@ -105,6 +107,6 @@ int main(int argc, char **argv)
   else if (dump_dtb) print_dtb(isa);
   else if (show_cfg) print_cfg(isa);
   else if (file && file[0] && file[0][0])
-    run_elf(isa, file[0]);
+    run_elf(isa, file[0], debug_log);
   else help();
 }

@@ -59,6 +59,9 @@ tv_spike_t::tv_spike_t(const char *isa, bool debug)
   /* MMIO */
   clint.reset(new clint_t(procs));
   bus.add_device(CLINT_BASE, clint.get());
+  if (debug_log)
+    std::cerr << "Adding clint device @0x" << std::hex << CLINT_BASE
+              << " size:0x" << clint.get()->size() << std::endl;
 
   /* HTIF: devices need to be registered in the same order as Spike, since htif
    * device identifiers in commands are based on the registration index.  Use a
