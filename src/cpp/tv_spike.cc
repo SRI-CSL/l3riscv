@@ -155,7 +155,8 @@ void tv_spike_t::reset()
 
   if (insert_dts) {
     /* Imitate the spike platform. */
-    rom.insert(rom.end(), dtb.begin(), dtb.end());
+    std::string dt = get_dtb();
+    rom.insert(rom.end(), dt.begin(), dt.end());
     if (debug_log)
       std::cerr << "Inserted platform dtb into rom." << std::endl;
   }
