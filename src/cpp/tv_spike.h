@@ -52,7 +52,7 @@
 class tv_spike_t : public simif_t, public chunked_memif_t
 {
 public:
-  tv_spike_t(const char *isa, bool debug_log);
+  tv_spike_t(const char *isa, size_t ram_size, bool debug_log);
   virtual ~tv_spike_t();
 
   /* initialization */
@@ -64,6 +64,7 @@ public:
   /* config queries */
   int is_dirty_enabled();
   int is_misaligned_enabled();
+  uint64_t ram_size();
 
   /* execution */
   void step(size_t steps);

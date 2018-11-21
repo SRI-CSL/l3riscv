@@ -43,7 +43,7 @@ extern "C" {
 
 struct tv_spike_t;
 
-struct tv_spike_t* tv_init(const char *isa, int debug);
+struct tv_spike_t* tv_init(const char *isa, uint64_t ram_size, int debug);
 
 int tv_get_dts(struct tv_spike_t* tvs, unsigned char *dts_buf, size_t *len_p);
 
@@ -54,6 +54,8 @@ size_t tv_get_insns_per_tick(struct tv_spike_t* tvs);
 int tv_is_dirty_enabled(struct tv_spike_t* tvs);
 
 int tv_is_misaligned_enabled(struct tv_spike_t* tvs);
+
+uint64_t tv_ram_size(struct tv_spike_t *tvs);
 
 void tv_set_verbose(struct tv_spike_t* tvs, int enable);
 

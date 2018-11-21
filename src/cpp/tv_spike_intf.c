@@ -35,11 +35,11 @@
 #include "tv_spike.h"
 
 static int debug = 1;
-struct tv_spike_t* tv_init(const char *isa, int _debug)
+struct tv_spike_t* tv_init(const char *isa, uint64_t ram_size, int _debug)
 {
   if (_debug) fprintf(stderr, "%s(%s, %d)\n", __func__, isa, _debug);
   debug = _debug;
-  tv_spike_t *tvs = new tv_spike_t(isa, bool(debug));
+  tv_spike_t *tvs = new tv_spike_t(isa, ram_size, bool(debug));
   return tvs;
 }
 
@@ -97,6 +97,11 @@ int tv_is_dirty_enabled(struct tv_spike_t* tvs)
 int tv_is_misaligned_enabled(struct tv_spike_t* tvs)
 {
   return tvs->is_misaligned_enabled();
+}
+
+uint64_t tv_ram_size(tv_spike_t *tvs)
+{
+  return tvs->ram_size();
 }
 
 void tv_load_elf(struct tv_spike_t* tvs, const char *filename)

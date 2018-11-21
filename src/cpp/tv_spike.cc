@@ -36,7 +36,7 @@
 #include <assert.h>
 #include <iostream>
 
-tv_spike_t::tv_spike_t(const char *isa, bool debug)
+tv_spike_t::tv_spike_t(const char *isa, uint64_t ram_size, bool debug)
   : memif(this), tohost_addr(0), fromhost_addr(0), dtb_inited(false),
     entry(-1), has_exited(false), exit_code(0),
     verbose_verify(true), insert_dts(false), debug_log(debug)
@@ -45,9 +45,7 @@ tv_spike_t::tv_spike_t(const char *isa, bool debug)
   procs = std::vector<processor_t*>(1, cpu);
 
   debug_mmu = new mmu_t(this, /*processor_t**/NULL);
-  /* use the default memory size for Spike: 2GB at DRAM_BASE */
-  size_t size = reg_t(2048) << 20;
-  dram = new mem_t(size);
+  dram = new mem_t(ram_size);
   mem_regions = std::vector<std::pair<reg_t, mem_t*>>(1, std::make_pair(reg_t(DRAM_BASE), dram));
 
   for (auto& x : mem_regions) {
@@ -86,6 +84,12 @@ int tv_spike_t::is_dirty_enabled()
 int tv_spike_t::is_misaligned_enabled()
 {
   return cpu->get_mmu()->is_misaligned_enabled();
+}
+
+uint64_t tv_spike_t::ram_size()
+{
+  // Needs revision if we have multiple ram regions.
+  return dram->size();
 }
 
 void tv_spike_t::dtb_in_rom(bool enable)
