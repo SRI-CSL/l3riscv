@@ -181,7 +181,6 @@ void tv_spike_t::reset()
 
   bus.add_device(DEFAULT_RSTVEC, boot_rom.get());
   cpu->set_debug(debug_log);
-  debug_mmu->set_debug(debug_log);
 }
 
 void tv_spike_t::step(size_t steps)
@@ -244,7 +243,6 @@ void tv_spike_t::clear_chunk(addr_t taddr, size_t len)
 
 void tv_spike_t::step_io(void)
 {
-  cpu->yield_load_reservation();
   uint64_t tohost = memif.read_uint64(tohost_addr);
   if (debug_log) std::cerr << "htif::tick 0x" << std::hex << tohost << std::endl;
   if (tohost) {
