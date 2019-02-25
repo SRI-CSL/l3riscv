@@ -112,7 +112,7 @@ reg_t tv_spike_t::init_elf(const char *elf_file)
     std::cerr << "warning: tohost and fromhost symbols not in ELF;"
               << "can't communicate with target" << std::endl;
   }
-
+  debug_mmu->set_debug(debug_log);
   return entry;
 }
 
@@ -295,10 +295,16 @@ bool tv_spike_t::set_verbose(bool enable)
   return prev;
 }
 
+uint64_t tv_spike_t::check_mask(void)
+{
+  return (cpu->get_xlen() == 32) ? 0x00000000FFFFFFFF : -1;
+}
+
 bool tv_spike_t::check_pc(uint64_t val)
 {
   uint64_t model_val = cpu->get_state()->pc;
-  bool chk = model_val == val;
+  uint64_t mask = check_mask();
+  bool chk = (model_val & mask) == (val & mask);
 
   if (verbose_verify && !chk)
     fprintf(stderr, " PC: expected %0" PRIx64 " got %" PRIx64 "\n",
@@ -309,10 +315,11 @@ bool tv_spike_t::check_pc(uint64_t val)
 bool tv_spike_t::check_gpr(size_t regno, uint64_t val)
 {
   uint64_t model_val = uint64_t(-1);
+  uint64_t mask = check_mask();
   bool chk = false;
   if (regno < NXPR) {
     model_val = cpu->get_state()->XPR[regno];
-    chk = model_val == val;
+    chk = (model_val & mask) == (val & mask);
   }
   if (verbose_verify && !chk)
     fprintf(stderr, " GPR reg %ld: expected %0" PRIx64 " got %" PRIx64 "\n",
@@ -320,10 +327,17 @@ bool tv_spike_t::check_gpr(size_t regno, uint64_t val)
   return chk;
 }
 
+static bool isCSR64(size_t regno)
+{
+  // The following CSRs are always 64-bit: mcycle, mtime, minstret.
+  return (regno == CSR_TIME || regno == CSR_INSTRET || regno == CSR_CYCLE);
+}
+
 bool tv_spike_t::check_csr(size_t regno, uint64_t val)
 {
   uint64_t model_val = read_csr(regno);
-  bool chk = model_val == val;
+  uint64_t mask = isCSR64(regno) ? uint64_t(-1) : check_mask();
+  bool chk = (model_val & mask) == (val & mask);
   if (verbose_verify && !chk)
     fprintf(stderr, " CSR reg %lx (%s): expected %0" PRIx64 " got %" PRIx64 "\n",
             regno, csr_name(regno), model_val, val);

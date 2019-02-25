@@ -152,6 +152,7 @@ private:
   void setup_dtb(void);
   reg_t read_csr(size_t which);
   void check_exited(void);
+  uint64_t check_mask(void);
 };
 
 #endif // __TV_SPIKE_H_

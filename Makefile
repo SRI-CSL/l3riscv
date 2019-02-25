@@ -67,7 +67,10 @@ CCOPTS          = -std=c++11
 # make targets
 #######################################
 
-all: l3riscv.poly ilspec holspec
+all: l3riscv.poly ilspec holspec c
+c:   libtv_spike.so mini_spike mini_c_spike
+
+.PHONY: c c_clean clean
 
 ifeq ($(ENABLE_TVSPIKE),1)
 all: libtv_spike.so mini_spike mini_c_spike
@@ -110,9 +113,11 @@ holspec: ${L3SRC}
 	mkdir -p $(HOLSRCDIR)
 	echo 'HolExport.spec ("${L3SRC}", "${HOLSRCDIR}/riscv")' | l3
 
-clean:
-	rm -f l3riscv.poly l3riscv.mlton libl3riscv.so
-	rm -f libtv_spike.so mini_spike
+c_clean:
+	rm -f libtv_spike.so mini_spike mini_c_spike libl3riscv.so
+
+clean: c_clean
+	rm -f l3riscv.poly l3riscv.mlton
 	rm -f ${SMLSRCDIR}/riscv.sig ${SMLSRCDIR}/riscv.sml
 	rm -f ${ILSRCDIR}/riscv.l3
 	rm -f ${HOLSRCDIR}/riscvLib.sig ${HOLSRCDIR}/riscvLib.sml ${HOLSRCDIR}/riscvScript.sml
