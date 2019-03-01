@@ -110,6 +110,9 @@ public:
   const std::string get_dtb(void);
   void dtb_in_rom(bool enable);
 
+  /* compliance tests */
+  int write_signature(const char *file);
+
 private:
   mem_t *dram;
   std::vector<std::pair<reg_t, mem_t*>> mem_regions;
@@ -135,6 +138,9 @@ private:
   bool dtb_inited;
   std::string dts;
   std::string dtb;
+
+  // elf info
+  std::map<std::string, uint64_t> symbols;
 
   // execution
   reg_t entry;

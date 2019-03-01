@@ -35,6 +35,8 @@
 #include <fesvr/elfloader.h>
 #include <assert.h>
 #include <iostream>
+#include <fstream>
+#include <iomanip>
 
 tv_spike_t::tv_spike_t(const char *isa, uint64_t ram_size, bool debug)
   : memif(this), tohost_addr(0), fromhost_addr(0), dtb_inited(false),
@@ -99,7 +101,7 @@ void tv_spike_t::dtb_in_rom(bool enable)
 
 reg_t tv_spike_t::init_elf(const char *elf_file)
 {
-  std::map<std::string, uint64_t> symbols = load_elf(elf_file, &memif, &entry);
+  symbols = load_elf(elf_file, &memif, &entry);
   if (debug_log) std::cerr << " loading " << elf_file << std::endl;
   if (symbols.count("tohost") && symbols.count("fromhost")) {
     tohost_addr = symbols["tohost"];
@@ -485,4 +487,30 @@ reg_t tv_spike_t::read_csr(size_t which)
     return state->dscratch;
   }
   return reg_t(-1);
+}
+
+int tv_spike_t::write_signature(const char *sig_file)
+{
+  if (!sig_file || !(symbols.count("begin_signature") && symbols.count("end_signature")))
+    return 1;
+
+  addr_t sig_addr = symbols["begin_signature"];
+  addr_t sig_len = symbols["end_signature"] - sig_addr;
+
+  std::vector<uint8_t> buf(sig_len);
+  memif.read(sig_addr, sig_len, &buf[0]);
+
+  std::ofstream sigs(sig_file);
+  assert(sigs && "can't open signature file!");
+  sigs << std::setfill('0') << std::hex;
+
+  const addr_t incr = 16;
+  assert(sig_len % incr == 0);
+  for (addr_t i = 0; i < sig_len; i += incr) {
+    for (addr_t j = incr; j > 0; j--)
+      sigs << std::setw(2) << (uint16_t)buf[i+j-1];
+    sigs << '\n';
+  }
+  sigs.close();
+  return 0;
 }

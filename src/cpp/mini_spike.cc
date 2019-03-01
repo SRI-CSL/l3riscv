@@ -51,17 +51,23 @@ static int run(tv_spike_t *tv)
   return code;
 }
 
-static void run_elf(const char *isa, const char *file, uint64_t ram_size, bool debug)
+static void run_elf(const char *isa, const char *file, uint64_t ram_size, bool debug, const char *sig_file)
 {
+  int exit_code;
   tv_spike_t s(isa, ram_size, debug);
   s.dtb_in_rom(true);
   s.init_elf(file);
-  exit(run(&s));
+  exit_code = run(&s);
+  if (sig_file) {
+    if (s.write_signature(sig_file))
+      fprintf(stderr, "Unable to save signature to %s.\n", sig_file);
+  }
+  exit(exit_code);
 }
 
 static void help()
 {
-  fprintf(stderr, "Usage: mini_spike [--isa=<isa>] [--ram-size=MB] [--dump-dts] [--dump-dtb] [--show-config] [--debug-log] <elf_file>\n");
+  fprintf(stderr, "Usage: mini_spike [--isa=<isa>] [--ram-size=MB] [--dump-dts] [--dump-dtb] [--show-config] [--debug-log] [--test-signature=<file_name>] <elf_file>\n");
   exit(0);
 }
 
@@ -97,22 +103,25 @@ int main(int argc, char **argv)
   uint64_t ram_size = 64LL << 20;
 
   const char *isa = "RV64IMAFDC";
+  const char *sig_file = NULL;
+
   option_parser_t parser;
   parser.help(&help);
 
   parser.option('h', 0, 0, [&](const char* s){help();});
-  parser.option(0, "dump-dts",    0, [&](const char *s){dump_dts = true;});
-  parser.option(0, "dump-dtb",    0, [&](const char *s){dump_dtb = true;});
-  parser.option(0, "show-config", 0, [&](const char *s){show_cfg = true;});
-  parser.option(0, "ram-size",    1, [&](const char *s){ram_size = atol(s) * 1024 * 1024;});
-  parser.option(0, "debug-log",   0, [&](const char *s){debug_log = true;});
-  parser.option(0, "isa",         1, [&](const char* s){isa = s;});
+  parser.option(0, "dump-dts",       0, [&](const char *s){dump_dts = true;});
+  parser.option(0, "dump-dtb",       0, [&](const char *s){dump_dtb = true;});
+  parser.option(0, "show-config",    0, [&](const char *s){show_cfg = true;});
+  parser.option(0, "ram-size",       1, [&](const char *s){ram_size = atol(s) * 1024 * 1024;});
+  parser.option(0, "debug-log",      0, [&](const char *s){debug_log = true;});
+  parser.option(0, "isa",            1, [&](const char *s){isa = s;});
+  parser.option(0, "test-signature", 1, [&](const char *s){sig_file = s;});
   const char* const* file = parser.parse(argv);
 
   if      (dump_dts) print_dts(isa, ram_size);
   else if (dump_dtb) print_dtb(isa, ram_size);
   else if (show_cfg) print_cfg(isa, ram_size);
   else if (file && file[0] && file[0][0])
-    run_elf(isa, file[0], ram_size, debug_log);
+    run_elf(isa, file[0], ram_size, debug_log, sig_file);
   else help();
 }

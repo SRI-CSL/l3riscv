@@ -166,6 +166,10 @@ int tv_check_csr(struct tv_spike_t* tvs, size_t regno, uint64_t val)
 {
   return tvs->check_csr(regno, val);
 }
+int tv_write_test_signature(struct tv_spike_t *tvs, const char *file)
+{
+  return tvs->write_signature(file);
+}
 
 void tv_free(struct tv_spike_t *tvs)
 {
